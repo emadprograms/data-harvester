@@ -1,0 +1,8 @@
+streamlit
+pandas
+requests
+altair
+libsql-client
+pytz
+python-dotenv
+yfinance>=0.2.40
