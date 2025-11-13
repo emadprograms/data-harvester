@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 # Load .env if it exists (Local testing)
 load_dotenv()
 
-# Import logic from the main app
+# --- THIS IS THE FIX ---
+# We are changing 'daily_harvester' to 'app'
 try:
-    from daily_harvester import (
+    from app import (
         get_db_connection,
         get_symbol_map_from_db,
         run_harvest_logic,
@@ -17,40 +18,16 @@ try:
         US_EASTERN
     )
 except ImportError as e:
-    print(f"CRITICAL ERROR: Could not import daily_harvester. {e}")
+    # Updated error message
+    print(f"CRITICAL ERROR: Could not import 'app.py'. {e}")
     sys.exit(1)
+# --- END FIX ---
 
 class ConsoleLogger:
     """A simple logger that prints to the GitHub Actions console."""
     def log(self, message):
         timestamp = datetime.now().strftime('%H:%M:%S')
         print(f"[{timestamp}] {message}")
-
-def determine_target_date(logger):
-    """
-    Smart logic to decide which date to harvest.
-    - If run at 16:05 ET (Market Close), it picks Today.
-    - If run at 02:00 ET (Next Morning), it picks Yesterday.
-    """
-    now_et = datetime.now(US_EASTERN)
-    
-    # Market Open is 9:30 AM ET.
-    # If we are running BEFORE 9:30 AM ET, we assume we want the 
-    # PREVIOUS day's data, because today's market hasn't opened yet.
-    if now_et.hour < 9 or (now_et.hour == 9 and now_et.minute < 30):
-        target_date = now_et.date() - timedelta(days=1)
-        logger.log(f"🕰️ Time is {now_et.strftime('%H:%M')} ET (Before Market Open).")
-        logger.log(f"   -> Targeting PREVIOUS trading day: {target_date}")
-    else:
-        target_date = now_et.date()
-        logger.log(f"🕰️ Time is {now_et.strftime('%H:%M')} ET (After Market Open).")
-        logger.log(f"   -> Targeting CURRENT trading day: {target_date}")
-        
-    # Skip weekends (Simple check: 5=Saturday, 6=Sunday)
-    if target_date.weekday() >= 5:
-        logger.log("⚠️ Warning: Target date is a weekend. Markets are likely closed.")
-        
-    return target_date
 
 def run_automation():
     logger = ConsoleLogger()
@@ -61,26 +38,41 @@ def run_automation():
         "TURSO_DB_URL", "TURSO_AUTH_TOKEN",
         "CAPITAL_X_CAP_API_KEY", "CAPITAL_IDENTIFIER", "CAPITAL_PASSWORD"
     ]
-    
-    missing = []
-    for var in required_vars:
-        if not os.environ.get(var):
-            missing.append(var)
-    
+    missing = [var for var in required_vars if not os.environ.get(var)]
     if missing:
-        logger.log("❌ Error: Missing environment variables.")
-        logger.log(f"Missing keys: {', '.join(missing)}")
+        logger.log(f"❌ Error: Missing environment variables: {', '.join(missing)}")
         sys.exit(1)
 
-    # 2. Smart Date Selection
-    target_date = determine_target_date(logger)
+    # 2. Determine Smart Date (Today or Yesterday in NY)
+    logger.log("Determining target date...")
+    
+    # Get the current time in New York
+    now_et = datetime.now(US_EASTERN)
+    market_open_et = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    
+    # If it's before 9:30 AM ET, harvest *yesterday's* data.
+    if now_et < market_open_et:
+        # If today is Monday, yesterday was Sunday. We need to get Friday.
+        if now_et.weekday() == 0: # 0 = Monday
+            target_date = now_et.date() - timedelta(days=3)
+        # If today is Sunday, we need Friday
+        elif now_et.weekday() == 6: # 6 = Sunday
+             target_date = now_et.date() - timedelta(days=2)
+        # Otherwise, just get yesterday
+        else:
+            target_date = now_et.date() - timedelta(days=1)
+        logger.log(f"   -> It's before 9:30 AM ET. Harvesting for previous market day: {target_date}")
+    else:
+        # It's after 9:30 AM ET, harvest *today's* data.
+        target_date = now_et.date()
+        logger.log(f"   -> It's after 9:30 AM ET. Harvesting for today: {target_date}")
+
 
     # 3. Fetch Inventory
     logger.log("📦 Fetching symbol inventory from Turso...")
     db_map = get_symbol_map_from_db()
-    
     if not db_map:
-        logger.log("❌ Error: No symbols found in database or DB connection failed.")
+        logger.log("❌ Error: No symbols found in database. Exiting.")
         sys.exit(1)
     
     tickers = list(db_map.keys())
@@ -104,15 +96,17 @@ def run_automation():
         row_count = len(final_df)
         logger.log(f"✅ Harvest finished. Collected {row_count} total candles.")
         
-        # Check for failures
-        failures = report_df[report_df['Status'].str.contains("Failed")]
-        if not failures.empty:
-            logger.log(f"⚠️ WARNING: {len(failures)} symbols failed completely.")
-        
-        # Check for fallbacks
-        fallbacks = report_df[report_df['Mode'].str.contains("Fallback")]
-        if not fallbacks.empty:
-            logger.log(f"⚠️ WARNING: {len(fallbacks)} symbols used Capital fallback (No Volume).")
+        if report_df is not None:
+            failures = report_df[report_df['Status'].str.contains("Failed")]
+            if not failures.empty:
+                logger.log(f"⚠️ WARNING: {len(failures)} symbols failed completely.")
+            
+            fallbacks = report_df[report_df['Mode'].str.contains("Fallback")]
+            if not fallbacks.empty:
+                logger.log(f"⚠️ WARNING: {len(fallbacks)} symbols used Capital fallback (No Volume).")
+        else:
+            logger.log("⚠️ Warning: Report card was empty.")
+
 
         # Save
         logger.log("💾 Committing data to Turso...")
