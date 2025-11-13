@@ -4,27 +4,18 @@ from datetime import datetime, timedelta
 from pytz import timezone
 from dotenv import load_dotenv 
 
-# Load .env if it exists (Local testing)
+# Load .env for local testing
 load_dotenv()
 
-# --- THIS IS THE FIX ---
-# We are changing 'daily_harvester' to 'app'
+# --- MODIFIED: Import from the new, clean core_logic.py ---
 try:
-    from app import (
-        get_db_connection,
-        get_symbol_map_from_db,
-        run_harvest_logic,
-        save_data_to_turso,
-        US_EASTERN
-    )
+    import core_logic as cl
 except ImportError as e:
-    # Updated error message
-    print(f"CRITICAL ERROR: Could not import 'app.py'. {e}")
+    print(f"CRITICAL ERROR: Could not import 'core_logic.py'. {e}")
     sys.exit(1)
-# --- END FIX ---
+# --- END MODIFICATION ---
 
 class ConsoleLogger:
-    """A simple logger that prints to the GitHub Actions console."""
     def log(self, message):
         timestamp = datetime.now().strftime('%H:%M:%S')
         print(f"[{timestamp}] {message}")
@@ -45,32 +36,31 @@ def run_automation():
 
     # 2. Determine Smart Date (Today or Yesterday in NY)
     logger.log("Determining target date...")
-    
-    # Get the current time in New York
-    now_et = datetime.now(US_EASTERN)
+    now_et = datetime.now(cl.US_EASTERN)
     market_open_et = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
     
-    # If it's before 9:30 AM ET, harvest *yesterday's* data.
     if now_et < market_open_et:
-        # If today is Monday, yesterday was Sunday. We need to get Friday.
-        if now_et.weekday() == 0: # 0 = Monday
+        if now_et.weekday() == 0: # Monday
             target_date = now_et.date() - timedelta(days=3)
-        # If today is Sunday, we need Friday
-        elif now_et.weekday() == 6: # 6 = Sunday
+        elif now_et.weekday() == 6: # Sunday
              target_date = now_et.date() - timedelta(days=2)
-        # Otherwise, just get yesterday
         else:
             target_date = now_et.date() - timedelta(days=1)
         logger.log(f"   -> It's before 9:30 AM ET. Harvesting for previous market day: {target_date}")
     else:
-        # It's after 9:30 AM ET, harvest *today's* data.
         target_date = now_et.date()
         logger.log(f"   -> It's after 9:30 AM ET. Harvesting for today: {target_date}")
 
+    # 3. Get DB connection (non-cached)
+    logger.log("Establishing database connection...")
+    db_client = cl.get_db_connection()
+    if not db_client:
+        logger.log("❌ Error: Could not establish DB connection. Exiting.")
+        sys.exit(1)
 
-    # 3. Fetch Inventory
+    # 4. Fetch Inventory
     logger.log("📦 Fetching symbol inventory from Turso...")
-    db_map = get_symbol_map_from_db()
+    db_map = cl.get_symbol_map_from_db(client=db_client) # Pass client
     if not db_map:
         logger.log("❌ Error: No symbols found in database. Exiting.")
         sys.exit(1)
@@ -78,9 +68,9 @@ def run_automation():
     tickers = list(db_map.keys())
     logger.log(f"🦁 Harvesting {len(tickers)} symbols: {tickers}")
 
-    # 4. Run the Harvest
+    # 5. Run the Harvest
     try:
-        final_df, report_df = run_harvest_logic(
+        final_df, report_df = cl.run_harvest_logic(
             tickers_to_harvest=tickers,
             target_date=target_date,
             db_map=db_map,
@@ -91,12 +81,12 @@ def run_automation():
         logger.log(f"❌ CRITICAL ERROR during harvest: {e}")
         sys.exit(1)
 
-    # 5. Analyze Results & Commit
+    # 6. Analyze Results & Commit
     if final_df is not None and not final_df.empty:
         row_count = len(final_df)
         logger.log(f"✅ Harvest finished. Collected {row_count} total candles.")
         
-        if report_df is not None:
+        if report_df is not None and not report_df.empty():
             failures = report_df[report_df['Status'].str.contains("Failed")]
             if not failures.empty:
                 logger.log(f"⚠️ WARNING: {len(failures)} symbols failed completely.")
@@ -105,12 +95,10 @@ def run_automation():
             if not fallbacks.empty:
                 logger.log(f"⚠️ WARNING: {len(fallbacks)} symbols used Capital fallback (No Volume).")
         else:
-            logger.log("⚠️ Warning: Report card was empty.")
+            logger.log("⚠️ Warning: Report card was empty or not a DataFrame.")
 
-
-        # Save
         logger.log("💾 Committing data to Turso...")
-        success = save_data_to_turso(final_df, logger)
+        success = cl.save_data_to_turso(final_df, logger, client=db_client)
         if success:
             logger.log("✅ SUCCESS: Data saved securely.")
         else:
