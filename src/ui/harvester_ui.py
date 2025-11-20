@@ -22,6 +22,10 @@ def render_harvester_ui(inventory_list, db_map):
     if 'harvest_target_date' not in st.session_state:
         st.session_state['harvest_target_date'] = datetime.now(US_EASTERN).date()
     
+    # Initialize ticker selection if not present
+    if 'selected_tickers' not in st.session_state:
+        st.session_state.selected_tickers = inventory_list
+
     # Settings Expander
     with st.expander("⚙️ Harvest Settings", expanded=True):
         c1, c2 = st.columns(2)
@@ -36,16 +40,27 @@ def render_harvester_ui(inventory_list, db_map):
     st.write("**Select Symbols to Harvest**")
 
     # Select All / Deselect All Helper
+    # We use a callback to update the session state for the multiselect
+    def on_select_all_change():
+        if st.session_state.select_all_toggle:
+            st.session_state.selected_tickers = inventory_list
+        else:
+            st.session_state.selected_tickers = []
+
     col_sel1, col_sel2 = st.columns([1, 4])
     with col_sel1:
-        select_all = st.checkbox("Select All", value=True)
-
-    default_selection = inventory_list if select_all else []
+        st.checkbox(
+            "Select All",
+            value=True,
+            key="select_all_toggle",
+            on_change=on_select_all_change
+        )
 
     selected_tickers = st.multiselect(
         "Tickers",
         options=inventory_list,
-        default=default_selection,
+        default=None, # We manage this via session state key
+        key="selected_tickers",
         label_visibility="collapsed"
     )
     st.caption(f"Selected: {len(selected_tickers)}")
@@ -55,69 +70,30 @@ def render_harvester_ui(inventory_list, db_map):
         st.divider()
         st.write("### 🔄 Harvest Progress")
         
-        if st.button("Start Harvest", type="primary", disabled=(len(selected_tickers) == 0)):
-            # --- Initialize UI Elements ---
-            st.divider()
-            st.write("### 🔄 Harvest Progress")
-            
-            prog_bar = st.progress(0, text="Starting...")
-            status_text = st.empty()
-            
-            # Create initial DataFrame for the matrix
-            initial_data = {
-                "Ticker": selected_tickers,
-                "Pre-Market": ["⏳"] * len(selected_tickers),
-                "Regular Session": ["⏳"] * len(selected_tickers),
-                "Post-Market": ["⏳"] * len(selected_tickers),
-                "Total Rows": [0] * len(selected_tickers),
-                "Status": ["Pending"] * len(selected_tickers)
-            }
-            status_df = pd.DataFrame(initial_data).set_index("Ticker")
-            table_placeholder = st.empty()
-            table_placeholder.dataframe(status_df, use_container_width=True)
+        prog_bar = st.progress(0, text="Starting...")
+        status_text = st.empty()
 
-            # Callback to update UI from inside the logic
-            def update_ui_callback(ticker, col, val):
-                if col == "PROG":
-                    # value is (current, total, message)
-                    curr, total, msg = val
-                    pct = min(curr / total, 1.0)
-                    prog_bar.progress(pct, text=msg)
-                    return
+        # Create initial DataFrame for the matrix
+        initial_data = {
+            "Ticker": selected_tickers,
+            "Pre-Market": ["⏳"] * len(selected_tickers),
+            "Regular Session": ["⏳"] * len(selected_tickers),
+            "Post-Market": ["⏳"] * len(selected_tickers),
+            "Total Rows": [0] * len(selected_tickers),
+            "Status": ["Pending"] * len(selected_tickers)
+        }
+        status_df = pd.DataFrame(initial_data).set_index("Ticker")
+        table_placeholder = st.empty()
+        table_placeholder.dataframe(status_df, use_container_width=True)
 
-                # Update DataFrame
-                if ticker in status_df.index:
-                    status_df.at[ticker, col] = val
-                    table_placeholder.dataframe(status_df, use_container_width=True)
-
-                    # Also update text status
-                    status_text.markdown(f"**Processing {ticker}:** {col} -> {val}")
-
-            # Run Logic
-            # We still use a dummy logger just in case, but rely on callback for UI
-            # StreamlitLogger handles None container gracefully by just printing
-            logger = StreamlitLogger(None)
-
-            final_df, report_df = run_harvest_logic(
-                selected_tickers,
-                target_date,
-                db_map,
-                logger,
-                harvest_mode,
-                progress_callback=update_ui_callback
-            )
-
-            prog_bar.progress(1.0, text="✅ Harvest Complete!")
-            status_text.markdown("✅ **All Tasks Completed.**")
-            
-            st.session_state['harvest_report'] = report_df
-            st.session_state['harvest_target_date'] = target_date 
-            
-            if not final_df.empty:
-                st.session_state['harvested_data'] = final_df
-            else:
-                st.session_state['harvested_data'] = None
-                st.warning("No data collected.")
+        # Callback to update UI from inside the logic
+        def update_ui_callback(ticker, col, val):
+            if col == "PROG":
+                # value is (current, total, message)
+                curr, total, msg = val
+                pct = min(curr / total, 1.0)
+                prog_bar.progress(pct, text=msg)
+                return
             
             # Update DataFrame
             if ticker in status_df.index:
@@ -128,7 +104,6 @@ def render_harvester_ui(inventory_list, db_map):
                 status_text.markdown(f"**Processing {ticker}:** {col} -> {val}")
 
         # Run Logic
-        # We still use a dummy logger just in case, but rely on callback for UI
         # StreamlitLogger handles None container gracefully by just printing
         logger = StreamlitLogger(None)
 
