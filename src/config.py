@@ -13,3 +13,4 @@ UTC = timezone('UTC')
 
 # Data Schema
 SCHEMA_COLS = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume', 'session']
+ 

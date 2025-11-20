@@ -1,8 +1,8 @@
 streamlit
 pandas
-requests
+yfinance
 altair
 libsql-client
+requests
+urllib3
 pytz
-python-dotenv
-yfinance>=0.2.40
