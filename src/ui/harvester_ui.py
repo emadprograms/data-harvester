@@ -22,9 +22,9 @@ def render_harvester_ui(inventory_list, db_map):
     if 'harvest_target_date' not in st.session_state:
         st.session_state['harvest_target_date'] = datetime.now(US_EASTERN).date()
     
-    # Initialize ticker selection if not present
-    if 'selected_tickers' not in st.session_state:
-        st.session_state.selected_tickers = inventory_list
+    # Initialize ticker selection if not present (New Key v2 to force reset)
+    if 'selected_tickers_v2' not in st.session_state:
+        st.session_state.selected_tickers_v2 = inventory_list
 
     # Settings Expander
     with st.expander("⚙️ Harvest Settings", expanded=True):
@@ -43,24 +43,23 @@ def render_harvester_ui(inventory_list, db_map):
     # We use a callback to update the session state for the multiselect
     def on_select_all_change():
         if st.session_state.select_all_toggle:
-            st.session_state.selected_tickers = inventory_list
+            st.session_state.selected_tickers_v2 = inventory_list
         else:
-            st.session_state.selected_tickers = []
+            st.session_state.selected_tickers_v2 = []
 
-    col_sel1, col_sel2 = st.columns([1, 4])
-    with col_sel1:
-        st.checkbox(
-            "Select All",
-            value=True,
-            key="select_all_toggle",
-            on_change=on_select_all_change
-        )
+    # Removed columns to ensure visibility
+    st.checkbox(
+        "Select All",
+        value=True,
+        key="select_all_toggle",
+        on_change=on_select_all_change
+    )
 
     selected_tickers = st.multiselect(
         "Tickers",
         options=inventory_list,
-        default=None, # We manage this via session state key
-        key="selected_tickers",
+        default=None, # Managed via session state key
+        key="selected_tickers_v2",
         label_visibility="collapsed"
     )
     st.caption(f"Selected: {len(selected_tickers)}")

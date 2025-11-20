@@ -8,6 +8,7 @@ from src.ui.inventory import render_inventory_ui
 from src.ui.harvester_ui import render_harvester_ui
 from src.ui.health import render_health_dashboard
 
+# Force reload comment
 st.set_page_config(page_title='Market Data Harvester', layout='wide')
 
 # Initialize database
