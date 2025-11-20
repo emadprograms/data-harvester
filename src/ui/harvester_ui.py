@@ -2,6 +2,7 @@
 UI component for data harvesting.
 """
 import streamlit as st
+import pandas as pd
 import altair as alt
 from datetime import datetime
 from src.config import US_EASTERN
@@ -40,12 +41,59 @@ def render_harvester_ui(inventory_list, db_map):
         st.caption(f"Selected: {len(selected_tickers)}")
         
         if st.button("Start Harvest", type="primary", disabled=(len(selected_tickers) == 0)):
-            status_container = st.status("Harvesting Data...", expanded=True)
-            logger = StreamlitLogger(status_container)
+            # --- Initialize UI Elements ---
+            st.divider()
+            st.write("### 🔄 Harvest Progress")
             
-            final_df, report_df = run_harvest_logic(selected_tickers, target_date, db_map, logger, harvest_mode)
+            prog_bar = st.progress(0, text="Starting...")
+            status_text = st.empty()
             
-            status_container.update(label="Harvest Complete!", state="complete", expanded=False)
+            # Create initial DataFrame for the matrix
+            initial_data = {
+                "Ticker": selected_tickers,
+                "Pre-Market": ["⏳"] * len(selected_tickers),
+                "Regular Session": ["⏳"] * len(selected_tickers),
+                "Post-Market": ["⏳"] * len(selected_tickers),
+                "Total Rows": [0] * len(selected_tickers),
+                "Status": ["Pending"] * len(selected_tickers)
+            }
+            status_df = pd.DataFrame(initial_data).set_index("Ticker")
+            table_placeholder = st.empty()
+            table_placeholder.dataframe(status_df, use_container_width=True)
+
+            # Callback to update UI from inside the logic
+            def update_ui_callback(ticker, col, val):
+                if col == "PROG":
+                    # value is (current, total, message)
+                    curr, total, msg = val
+                    pct = min(curr / total, 1.0)
+                    prog_bar.progress(pct, text=msg)
+                    return
+
+                # Update DataFrame
+                if ticker in status_df.index:
+                    status_df.at[ticker, col] = val
+                    table_placeholder.dataframe(status_df, use_container_width=True)
+
+                    # Also update text status
+                    status_text.markdown(f"**Processing {ticker}:** {col} -> {val}")
+
+            # Run Logic
+            # We still use a dummy logger just in case, but rely on callback for UI
+            # StreamlitLogger handles None container gracefully by just printing
+            logger = StreamlitLogger(None)
+
+            final_df, report_df = run_harvest_logic(
+                selected_tickers,
+                target_date,
+                db_map,
+                logger,
+                harvest_mode,
+                progress_callback=update_ui_callback
+            )
+
+            prog_bar.progress(1.0, text="✅ Harvest Complete!")
+            status_text.markdown("✅ **All Tasks Completed.**")
             
             st.session_state['harvest_report'] = report_df
             st.session_state['harvest_target_date'] = target_date 

@@ -57,6 +57,8 @@ def render_health_dashboard(inventory_list):
             session_filter = "PRE"
         elif session_mode == "☀️ Regular Session":
             session_filter = "REG"
+        elif session_mode == "🌆 Post-Market":
+            session_filter = "POST"
         else:
             session_filter = "Total"
             

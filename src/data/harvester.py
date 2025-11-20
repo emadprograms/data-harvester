@@ -10,7 +10,7 @@ from src.api.yahoo import fetch_yahoo_market_data
 from src.data.normalizer import normalize_capital_df, normalize_yahoo_df
 
 
-def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_mode="🚀 Full Day"):
+def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None):
     """
     Main harvesting workflow that coordinates API calls, normalization, and reporting.
     
@@ -21,10 +21,16 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         logger: Logger instance for status messages
         harvest_mode: Type of harvest ("🚀 Full Day", "🌙 Pre-Market Only", 
                       "☀️ Regular Session Only", "🌆 Post-Market Only")
+        progress_callback: Optional function (ticker, column, value) -> None for UI updates
     
     Returns:
         Tuple of (final_df, report_df) - harvested data and harvest report
     """
+
+    def update_ui(ticker, col, val):
+        if progress_callback:
+            progress_callback(ticker, col, val)
+
     cst, xst = create_capital_session()
     need_capital = True  # Always need Capital.com for pre/post market
     
@@ -43,9 +49,17 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
     post_start = reg_end
     post_end   = US_EASTERN.localize(datetime.combine(target_date, dt_time(20, 0))).astimezone(UTC)
 
-    for ticker in tickers_to_harvest:
+    total_tickers = len(tickers_to_harvest)
+
+    for idx, ticker in enumerate(tickers_to_harvest):
+        update_ui(ticker, "Status", "🔄 Processing...")
+        if progress_callback:
+            # Special "PROG" column for progress bar updates: (current_index, total, message)
+            progress_callback(None, "PROG", (idx, total_tickers, f"Processing {ticker}..."))
+
         if ticker not in db_map:
             logger.log(f"⚠️ Skipping **{ticker}**: Not in inventory.")
+            update_ui(ticker, "Status", "⚠️ Not in Inventory")
             continue
             
         logger.log(f"Processing **{ticker}**...")
@@ -57,29 +71,46 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
 
         # --- A. Pre-Market ---
         if harvest_mode not in ["☀️ Regular Session Only", "🌆 Post-Market Only"]:
+            update_ui(ticker, "Pre-Market", "🔄 Fetching (Cap)...")
             if cst:
                 time.sleep(0.2)
                 raw_pre = fetch_capital_data_range(epic, cst, xst, pm_start, pm_end, logger)
                 df_pre = normalize_capital_df(raw_pre, ticker, "PRE")
+                if not df_pre.empty:
+                    update_ui(ticker, "Pre-Market", f"✅ Capital ({len(df_pre)})")
+                else:
+                    update_ui(ticker, "Pre-Market", "⚠️ 0 Rows")
+        else:
+             update_ui(ticker, "Pre-Market", "-")
 
         # --- B. Regular Session (with Fallback) ---
         if harvest_mode not in ["🌙 Pre-Market Only", "🌆 Post-Market Only"]:
+            update_ui(ticker, "Regular Session", "🔄 Fetching...")
             if strategy == 'CAPITAL_ONLY':
                 mode_str = "CAPITAL_ONLY"
+                update_ui(ticker, "Regular Session", "🔄 Fetching (Cap)...")
                 if cst:
                     time.sleep(0.2)
                     raw_reg = fetch_capital_data_range(epic, cst, xst, reg_start, reg_end, logger)
                     df_reg = normalize_capital_df(raw_reg, ticker, "REG")
+                    if not df_reg.empty:
+                         update_ui(ticker, "Regular Session", f"✅ Capital ({len(df_reg)})")
+                    else:
+                         update_ui(ticker, "Regular Session", "❌ 0 Rows")
+
             else:  # HYBRID
                 logger.log(f"   -> Primary Source: Yahoo Finance")
+                update_ui(ticker, "Regular Session", "🔄 Fetching (Yahoo)...")
                 raw_yahoo = fetch_yahoo_market_data(ticker, target_date, logger)
                 
                 if not raw_yahoo.empty:
                     logger.log(f"   -> Success (Yahoo): {len(raw_yahoo)} rows.")
                     df_reg = normalize_yahoo_df(raw_yahoo, ticker)
                     mode_str = "HYBRID (Yahoo)"
+                    update_ui(ticker, "Regular Session", f"✅ Yahoo ({len(df_reg)})")
                 else:
                     logger.log(f"   ⚠️ Yahoo failed. Trying Fallback: Capital.com ({epic})")
+                    update_ui(ticker, "Regular Session", "⚠️ Yahoo Failed. Trying Fallback...")
                     if cst:
                         time.sleep(0.2)
                         raw_capital_fallback = fetch_capital_data_range(epic, cst, xst, reg_start, reg_end, logger)
@@ -88,11 +119,17 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                             logger.log(f"   -> Success (Capital Fallback): {len(raw_capital_fallback)} rows.")
                             df_reg = normalize_capital_df(raw_capital_fallback, ticker, "REG")
                             mode_str = "HYBRID (Fallback)"
+                            update_ui(ticker, "Regular Session", f"⚠️ Cap Fallback ({len(df_reg)})")
                         else:
                             logger.log(f"   ❌ Fallback failed. No regular session data for {ticker}.")
+                            update_ui(ticker, "Regular Session", "❌ Failed (All Sources)")
+
+        else:
+            update_ui(ticker, "Regular Session", "-")
 
         # --- C. Post-Market (NEW) ---
         if harvest_mode not in ["🌙 Pre-Market Only", "☀️ Regular Session Only"]:
+            update_ui(ticker, "Post-Market", "🔄 Fetching (Cap)...")
             if cst:
                 time.sleep(0.2)
                 logger.log(f"   -> Fetching Post-Market data from Capital.com")
@@ -100,6 +137,11 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                 df_post = normalize_capital_df(raw_post, ticker, "POST")
                 if not df_post.empty:
                     logger.log(f"   -> Success (Post-Market): {len(df_post)} rows.")
+                    update_ui(ticker, "Post-Market", f"✅ Capital ({len(df_post)})")
+                else:
+                    update_ui(ticker, "Post-Market", "⚠️ 0 Rows")
+        else:
+            update_ui(ticker, "Post-Market", "-")
 
         # --- D. Merge & Report ---
         dfs = [d for d in [df_pre, df_reg, df_post] if not d.empty]
@@ -109,6 +151,8 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
             all_data.append(combined)
             total_rows = len(combined)
         
+        update_ui(ticker, "Total Rows", total_rows)
+
         expected_pre = 330   # 5.5 hours * 60
         expected_reg = 390   # 6.5 hours * 60
         expected_post = 240  # 4 hours * 60
@@ -137,6 +181,8 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         if "Fallback" in mode_str and status_icon == "✅ Complete":
             status_icon = "✅ (Fallback)"
 
+        update_ui(ticker, "Status", status_icon)
+
         report_cards.append({
             "Ticker": ticker, 
             "Mode": mode_str, 
@@ -147,10 +193,13 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
             "Status": status_icon
         })
 
+    # Final Update
+    if progress_callback:
+        progress_callback(None, "PROG", (total_tickers, total_tickers, "Harvest Complete!"))
+
     if not all_data:
         return pd.DataFrame(), pd.DataFrame(report_cards)
         
     final_df = pd.concat(all_data).reset_index(drop=True)
     report_df = pd.DataFrame(report_cards)
     return final_df, report_df
-
