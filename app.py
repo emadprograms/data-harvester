@@ -18,7 +18,7 @@ with st.sidebar:
     st.title('🦁 Market Lion')
     app_mode = st.selectbox(
         'Select App Mode',
-        ['⚙️ Inventory Manager', '🌱 Data Harvester', '🗓️ Data Health Dashboard']
+        ['🌱 Data Harvester', '⚙️ Inventory Manager', '🗓️ Data Health Dashboard']
     )
     st.divider()
 

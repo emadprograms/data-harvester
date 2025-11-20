@@ -22,23 +22,38 @@ def render_harvester_ui(inventory_list, db_map):
     if 'harvest_target_date' not in st.session_state:
         st.session_state['harvest_target_date'] = datetime.now(US_EASTERN).date()
     
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        harvest_mode = st.radio(
-    "Harvest Mode", 
-    ["🚀 Full Day", "🌙 Pre-Market Only", "☀️ Regular Session Only", "🌆 Post-Market Only"]
-)
+    # Settings Expander
+    with st.expander("⚙️ Harvest Settings", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1:
+             harvest_mode = st.radio(
+                "Harvest Mode",
+                ["🚀 Full Day", "🌙 Pre-Market Only", "☀️ Regular Session Only", "🌆 Post-Market Only"]
+            )
+        with c2:
+             target_date = st.date_input("Target Date", st.session_state['harvest_target_date'])
 
-        target_date = st.date_input("Target Date", st.session_state['harvest_target_date'])
-    with c2:
-        st.write("**Select Symbols to Harvest**")
-        selected_tickers = st.multiselect(
-            "Tickers", 
-            options=inventory_list, 
-            default=inventory_list[:2] if inventory_list else None, 
-            label_visibility="collapsed"
-        )
-        st.caption(f"Selected: {len(selected_tickers)}")
+    st.write("**Select Symbols to Harvest**")
+
+    # Select All / Deselect All Helper
+    col_sel1, col_sel2 = st.columns([1, 4])
+    with col_sel1:
+        select_all = st.checkbox("Select All", value=True)
+
+    default_selection = inventory_list if select_all else []
+
+    selected_tickers = st.multiselect(
+        "Tickers",
+        options=inventory_list,
+        default=default_selection,
+        label_visibility="collapsed"
+    )
+    st.caption(f"Selected: {len(selected_tickers)}")
+
+    if st.button("Start Harvest", type="primary", disabled=(len(selected_tickers) == 0)):
+        # --- Initialize UI Elements ---
+        st.divider()
+        st.write("### 🔄 Harvest Progress")
         
         if st.button("Start Harvest", type="primary", disabled=(len(selected_tickers) == 0)):
             # --- Initialize UI Elements ---
@@ -104,13 +119,47 @@ def render_harvester_ui(inventory_list, db_map):
                 st.session_state['harvested_data'] = None
                 st.warning("No data collected.")
             
-            if not report_df.empty:
-                fallback_tickers = report_df[report_df['Mode'].str.contains("Fallback")]['Ticker'].tolist()
-                if fallback_tickers:
-                    st.warning(
-                        f"**Fallback Alert:** {', '.join(fallback_tickers)} failed to fetch from Yahoo Finance and used Capital.com as a fallback.", 
-                        icon="📡"
-                    )
+            # Update DataFrame
+            if ticker in status_df.index:
+                status_df.at[ticker, col] = val
+                table_placeholder.dataframe(status_df, use_container_width=True)
+
+                # Also update text status
+                status_text.markdown(f"**Processing {ticker}:** {col} -> {val}")
+
+        # Run Logic
+        # We still use a dummy logger just in case, but rely on callback for UI
+        # StreamlitLogger handles None container gracefully by just printing
+        logger = StreamlitLogger(None)
+
+        final_df, report_df = run_harvest_logic(
+            selected_tickers,
+            target_date,
+            db_map,
+            logger,
+            harvest_mode,
+            progress_callback=update_ui_callback
+        )
+
+        prog_bar.progress(1.0, text="✅ Harvest Complete!")
+        status_text.markdown("✅ **All Tasks Completed.**")
+
+        st.session_state['harvest_report'] = report_df
+        st.session_state['harvest_target_date'] = target_date
+
+        if not final_df.empty:
+            st.session_state['harvested_data'] = final_df
+        else:
+            st.session_state['harvested_data'] = None
+            st.warning("No data collected.")
+
+        if not report_df.empty:
+            fallback_tickers = report_df[report_df['Mode'].str.contains("Fallback")]['Ticker'].tolist()
+            if fallback_tickers:
+                st.warning(
+                    f"**Fallback Alert:** {', '.join(fallback_tickers)} failed to fetch from Yahoo Finance and used Capital.com as a fallback.",
+                    icon="📡"
+                )
 
     if st.session_state.get('harvest_report') is not None:
         st.divider()
