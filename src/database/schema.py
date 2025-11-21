@@ -1,5 +1,6 @@
 """
 Database schema initialization and table creation.
+Includes strict PRIMARY KEY constraints to prevent duplication.
 """
 import streamlit as st
 from src.database.connection import get_db_connection
@@ -12,6 +13,10 @@ def init_db():
         return
     
     try:
+        # --- ⚠️ DANGER ZONE: UNCOMMENT ONCE TO WIPE BAD DATA ---
+        # client.execute("DROP TABLE IF EXISTS market_data")
+        # -------------------------------------------------------
+
         # Table for managing symbol rules
         client.execute("""
             CREATE TABLE IF NOT EXISTS symbol_map (
@@ -22,11 +27,18 @@ def init_db():
         """)
         
         # Table for storing all market data
+        # CRITICAL: PRIMARY KEY (symbol, timestamp) forces SQLite to reject duplicates.
+        # We store timestamp as a UTC String to ensure strict uniqueness.
         client.execute("""
             CREATE TABLE IF NOT EXISTS market_data (
                 timestamp TEXT NOT NULL,
                 symbol TEXT NOT NULL,
-                open REAL, high REAL, low REAL, close REAL, volume REAL, session TEXT,
+                open REAL, 
+                high REAL, 
+                low REAL, 
+                close REAL, 
+                volume REAL, 
+                session TEXT,
                 PRIMARY KEY (symbol, timestamp)
             )
         """)
@@ -35,9 +47,8 @@ def init_db():
         res = client.execute("SELECT count(*) FROM symbol_map")
         if res.rows and res.rows[0][0] == 0:
             hybrid_tickers = [
-                "AMD", "AMZN", "AAPL", "AVGO", "BABA", "GOOGL", "LRCX", "META", 
-                "MSFT", "MU", "NVDA", "ORCL", "PANW", "QCOM", "SHOP", "TSLA", "TSM",
-                "SPY", "QQQ", "IWM", "DIA"
+                "SPY", "QQQ", "IWM", "DIA", "AMD", "AMZN", "AAPL", "NVDA", "TSLA",
+                "BTCUSDT", "ETHUSDT", "CL=F", "GC=F", "VIX"
             ]
             seed_data = [(t, t, "HYBRID") for t in hybrid_tickers]
             for ticker, epic, strategy in seed_data:
@@ -46,7 +57,8 @@ def init_db():
                     [ticker, epic, strategy]
                 )
             if st.runtime.exists():
-                st.toast("Database initialized with default symbols.", icon="💾")
+                st.toast("Database initialized.", icon="💾")
+                
     except Exception as e:
         if st.runtime.exists():
             st.error(f"DB Init Error: {e}")

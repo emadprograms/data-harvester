@@ -10,8 +10,8 @@ from src.data.harvester import run_harvest_logic
 from src.database.operations import save_data_to_turso
 from src.utils.logger import StreamlitLogger
 
-
-def render_harvester_ui(inventory_list, db_map):
+# FIXED: Swapped arguments to match app.py (db_map first)
+def render_harvester_ui(db_map, inventory_list):
     """Renders the data harvester UI section."""
     st.subheader("🌱 Data Harvester")
     
@@ -22,7 +22,7 @@ def render_harvester_ui(inventory_list, db_map):
     if 'harvest_target_date' not in st.session_state:
         st.session_state['harvest_target_date'] = datetime.now(US_EASTERN).date()
     
-    # Initialize ticker selection if not present (New Key v2 to force reset)
+    # Initialize ticker selection if not present
     if 'selected_tickers_v2' not in st.session_state:
         st.session_state.selected_tickers_v2 = inventory_list
 
@@ -40,25 +40,18 @@ def render_harvester_ui(inventory_list, db_map):
     st.write("**Select Symbols to Harvest**")
 
     # Select All / Deselect All Helper
-    # We use a callback to update the session state for the multiselect
     def on_select_all_change():
         if st.session_state.select_all_toggle:
             st.session_state.selected_tickers_v2 = inventory_list
         else:
             st.session_state.selected_tickers_v2 = []
 
-    # Removed columns to ensure visibility
-    st.checkbox(
-        "Select All",
-        value=True,
-        key="select_all_toggle",
-        on_change=on_select_all_change
-    )
+    st.checkbox("Select All", value=True, key="select_all_toggle", on_change=on_select_all_change)
 
     selected_tickers = st.multiselect(
         "Tickers",
         options=inventory_list,
-        default=None, # Managed via session state key
+        default=None, 
         key="selected_tickers_v2",
         label_visibility="collapsed"
     )
@@ -88,22 +81,17 @@ def render_harvester_ui(inventory_list, db_map):
         # Callback to update UI from inside the logic
         def update_ui_callback(ticker, col, val):
             if col == "PROG":
-                # value is (current, total, message)
                 curr, total, msg = val
                 pct = min(curr / total, 1.0)
                 prog_bar.progress(pct, text=msg)
                 return
             
-            # Update DataFrame
             if ticker in status_df.index:
                 status_df.at[ticker, col] = val
                 table_placeholder.dataframe(status_df, use_container_width=True)
-
-                # Also update text status
                 status_text.markdown(f"**Processing {ticker}:** {col} -> {val}")
 
         # Run Logic
-        # StreamlitLogger handles None container gracefully by just printing
         logger = StreamlitLogger(None)
 
         final_df, report_df = run_harvest_logic(
@@ -128,10 +116,10 @@ def render_harvester_ui(inventory_list, db_map):
             st.warning("No data collected.")
 
         if not report_df.empty:
-            fallback_tickers = report_df[report_df['Mode'].str.contains("Fallback")]['Ticker'].tolist()
+            fallback_tickers = report_df[report_df['Mode'].str.contains("Fallback", na=False)]['Ticker'].tolist()
             if fallback_tickers:
                 st.warning(
-                    f"**Fallback Alert:** {', '.join(fallback_tickers)} failed to fetch from Yahoo Finance and used Capital.com as a fallback.",
+                    f"**Fallback Alert:** {', '.join(fallback_tickers)} used Capital.com fallback.",
                     icon="📡"
                 )
 
@@ -176,12 +164,33 @@ def render_harvester_ui(inventory_list, db_map):
         with col_viz:
             if final_df is not None:
                 st.write("### 👁️ Visual Check")
-                t_sel = st.selectbox("Preview Ticker", final_df['symbol'].unique())
+                valid_tickers = report_df[report_df['Total'] > 0]['Ticker'].unique()
+                t_sel = st.selectbox("Preview Ticker", valid_tickers)
+                
                 if t_sel:
-                    sub = final_df[final_df['symbol'] == t_sel]
-                    chart = alt.Chart(sub).mark_line().encode(
-                        x='timestamp:T', 
-                        y=alt.Y('close:Q', scale=alt.Scale(zero=False)), 
-                        color='session:N'
+                    chart_df = final_df[final_df['symbol'] == t_sel].copy()
+                    chart_df = chart_df.sort_values('timestamp')
+
+                    # --- 5-Line Gap Fix ---
+                    # 1. Calculate time gap between rows
+                    chart_df['delta'] = chart_df['timestamp'].diff()
+                    # 2. Create a new ID whenever the gap is > 2 mins or session changes
+                    chart_df['segment_id'] = (
+                        (chart_df['delta'] > pd.Timedelta('2min')) | 
+                        (chart_df['session'] != chart_df['session'].shift())
+                    ).cumsum().fillna(0)
+
+                    # --- Chart ---
+                    chart = alt.Chart(chart_df).mark_line().encode(
+                        x=alt.X('timestamp:T', axis=alt.Axis(title='Time', format='%H:%M')),
+                        y=alt.Y('close:Q', scale=alt.Scale(zero=False)),
+                        # Keeps the Legend Clean (Pre, Reg, Post)
+                        color=alt.Color('session:N', legend=alt.Legend(title="Session")), 
+                        # Forces the line to break at gaps without changing the color
+                        detail='segment_id', 
+                        tooltip=['timestamp', 'close', 'session']
+                    ).properties(
+                        title=f"{t_sel} Intraday"
                     ).interactive()
+                    
                     st.altair_chart(chart, use_container_width=True)

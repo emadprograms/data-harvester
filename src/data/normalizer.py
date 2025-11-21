@@ -23,13 +23,16 @@ def normalize_capital_df(df: pd.DataFrame, symbol: str, session_label: str) -> p
     return df_norm[SCHEMA_COLS]
 
 
-def normalize_yahoo_df(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG') -> pd.DataFrame:
     """Normalizes Yahoo Finance data to target schema."""
     if df.empty:
         return pd.DataFrame(columns=SCHEMA_COLS)
     df_norm = df.copy()
+    
+    # ... (Previous index handling code) ...
     if isinstance(df_norm.columns, pd.MultiIndex):
         df_norm.columns = df_norm.columns.get_level_values(0)
+    
     df_norm.reset_index(inplace=True)
     df_norm.rename(columns={
         'Datetime': 'timestamp', 
@@ -39,11 +42,21 @@ def normalize_yahoo_df(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
         'Close': 'close', 
         'Volume': 'volume'
     }, inplace=True)
+    
+    # --- VIX FIX: Handle Missing Volume for Indices ---
+    if 'volume' not in df_norm.columns:
+        df_norm['volume'] = 0.0
+    else:
+        df_norm['volume'] = df_norm['volume'].fillna(0)
+    # --------------------------------------------------
+
+    # ... (Rest of standard normalization) ...
     if df_norm['timestamp'].dt.tz is not None:
         df_norm['timestamp'] = df_norm['timestamp'].dt.tz_convert('UTC')
     else:
         df_norm['timestamp'] = df_norm['timestamp'].dt.tz_localize('US/Eastern').dt.tz_convert('UTC')
+        
     df_norm['symbol'] = symbol
-    df_norm['session'] = 'REG'
+    df_norm['session'] = session_label
     df_norm.columns = [c.lower() for c in df_norm.columns]
     return df_norm[SCHEMA_COLS]

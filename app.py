@@ -1,36 +1,51 @@
-"""
-Main Streamlit application entry point for Market Data Harvester.
-"""
 import streamlit as st
 from src.database.schema import init_db
 from src.database.operations import get_symbol_map_from_db
+
+# --- UI Modules ---
+# FIXED: Changed from src.data.harvester to src.ui.harvester_ui
+from src.ui.harvester_ui import render_harvester_ui 
 from src.ui.inventory import render_inventory_ui
-from src.ui.harvester_ui import render_harvester_ui
 from src.ui.health import render_health_dashboard
+from src.ui.inspector import render_inspector_ui
 
-# Force reload comment
-st.set_page_config(page_title='Market Data Harvester', layout='wide')
+# Page Config
+st.set_page_config(page_title="Market Data Harvester", layout="wide", page_icon="📈")
 
-# Initialize database
-init_db()
+def main():
+    # Initialize DB
+    init_db()
+    
+    # Fetch Global State
+    db_map = get_symbol_map_from_db()
+    inventory_list = sorted(list(db_map.keys()))
 
-# Sidebar navigation
-with st.sidebar:
-    st.title('🦁 Market Lion')
-    app_mode = st.selectbox(
-        'Select App Mode',
-        ['🌱 Data Harvester', '⚙️ Inventory Manager', '🗓️ Data Health Dashboard']
-    )
-    st.divider()
+    # --- Sidebar Navigation ---
+    with st.sidebar:
+        st.title("🚀 Harvester")
+        
+        app_mode = st.radio("Navigation", [
+            "🏥 Data Health",        # Shows the Green/Red Matrix (using health.py)
+            "🔎 DB Inspector",       # Shows raw data for debugging (using inspector.py)
+            "🌾 Data Harvester",     
+            "📦 Inventory Manager"   
+        ])
+        
+        st.divider()
+        st.info(f"Tracking **{len(inventory_list)}** Symbols")
 
-# Get inventory
-db_map = get_symbol_map_from_db()
-inventory_list = list(db_map.keys())
+    # --- Page Routing ---
+    if app_mode == "🏥 Data Health":
+        render_health_dashboard(inventory_list)
 
-# Route to appropriate UI
-if app_mode == '⚙️ Inventory Manager':
-    render_inventory_ui(db_map, inventory_list)
-elif app_mode == '🌱 Data Harvester':
-    render_harvester_ui(inventory_list, db_map)
-elif app_mode == '🗓️ Data Health Dashboard':
-    render_health_dashboard(inventory_list)
+    elif app_mode == "🔎 DB Inspector":
+        render_inspector_ui(inventory_list)
+
+    elif app_mode == "🌾 Data Harvester":
+        render_harvester_ui(db_map, inventory_list)
+
+    elif app_mode == "📦 Inventory Manager":
+        render_inventory_ui(db_map, inventory_list)
+
+if __name__ == "__main__":
+    main()

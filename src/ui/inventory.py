@@ -1,5 +1,6 @@
 """
 UI component for inventory management.
+Auto-detects routing strategy and clarifies Fallback IDs.
 """
 import streamlit as st
 import pandas as pd
@@ -7,53 +8,84 @@ import time
 from src.database.operations import upsert_symbol_mapping, delete_symbol_mapping
 
 
+def get_route_description(ticker):
+    """
+    Returns a user-friendly description of the Harvester Lane based on the ticker symbol.
+    """
+    if not ticker:
+        return "Waiting for input..."
+    
+    t = ticker.upper().strip()
+    
+    # Lane 1: Binance
+    if t.endswith("USDT"):
+        return "🟢 **Lane 1 (Binance):** Will fetch 24h Crypto/Forex data from Binance. (Fallback: Capital)"
+    
+    # Lane 2: Yahoo Futures
+    if t.endswith("=F"):
+        return "🟡 **Lane 2 (Futures):** Will fetch 24h Futures data from Yahoo. (Fallback: Capital)"
+    
+    # Lane 3: Standard Stocks/Indices (Includes VIX)
+    return "🔵 **Lane 3 (Stocks/Indices):** Will fetch Pre/Reg/Post data from Yahoo. (Fallback: Capital)"
+
+
 def render_inventory_ui(db_map, inventory_list):
     """Renders the inventory manager UI section."""
     st.subheader("📦 Inventory Manager")
     
+    # --- SECTION 1: ADD NEW SYMBOL ---
     with st.container(border=True):
         st.write("### ➕ Add New Symbol")
-        c1, c2, c3 = st.columns([2, 2, 2])
+        c1, c2 = st.columns(2)
         with c1:
-            new_ticker = st.text_input("Ticker", placeholder="e.g. AAPL").upper()
+            new_ticker = st.text_input("Ticker", placeholder="e.g. BTCUSDT, AAPL, CL=F").upper().strip()
         with c2:
-            new_epic = st.text_input("Epic", placeholder="e.g. AAPL").upper()
-        with c3:
-            new_strat = st.selectbox("Strategy", ["HYBRID (Stock/ETF)", "CAPITAL_ONLY (Index/CFD)"], key="add_strat")
+            # Added explicit Label and Help Tooltip
+            new_epic = st.text_input(
+                "Capital.com Epic (Fallback ID)", 
+                placeholder="e.g. BTCUSD, AAPL, US500", 
+                help="⚠️ REQUIRED FOR SAFETY NET: If Yahoo/Binance fails, the system uses THIS specific symbol to fetch data from Capital.com."
+            ).upper().strip()
         
-        if st.button("Save New Symbol", type="primary") and new_ticker:
-            code = "CAPITAL_ONLY" if "CAPITAL" in new_strat else "HYBRID"
+        # Dynamic Route Display
+        if new_ticker:
+            route_msg = get_route_description(new_ticker)
+            st.info(route_msg)
+        
+        # Optional override
+        force_capital = st.checkbox("🚫 Skip Primary Source (Force Capital.com Only)", key="new_force_cap")
+        
+        if st.button("Save New Symbol", type="primary", disabled=not new_ticker):
+            code = "CAPITAL_ONLY" if force_capital else "HYBRID"
             epic_val = new_epic if new_epic else new_ticker
+            
             if upsert_symbol_mapping(new_ticker, epic_val, code):
                 st.success(f"Saved {new_ticker}")
                 time.sleep(0.5)
                 st.rerun()
 
+    # --- SECTION 2: EDIT EXISTING ---
     with st.container(border=True):
         st.write("### ⚡ Edit Existing Symbol")
         if not inventory_list:
             st.info("No symbols in inventory yet.")
         else:
-            STRAT_HYBRID = "HYBRID (Stock/ETF)"
-            STRAT_CAPITAL = "CAPITAL_ONLY (Index/CFD)"
-            STRAT_OPTIONS = [STRAT_HYBRID, STRAT_CAPITAL]
-            
             if 'edit_select' not in st.session_state:
                 st.session_state.edit_select = "" 
             if 'edit_ticker_val' not in st.session_state:
                 st.session_state.edit_ticker_val = ""
             if 'edit_epic_val' not in st.session_state:
                 st.session_state.edit_epic_val = ""
-            if 'edit_strat_sel' not in st.session_state:
-                st.session_state.edit_strat_sel = STRAT_HYBRID
+            if 'edit_force_cap' not in st.session_state:
+                st.session_state.edit_force_cap = False
 
             def handle_update():
                 original_ticker = st.session_state.edit_select
                 new_ticker_val = st.session_state.edit_ticker_val
                 new_epic_val = st.session_state.edit_epic_val
-                new_strategy_sel = st.session_state.edit_strat_sel
+                is_forced = st.session_state.edit_force_cap
                 
-                code = "CAPITAL_ONLY" if "CAPITAL" in new_strategy_sel else "HYBRID"
+                code = "CAPITAL_ONLY" if is_forced else "HYBRID"
                 
                 if original_ticker and new_ticker_val and original_ticker != new_ticker_val:
                     st.info(f"Renaming {original_ticker} to {new_ticker_val}...")
@@ -62,48 +94,75 @@ def render_inventory_ui(db_map, inventory_list):
                 if new_ticker_val:
                     if upsert_symbol_mapping(new_ticker_val, new_epic_val, code):
                         st.success(f"Updated {new_ticker_val}")
+                        # Reset state
                         st.session_state.edit_select = ""
                         st.session_state.edit_ticker_val = "" 
                         st.session_state.edit_epic_val = "" 
-                        st.session_state.edit_strat_sel = STRAT_HYBRID 
+                        st.session_state.edit_force_cap = False
+                        time.sleep(0.5)
+                        st.rerun()
                     else:
                         st.error("Failed to update symbol.")
                 else:
                     st.error("Ticker field cannot be empty.")
 
+            # Selection Dropdown
             c_edit1, c_edit_spacer = st.columns([1.5, 2.5])
             with c_edit1:
                 st.selectbox("Select Ticker to Edit", options=[""] + inventory_list, key="edit_select")
             
+            # Populate fields on selection
             current_selection = st.session_state.edit_select
-            if current_selection != st.session_state.edit_ticker_val:
+            if current_selection != st.session_state.edit_ticker_val and current_selection != "":
                 if current_selection in db_map:
                     selected_data = db_map[current_selection]
                     st.session_state.edit_ticker_val = current_selection
                     st.session_state.edit_epic_val = selected_data['epic']
-                    st.session_state.edit_strat_sel = STRAT_HYBRID if "HYBRID" in selected_data['strategy'] else STRAT_CAPITAL
-                else:
-                    st.session_state.edit_ticker_val = "" 
-                    st.session_state.edit_epic_val = ""
-                    st.session_state.edit_strat_sel = STRAT_HYBRID
+                    st.session_state.edit_force_cap = (selected_data['strategy'] == "CAPITAL_ONLY")
             
-            c_edit_fields1, c_edit_fields2, c_edit_fields3, c_edit_fields4 = st.columns([1.5, 1.5, 1.5, 1])
-            with c_edit_fields1:
-                st.text_input("Ticker (Yahoo/PK)", key="edit_ticker_val")
-            with c_edit_fields2:
-                st.text_input("Epic (Capital)", key="edit_epic_val")
-            with c_edit_fields3:
-                st.selectbox("Strategy", STRAT_OPTIONS, key="edit_strat_sel")
-            with c_edit_fields4:
+            # Edit Form
+            if current_selection:
+                c_f1, c_f2 = st.columns(2)
+                with c_f1:
+                    st.text_input("Ticker", key="edit_ticker_val")
+                with c_f2:
+                    # Added explicit Label and Help Tooltip
+                    st.text_input(
+                        "Capital.com Epic (Fallback ID)", 
+                        key="edit_epic_val",
+                        help="The specific symbol Capital.com uses. If Yahoo fails, we need THIS to fetch the data from Capital."
+                    )
+                
+                # Dynamic Route Display for Edit Mode
+                if st.session_state.edit_ticker_val:
+                    st.caption(get_route_description(st.session_state.edit_ticker_val))
+                
+                st.checkbox("🚫 Skip Primary Source (Force Capital.com Only)", key="edit_force_cap")
+                
                 st.write("")
-                st.write("")
-                is_disabled = (st.session_state.edit_select == "")
-                st.button("Update Symbol", disabled=is_disabled, on_click=handle_update)
-    
+                st.button("Update Symbol", type="primary", on_click=handle_update)
+
+    # --- SECTION 3: TABLE VIEW ---
     st.write("### 📋 Current Inventory")
     if db_map:
-        data = [{"Ticker": k, "Epic": v['epic'], "Strategy": v['strategy']} for k, v in db_map.items()]
-        st.dataframe(pd.DataFrame(data), use_container_width=True)
+        table_data = []
+        for k, v in db_map.items():
+            strat_raw = v['strategy']
+            if strat_raw == "CAPITAL_ONLY":
+                display_strat = "🚫 Capital Only"
+            else:
+                # Quick lookup for display
+                if k.endswith("USDT"): display_strat = "Binance ➔ Cap"
+                elif k.endswith("=F"): display_strat = "Yahoo Fut ➔ Cap"
+                else: display_strat = "Yahoo Stk ➔ Cap"
+                
+            table_data.append({
+                "Ticker": k, 
+                "Fallback ID (Capital)": v['epic'], 
+                "Effective Route": display_strat
+            })
+            
+        st.dataframe(pd.DataFrame(table_data), use_container_width=True)
         
         st.write("#### 🗑️ Delete Symbol")
         c_del1, c_del2 = st.columns([3, 1])

@@ -1,23 +1,36 @@
 """
-UI component for data health dashboard.
+Data Health Dashboard: Visualizes Data Completeness (Green/Red Matrix).
 """
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-from src.config import US_EASTERN
 from src.database.operations import fetch_data_health_matrix
-
+from src.config import US_EASTERN
 
 def render_health_dashboard(inventory_list):
     """Renders the data health dashboard UI section."""
     st.subheader("🗓️ Data Health Dashboard")
     st.info("Check the completeness of your data library. Cells show the number of candles collected.")
     
-    session_mode = st.radio(
-        "Select Session to Inspect",
-        ["Full Day (Total)", "🌙 Pre-Market", "☀️ Regular Session", "🌆 Post-Market"],
-        horizontal=True
-    )
+    # Layout for session selection and weekend toggle
+    c1, c2 = st.columns([3, 1])
+    
+    with c1:
+        session_mode = st.radio(
+            "Select Session to Inspect",
+            ["Full Day (Total)", "🌙 Pre-Market", "☀️ Regular Session", "🌆 Post-Market"],
+            horizontal=True
+        )
+    
+    with c2:
+        # Spacer to align checkbox with radio buttons visually
+        st.write("") 
+        st.write("")
+        hide_weekends = st.checkbox(
+            "Hide Weekends", 
+            value=True, 
+            help="Hides Saturday and Sunday columns to clean up the view for stocks."
+        )
 
     if session_mode == "🌙 Pre-Market":
         session_filter = "PRE"
@@ -27,7 +40,6 @@ def render_health_dashboard(inventory_list):
         session_filter = "POST"
     else:
         session_filter = "Total"
-
 
     today = datetime.now(US_EASTERN).date()
     
@@ -56,8 +68,22 @@ def render_health_dashboard(inventory_list):
             health_pivot_df = fetch_data_health_matrix(selected_tickers, start_date, end_date, session_filter)
             
             if not health_pivot_df.empty:
+                
+                # --- LOGIC: Hide Weekends ---
+                if hide_weekends:
+                    # Filter columns where the date is Mon(0) - Fri(4)
+                    # health_pivot_df columns are date objects (YYYY-MM-DD)
+                    valid_cols = [
+                        c for c in health_pivot_df.columns 
+                        if pd.to_datetime(c).weekday() < 5
+                    ]
+                    health_pivot_df = health_pivot_df[valid_cols]
+                    
+                    if health_pivot_df.empty:
+                        st.warning("No weekday data found for this period.")
+                        return
+
                 def style_heatmap(val):
-                    # We capture 'session_filter' from the outer scope
                     mode = session_filter
                     if pd.isna(val):
                         return 'background-color: #262626; color: #262626' # Dark gray for empty
@@ -81,11 +107,8 @@ def render_health_dashboard(inventory_list):
 
                 tight_height = (len(health_pivot_df) + 1) * 35 + 3
 
-                # Apply map element-wise
-                styled_df = health_pivot_df.style.map(style_heatmap).format("{:.0f}", na_rep="")
-
                 st.dataframe(
-                    styled_df,
+                    health_pivot_df.style.map(style_heatmap).format("{:.0f}", na_rep=""),
                     use_container_width=True, 
                     height=tight_height
                 )
