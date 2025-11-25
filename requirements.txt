@@ -6,4 +6,4 @@ libsql-client
 requests
 urllib3
 pytz
-streamlit-lightweight-charts
+lightweight-charts
