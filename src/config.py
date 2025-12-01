@@ -12,5 +12,8 @@ BAHRAIN_TZ = timezone('Asia/Bahrain')
 UTC = timezone('UTC')
 
 # Data Schema
+# Data Schema
 SCHEMA_COLS = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume', 'session']
- 
+
+# Binance Configuration
+BINANCE_DOMAINS = ["https://api.binance.com", "https://api.binance.us"] 

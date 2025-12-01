@@ -5,7 +5,7 @@ Handles Crypto (BTCUSDT) and Forex Proxies (EURUSDT) directly.
 import requests
 import pandas as pd
 from datetime import datetime, timezone
-from src.config import SCHEMA_COLS
+from src.config import SCHEMA_COLS, BINANCE_DOMAINS
 
 def fetch_binance_daily(ticker: str, target_date_obj) -> pd.DataFrame:
     """
@@ -24,7 +24,7 @@ def fetch_binance_daily(ticker: str, target_date_obj) -> pd.DataFrame:
     end_ts = int(end_dt.timestamp() * 1000)
     
     # Domain fallback strategy
-    domains = ["https://api.binance.com", "https://api.binance.us"]
+    domains = BINANCE_DOMAINS
     
     for domain in domains:
         url = f"{domain}/api/v3/klines"
