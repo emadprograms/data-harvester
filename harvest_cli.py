@@ -14,9 +14,10 @@ from src.config import US_EASTERN
 # Logging Setup
 # -----------------------------------------------------------------------------
 class StreamlitWarningFilter(logging.Filter):
-    """Drops Streamlit 'ScriptRunContext' warnings."""
+    """Drops Streamlit 'ScriptRunContext' and usage warnings."""
     def filter(self, record):
-        return "ScriptRunContext" not in record.getMessage()
+        msg = record.getMessage()
+        return "ScriptRunContext" not in msg and "view this Streamlit app on a browser" not in msg
 
 # Apply filter to noisy loggers
 logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").addFilter(StreamlitWarningFilter())
