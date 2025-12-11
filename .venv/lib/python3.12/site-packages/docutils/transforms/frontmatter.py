@@ -1,4 +1,4 @@
-# $Id: frontmatter.py 9552 2024-03-08 23:41:31Z milde $
+# $Id: frontmatter.py 10136 2025-05-20 15:48:27Z milde $
 # Author: David Goodger, Ueli Schlaepfer <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -21,6 +21,8 @@ Transforms_ related to the front matter of a document or a section
 .. _transforms: https://docutils.sourceforge.io/docs/api/transforms.html
 """
 
+from __future__ import annotations
+
 __docformat__ = 'reStructuredText'
 
 import re
@@ -35,7 +37,7 @@ class TitlePromoter(Transform):
     Abstract base class for DocTitle and SectionSubTitle transforms.
     """
 
-    def promote_title(self, node):
+    def promote_title(self, node) -> bool:
         """
         Transform the following tree::
 
@@ -78,7 +80,7 @@ class TitlePromoter(Transform):
         assert isinstance(node[0], nodes.title)
         return True
 
-    def promote_subtitle(self, node):
+    def promote_subtitle(self, node) -> bool:
         """
         Transform the following node tree::
 
@@ -197,7 +199,7 @@ class DocTitle(TitlePromoter):
 
     default_priority = 320
 
-    def set_metadata(self):
+    def set_metadata(self) -> None:
         """
         Set document['title'] metadata title from the following
         sources, listed in order of priority:
@@ -213,7 +215,7 @@ class DocTitle(TitlePromoter):
                                                    nodes.title):
                 self.document['title'] = self.document[0].astext()
 
-    def apply(self):
+    def apply(self) -> None:
         if self.document.settings.setdefault('doctitle_xform', True):
             # promote_(sub)title defined in TitlePromoter base class.
             if self.promote_title(self.document):
@@ -251,7 +253,7 @@ class SectionSubTitle(TitlePromoter):
 
     default_priority = 350
 
-    def apply(self):
+    def apply(self) -> None:
         if not self.document.settings.setdefault('sectsubtitle_xform', True):
             return
         for section in self.document.findall(nodes.section):
@@ -355,7 +357,7 @@ class DocInfo(Transform):
     """Canonical field name (lowcased) to node class name mapping for
     bibliographic fields (field_list)."""
 
-    def apply(self):
+    def apply(self) -> None:
         if not self.document.settings.setdefault('docinfo_xform', True):
             return
         document = self.document
@@ -366,7 +368,7 @@ class DocInfo(Transform):
         candidate = document[index]
         if isinstance(candidate, nodes.field_list):
             biblioindex = document.first_child_not_matching_class(
-                  (nodes.Titular, nodes.Decorative, nodes.meta))
+                  (nodes.Titular, nodes.decoration, nodes.meta))
             nodelist = self.extract_bibliographic(candidate)
             del document[index]         # untransformed field list (candidate)
             document[biblioindex:biblioindex] = nodelist
@@ -416,14 +418,15 @@ class DocInfo(Transform):
                     field['classes'].append(classvalue)
                 docinfo.append(field)
         nodelist = []
-        if len(docinfo) != 0:
+        if len(docinfo):
             nodelist.append(docinfo)
-        for name in ('dedication', 'abstract'):
-            if topics[name]:
-                nodelist.append(topics[name])
+        if topics['dedication']:
+            nodelist.append(topics['dedication'])
+        if topics['abstract']:
+            nodelist.append(topics['abstract'])
         return nodelist
 
-    def check_empty_biblio_field(self, field, name):
+    def check_empty_biblio_field(self, field, name) -> bool:
         if len(field[-1]) < 1:
             field[-1] += self.document.reporter.warning(
                   f'Cannot extract empty bibliographic field "{name}".',
@@ -431,7 +434,7 @@ class DocInfo(Transform):
             return False
         return True
 
-    def check_compound_biblio_field(self, field, name):
+    def check_compound_biblio_field(self, field, name) -> bool:
         # Check that the `field` body contains a single paragraph
         # (i.e. it must *not* be a compound element).
         f_body = field[-1]
@@ -452,7 +455,8 @@ class DocInfo(Transform):
                 f_body.children = _document.children
                 return True
         # Check failed, add a warning
-        content = [f'<{e.tagname}>' for e in f_body.children]
+        content = [f'<{e.tagname}>' for e in f_body.children
+                   if not isinstance(e, nodes.system_message)]
         if len(content) > 1:
             content = '[' + ', '.join(content) + ']'
         else:
@@ -464,10 +468,13 @@ class DocInfo(Transform):
         return False
 
     rcs_keyword_substitutions = [
-          (re.compile(r'\$' r'Date: (\d\d\d\d)[-/](\d\d)[-/](\d\d)[ T][\d:]+'
-                      r'[^$]* \$', re.IGNORECASE), r'\1-\2-\3'),
-          (re.compile(r'\$' r'RCSfile: (.+),v \$', re.IGNORECASE), r'\1'),
-          (re.compile(r'\$[a-zA-Z]+: (.+) \$'), r'\1')]
+        (re.compile(r'\$' r'Date: '  # NoQA: ISC001
+                    r'(\d\d\d\d)[-/](\d\d)[-/](\d\d)[ T][\d:]+'
+                    r'[^$]* \$', re.IGNORECASE), r'\1-\2-\3'),
+        (re.compile(r'\$' r'RCSfile: (.+),v \$',  # NoQA: ISC001
+                    re.IGNORECASE), r'\1'),
+        (re.compile(r'\$[a-zA-Z]+: (.+) \$'), r'\1'),
+    ]
 
     def extract_authors(self, field, name, docinfo):
         try:
@@ -490,7 +497,8 @@ class DocInfo(Transform):
             field[-1] += self.document.reporter.warning(
                 f'Cannot extract "{name}" from bibliographic field:\n'
                 f'Bibliographic field "{name}" must contain either\n'
-                ' a single paragraph (with author names separated by one of '
+                ' a single paragraph (with author names separated by a'
+                ' character from the set '
                 f'"{"".join(self.language.author_separators)}"),\n'
                 ' multiple paragraphs (one per author),\n'
                 ' or a bullet list with one author name per item.\n'

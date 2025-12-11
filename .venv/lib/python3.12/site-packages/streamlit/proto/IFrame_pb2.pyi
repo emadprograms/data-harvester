@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -65,4 +71,4 @@ class IFrame(google.protobuf.message.Message):
     @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["src", "srcdoc"] | None: ...
 
-global___IFrame = IFrame
+Global___IFrame: typing_extensions.TypeAlias = IFrame

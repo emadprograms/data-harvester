@@ -22,7 +22,13 @@ import google.protobuf.descriptor
 import google.protobuf.message
 import streamlit.proto.ClientState_pb2
 import streamlit.proto.Common_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -41,6 +47,7 @@ class BackMsg(google.protobuf.message.Message):
     DEBUG_SHUTDOWN_RUNTIME_FIELD_NUMBER: builtins.int
     FILE_URLS_REQUEST_FIELD_NUMBER: builtins.int
     APP_HEARTBEAT_FIELD_NUMBER: builtins.int
+    DEFERRED_FILE_REQUEST_FIELD_NUMBER: builtins.int
     DEBUG_LAST_BACKMSG_ID_FIELD_NUMBER: builtins.int
     clear_cache: builtins.bool
     """DEPRECATED. Asks the server to run the script with this object
@@ -84,6 +91,10 @@ class BackMsg(google.protobuf.message.Message):
         files for the `st.file_uploader` widget
         """
 
+    @property
+    def deferred_file_request(self) -> Global___DeferredFileRequest:
+        """Requests that the server execute a deferred callable and return the URL"""
+
     def __init__(
         self,
         *,
@@ -96,10 +107,29 @@ class BackMsg(google.protobuf.message.Message):
         debug_shutdown_runtime: builtins.bool = ...,
         file_urls_request: streamlit.proto.Common_pb2.FileURLsRequest | None = ...,
         app_heartbeat: builtins.bool = ...,
+        deferred_file_request: Global___DeferredFileRequest | None = ...,
         debug_last_backmsg_id: builtins.str = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["app_heartbeat", b"app_heartbeat", "clear_cache", b"clear_cache", "debug_disconnect_websocket", b"debug_disconnect_websocket", "debug_shutdown_runtime", b"debug_shutdown_runtime", "file_urls_request", b"file_urls_request", "load_git_info", b"load_git_info", "rerun_script", b"rerun_script", "set_run_on_save", b"set_run_on_save", "stop_script", b"stop_script", "type", b"type"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["app_heartbeat", b"app_heartbeat", "clear_cache", b"clear_cache", "debug_disconnect_websocket", b"debug_disconnect_websocket", "debug_last_backmsg_id", b"debug_last_backmsg_id", "debug_shutdown_runtime", b"debug_shutdown_runtime", "file_urls_request", b"file_urls_request", "load_git_info", b"load_git_info", "rerun_script", b"rerun_script", "set_run_on_save", b"set_run_on_save", "stop_script", b"stop_script", "type", b"type"]) -> None: ...
-    def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["clear_cache", "set_run_on_save", "stop_script", "rerun_script", "load_git_info", "debug_disconnect_websocket", "debug_shutdown_runtime", "file_urls_request", "app_heartbeat"] | None: ...
+    def HasField(self, field_name: typing.Literal["app_heartbeat", b"app_heartbeat", "clear_cache", b"clear_cache", "debug_disconnect_websocket", b"debug_disconnect_websocket", "debug_shutdown_runtime", b"debug_shutdown_runtime", "deferred_file_request", b"deferred_file_request", "file_urls_request", b"file_urls_request", "load_git_info", b"load_git_info", "rerun_script", b"rerun_script", "set_run_on_save", b"set_run_on_save", "stop_script", b"stop_script", "type", b"type"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing.Literal["app_heartbeat", b"app_heartbeat", "clear_cache", b"clear_cache", "debug_disconnect_websocket", b"debug_disconnect_websocket", "debug_last_backmsg_id", b"debug_last_backmsg_id", "debug_shutdown_runtime", b"debug_shutdown_runtime", "deferred_file_request", b"deferred_file_request", "file_urls_request", b"file_urls_request", "load_git_info", b"load_git_info", "rerun_script", b"rerun_script", "set_run_on_save", b"set_run_on_save", "stop_script", b"stop_script", "type", b"type"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["clear_cache", "set_run_on_save", "stop_script", "rerun_script", "load_git_info", "debug_disconnect_websocket", "debug_shutdown_runtime", "file_urls_request", "app_heartbeat", "deferred_file_request"] | None: ...
 
-global___BackMsg = BackMsg
+Global___BackMsg: typing_extensions.TypeAlias = BackMsg
+
+@typing.final
+class DeferredFileRequest(google.protobuf.message.Message):
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    FILE_ID_FIELD_NUMBER: builtins.int
+    SESSION_ID_FIELD_NUMBER: builtins.int
+    file_id: builtins.str
+    session_id: builtins.str
+    def __init__(
+        self,
+        *,
+        file_id: builtins.str = ...,
+        session_id: builtins.str = ...,
+    ) -> None: ...
+    def ClearField(self, field_name: typing.Literal["file_id", b"file_id", "session_id", b"session_id"]) -> None: ...
+
+Global___DeferredFileRequest: typing_extensions.TypeAlias = DeferredFileRequest

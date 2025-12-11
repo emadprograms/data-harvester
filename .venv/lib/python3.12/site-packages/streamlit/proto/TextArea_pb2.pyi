@@ -21,7 +21,13 @@ import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
 import streamlit.proto.LabelVisibilityMessage_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -78,4 +84,4 @@ class TextArea(google.protobuf.message.Message):
     @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["_value", b"_value"]) -> typing.Literal["value"] | None: ...
 
-global___TextArea = TextArea
+Global___TextArea: typing_extensions.TypeAlias = TextArea

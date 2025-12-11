@@ -1,20 +1,17 @@
-# $Id: pygmentsformatter.py 9015 2022-03-03 22:15:00Z milde $
+# $Id: pygmentsformatter.py 10136 2025-05-20 15:48:27Z milde $
 # Author: Dave Kuhlman <dkuhlman@rexx.com>
 # Copyright: This module has been placed in the public domain.
 
-"""
+"""Additional support for Pygments formatter."""
 
-Additional support for Pygments formatter.
-
-"""
-
+from __future__ import annotations
 
 import pygments
 import pygments.formatter
 
 
 class OdtPygmentsFormatter(pygments.formatter.Formatter):
-    def __init__(self, rststyle_function, escape_function):
+    def __init__(self, rststyle_function, escape_function) -> None:
         pygments.formatter.Formatter.__init__(self)
         self.rststyle_function = rststyle_function
         self.escape_function = escape_function
@@ -24,7 +21,7 @@ class OdtPygmentsFormatter(pygments.formatter.Formatter):
 
 
 class OdtPygmentsProgFormatter(OdtPygmentsFormatter):
-    def format(self, tokensource, outfile):
+    def format(self, tokensource, outfile) -> None:
         tokenclass = pygments.token.Token
         for ttype, value in tokensource:
             value = self.escape_function(value)
@@ -73,7 +70,7 @@ class OdtPygmentsProgFormatter(OdtPygmentsFormatter):
 
 
 class OdtPygmentsLaTeXFormatter(OdtPygmentsFormatter):
-    def format(self, tokensource, outfile):
+    def format(self, tokensource, outfile) -> None:
         tokenclass = pygments.token.Token
         for ttype, value in tokensource:
             value = self.escape_function(value)

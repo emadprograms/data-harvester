@@ -24,7 +24,13 @@ import streamlit.proto.ArrowNamedDataSet_pb2
 import streamlit.proto.Block_pb2
 import streamlit.proto.Element_pb2
 import streamlit.proto.NamedDataSet_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -71,4 +77,4 @@ class Delta(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["add_block", b"add_block", "add_rows", b"add_rows", "arrow_add_rows", b"arrow_add_rows", "fragment_id", b"fragment_id", "new_element", b"new_element", "type", b"type"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["new_element", "add_block", "add_rows", "arrow_add_rows"] | None: ...
 
-global___Delta = Delta
+Global___Delta: typing_extensions.TypeAlias = Delta

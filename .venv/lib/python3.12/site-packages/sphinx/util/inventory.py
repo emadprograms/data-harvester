@@ -75,7 +75,7 @@ class InventoryFile:
         projname = lines[0].rstrip()[11:]  # Project name
         version = lines[1].rstrip()[11:]  # Project version
         for line in lines[2:]:
-            name, item_type, location = line.rstrip().split(None, 2)
+            name, item_type, location = line.rstrip().split(None, maxsplit=2)
             location = posixpath.join(uri, location)
             # version 1 did not add anchors to the location
             if item_type == 'mod':
@@ -311,7 +311,9 @@ class _InventoryItem:
 
     def __getitem__(self, key: int | slice) -> str | tuple[str, ...]:
         warnings.warn(
-            'The tuple interface for _InventoryItem objects is deprecated.',
+            'The tuple interface for _InventoryItem objects is deprecated.'
+            ' Please access the `project_name`, `project_version`, '
+            '`uri`, and `displayname` attributes directly.',
             RemovedInSphinx10Warning,
             stacklevel=2,
         )
@@ -320,7 +322,9 @@ class _InventoryItem:
 
     def __iter__(self) -> Iterator[str]:
         warnings.warn(
-            'The iter() interface for _InventoryItem objects is deprecated.',
+            'The iter() interface for _InventoryItem objects is deprecated.'
+            ' Please access the `project_name`, `project_version`, '
+            '`uri`, and `displayname` attributes directly.',
             RemovedInSphinx10Warning,
             stacklevel=2,
         )

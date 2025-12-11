@@ -79,7 +79,7 @@ class NumberInput(google.protobuf.message.Message):
     format: builtins.str
     has_min: builtins.bool
     has_max: builtins.bool
-    data_type: global___NumberInput.DataType.ValueType
+    data_type: Global___NumberInput.DataType.ValueType
     default: builtins.float
     step: builtins.float
     min: builtins.float
@@ -101,7 +101,7 @@ class NumberInput(google.protobuf.message.Message):
         format: builtins.str = ...,
         has_min: builtins.bool = ...,
         has_max: builtins.bool = ...,
-        data_type: global___NumberInput.DataType.ValueType = ...,
+        data_type: Global___NumberInput.DataType.ValueType = ...,
         default: builtins.float | None = ...,
         step: builtins.float = ...,
         min: builtins.float = ...,
@@ -121,4 +121,4 @@ class NumberInput(google.protobuf.message.Message):
     @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["_value", b"_value"]) -> typing.Literal["value"] | None: ...
 
-global___NumberInput = NumberInput
+Global___NumberInput: typing_extensions.TypeAlias = NumberInput

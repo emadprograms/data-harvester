@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -53,4 +59,4 @@ class Code(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["code_text", b"code_text", "height", b"height", "language", b"language", "show_line_numbers", b"show_line_numbers", "wrap_lines", b"wrap_lines"]) -> None: ...
 
-global___Code = Code
+Global___Code: typing_extensions.TypeAlias = Code

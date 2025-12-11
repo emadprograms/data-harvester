@@ -1,4 +1,4 @@
-# $Id: examples.py 9026 2022-03-04 15:57:13Z milde $
+# $Id: examples.py 10045 2025-03-09 01:02:23Z aa-turner $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -11,12 +11,27 @@ that you copy and paste the parts you need into your own code, modifying as
 necessary.
 """
 
+from __future__ import annotations
+
+
 from docutils import core, io
 
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from typing import Any, Literal
 
-def html_parts(input_string, source_path=None, destination_path=None,
-               input_encoding='unicode', doctitle=True,
-               initial_header_level=1):
+    from docutils import nodes
+    from docutils.nodes import StrPath
+    from docutils.core import Publisher
+
+
+def html_parts(input_string: str | bytes,
+               source_path: StrPath | None = None,
+               destination_path: StrPath | None = None,
+               input_encoding: Literal['unicode'] | str = 'unicode',
+               doctitle: bool = True,
+               initial_header_level: int = 1,
+               ) -> dict[str, str]:
     """
     Given an input string, returns a dictionary of HTML document parts.
 
@@ -46,13 +61,18 @@ def html_parts(input_string, source_path=None, destination_path=None,
     parts = core.publish_parts(
         source=input_string, source_path=source_path,
         destination_path=destination_path,
-        writer_name='html', settings_overrides=overrides)
+        writer='html', settings_overrides=overrides)
     return parts
 
 
-def html_body(input_string, source_path=None, destination_path=None,
-              input_encoding='unicode', output_encoding='unicode',
-              doctitle=True, initial_header_level=1):
+def html_body(input_string: str | bytes,
+              source_path: StrPath | None = None,
+              destination_path: StrPath | None = None,
+              input_encoding: Literal['unicode'] | str = 'unicode',
+              output_encoding: Literal['unicode'] | str = 'unicode',
+              doctitle: bool = True,
+              initial_header_level: int = 1,
+              ) -> str | bytes:
     """
     Given an input string, returns an HTML fragment as a string.
 
@@ -74,26 +94,30 @@ def html_body(input_string, source_path=None, destination_path=None,
     return fragment
 
 
-def internals(input_string, source_path=None, destination_path=None,
-              input_encoding='unicode', settings_overrides=None):
+def internals(source: str,
+              source_path: StrPath | None = None,
+              input_encoding: Literal['unicode'] | str = 'unicode',
+              settings_overrides: dict[str, Any] | None = None,
+              ) -> tuple[nodes.document, Publisher]:
     """
     Return the document tree and publisher, for exploring Docutils internals.
 
     Parameters: see `html_parts()`.
     """
-    if settings_overrides:
-        overrides = settings_overrides.copy()
-    else:
-        overrides = {}
-    overrides['input_encoding'] = input_encoding
-    output, pub = core.publish_programmatically(
-        source_class=io.StringInput, source=input_string,
-        source_path=source_path,
-        destination_class=io.NullOutput, destination=None,
-        destination_path=destination_path,
-        reader=None, reader_name='standalone',
-        parser=None, parser_name='restructuredtext',
-        writer=None, writer_name='null',
-        settings=None, settings_spec=None, settings_overrides=overrides,
-        config_section=None, enable_exit_status=None)
-    return pub.writer.document, pub
+    if settings_overrides is None:
+        settings_overrides = {}
+    overrides = settings_overrides | {'input_encoding': input_encoding}
+
+    publisher = core.Publisher('standalone', 'rst', 'null',
+                               source_class=io.StringInput,
+                               destination_class=io.NullOutput)
+    publisher.process_programmatic_settings(settings_spec=None,
+                                            settings_overrides=overrides,
+                                            config_section=None)
+    publisher.set_source(source, source_path)
+    publisher.publish()
+    return publisher.document, publisher
+
+
+if __name__ == '__main__':
+    print(internals('test')[0])

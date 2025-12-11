@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -40,4 +46,4 @@ class Snow(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["show", b"show"]) -> None: ...
 
-global___Snow = Snow
+Global___Snow: typing_extensions.TypeAlias = Snow

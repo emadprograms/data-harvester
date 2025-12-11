@@ -23,7 +23,13 @@ import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.LabelVisibilityMessage_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -80,4 +86,4 @@ class DateInput(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["label_visibility", b"label_visibility"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["default", b"default", "disabled", b"disabled", "form_id", b"form_id", "format", b"format", "help", b"help", "id", b"id", "is_range", b"is_range", "label", b"label", "label_visibility", b"label_visibility", "max", b"max", "min", b"min", "set_value", b"set_value", "value", b"value"]) -> None: ...
 
-global___DateInput = DateInput
+Global___DateInput: typing_extensions.TypeAlias = DateInput

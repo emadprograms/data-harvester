@@ -1,10 +1,12 @@
-# $Id: misc.py 9037 2022-03-05 23:31:10Z milde $
+# $Id: misc.py 10166 2025-06-16 09:45:10Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
 """
 Miscellaneous transforms.
 """
+
+from __future__ import annotations
 
 __docformat__ = 'reStructuredText'
 
@@ -26,7 +28,7 @@ class CallBack(Transform):
 
     default_priority = 990
 
-    def apply(self):
+    def apply(self) -> None:
         pending = self.startnode
         pending.details['callback'](pending)
         pending.parent.remove(pending)
@@ -36,12 +38,12 @@ class ClassAttribute(Transform):
 
     """
     Move the "class" attribute specified in the "pending" node into the
-    immediately following non-comment element.
+    next visible element.
     """
 
     default_priority = 210
 
-    def apply(self):
+    def apply(self) -> None:
         pending = self.startnode
         parent = pending.parent
         child = pending
@@ -71,8 +73,8 @@ class Transitions(Transform):
 
     """
     Move transitions at the end of sections up the tree.  Complain
-    on transitions after a title, at the beginning or end of the
-    document, and after another transition.
+    on transitions after a title, subtitle, meta, or decoration element,
+    at the beginning or end of the document, and after another transition.
 
     For example, transform this::
 
@@ -93,32 +95,38 @@ class Transitions(Transform):
 
     default_priority = 830
 
-    def apply(self):
+    def apply(self) -> None:
         for node in self.document.findall(nodes.transition):
             self.visit_transition(node)
 
-    def visit_transition(self, node):
+    def visit_transition(self, node) -> None:
         index = node.parent.index(node)
-        error = None
-        if (index == 0
-            or isinstance(node.parent[0], nodes.title)
-            and (index == 1
-                 or isinstance(node.parent[1], nodes.subtitle)
-                 and index == 2)):
-            assert (isinstance(node.parent, nodes.document)
-                    or isinstance(node.parent, nodes.section))
-            error = self.document.reporter.error(
-                'Document or section may not begin with a transition.',
-                source=node.source, line=node.line)
-        elif isinstance(node.parent[index - 1], nodes.transition):
-            error = self.document.reporter.error(
-                'At least one body element must separate transitions; '
-                'adjacent transitions are not allowed.',
-                source=node.source, line=node.line)
-        if error:
-            # Insert before node and update index.
-            node.parent.insert(index, error)
-            index += 1
+        previous_sibling = node.previous_sibling()
+        msg = ''
+        if not isinstance(node.parent, (nodes.document, nodes.section)):
+            msg = 'Transition must be child of <document> or <section>.'
+        elif index == 0 or isinstance(previous_sibling, (nodes.title,
+                                                         nodes.subtitle,
+                                                         nodes.meta,
+                                                         nodes.decoration)):
+            msg = 'Document or section may not begin with a transition.'
+        elif isinstance(previous_sibling, nodes.transition):
+            msg = ('At least one body element must separate transitions; '
+                   'adjacent transitions are not allowed.')
+        if msg:
+            warning = self.document.reporter.warning(msg, base_node=node)
+            # Check, if it is valid to insert a body element
+            node.parent[index] = nodes.paragraph()
+            try:
+                node.parent.validate(recursive=False)
+            except nodes.ValidationError:
+                node.parent[index] = node
+            else:
+                node.parent[index] = node
+                node.parent.insert(index+1, warning)
+                index += 1
+        if not isinstance(node.parent, (nodes.document, nodes.section)):
+            return
         assert index < len(node.parent)
         if index != len(node.parent) - 1:
             # No need to move the node.
@@ -128,14 +136,13 @@ class Transitions(Transform):
         # While sibling is the last node of its parent.
         while index == len(sibling.parent) - 1:
             sibling = sibling.parent
-            # If sibling is the whole document (i.e. it has no parent).
-            if sibling.parent is None:
+            if sibling.parent is None:  # sibling is the top node (document)
                 # Transition at the end of document.  Do not move the
-                # transition up, and place an error behind.
-                error = self.document.reporter.error(
-                    'Document may not end with a transition.',
-                    line=node.line)
-                node.parent.insert(node.parent.index(node) + 1, error)
+                # transition up, and place a warning behind.
+                warning = self.document.reporter.warning(
+                              'Document may not end with a transition.',
+                              base_node=node)
+                node.parent.append(warning)
                 return
             index = sibling.parent.index(sibling)
         # Remove the original transition node.

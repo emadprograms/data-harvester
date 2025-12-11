@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from functools import partial
 from importlib.metadata import entry_points
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from altair.utils.deprecation import deprecated_warn
 
@@ -134,7 +135,7 @@ class PluginRegistry(Generic[PluginT, R]):
                 f"https://docs.astral.sh/ruff/rules/assert/"
             )
             deprecated_warn(msg, version="5.4.0")
-            self.plugin_type = cast(IsPlugin, _is_type(plugin_type))
+            self.plugin_type = cast("IsPlugin", _is_type(plugin_type))
         else:
             self.plugin_type = plugin_type
         self._active: Plugin[R] | None = None
@@ -214,7 +215,7 @@ class PluginRegistry(Generic[PluginT, R]):
                     raise ValueError(self.entrypoint_err_messages[name]) from err
                 else:
                     raise NoSuchEntryPoint(self.entry_point_group, name) from err
-            value = cast(PluginT, ep.load())
+            value = cast("PluginT", ep.load())
             self.register(name, value)
         self._active_name = name
         self._active = self._plugins[name]

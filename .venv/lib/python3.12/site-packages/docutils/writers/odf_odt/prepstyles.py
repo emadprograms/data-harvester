@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# $Id: prepstyles.py 9386 2023-05-16 14:49:31Z milde $
+# $Id: prepstyles.py 10136 2025-05-20 15:48:27Z milde $
 # Author: Dave Kuhlman <dkuhlman@rexx.com>
 # Copyright: This module has been placed in the public domain.
 
@@ -11,9 +11,11 @@ Drop page size specifications from styles.xml in STYLE_FILE.odt.
 See https://docutils.sourceforge.io/docs/user/odt.html#page-size
 """
 
+from __future__ import annotations
+
 # Author: Michael Schutte <michi@uiae.at>
 
-from xml.etree import ElementTree as etree
+from xml.etree import ElementTree as ET
 
 import sys
 import zipfile
@@ -27,16 +29,16 @@ NAMESPACES = {
 }
 
 
-def prepstyle(filename):
+def prepstyle(filename) -> None:
 
     zin = zipfile.ZipFile(filename)
     styles = zin.open("styles.xml")
 
     root = None
     # some extra effort to preserve namespace prefixes
-    for event, elem in etree.iterparse(styles, events=("start", "start-ns")):
+    for event, elem in ET.iterparse(styles, events=("start", "start-ns")):
         if event == "start-ns":
-            etree.register_namespace(elem[0], elem[1])
+            ET.register_namespace(elem[0], elem[1])
         elif event == "start":
             if root is None:
                 root = elem
@@ -55,7 +57,7 @@ def prepstyle(filename):
 
     for item in zin.infolist():
         if item.filename == "styles.xml":
-            zout.writestr(item, etree.tostring(root, encoding="UTF-8"))
+            zout.writestr(item, ET.tostring(root, encoding="UTF-8"))
         else:
             zout.writestr(item, zin.read(item.filename))
 
@@ -64,7 +66,7 @@ def prepstyle(filename):
     shutil.move(tempname[1], filename)
 
 
-def main():
+def main() -> None:
     args = sys.argv[1:]
     if len(args) != 1 or args[0] in ('-h', '--help'):
         print(__doc__, file=sys.stderr)

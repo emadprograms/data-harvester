@@ -4,7 +4,8 @@ import json
 import pkgutil
 import textwrap
 import uuid
-from typing import TYPE_CHECKING, Any, Callable, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Union
 
 from ._vegafusion_data import compile_with_vegafusion, using_vegafusion
 from .mimebundle import spec_to_mimebundle
@@ -181,7 +182,7 @@ def default_renderer_base(
     how to render the custom VegaLite MIME type listed above.
     """
     # Local import to avoid circular ImportError
-    from altair.vegalite.v5.display import VEGA_MIME_TYPE, VEGALITE_MIME_TYPE
+    from altair.vegalite.v6.display import VEGA_MIME_TYPE, VEGALITE_MIME_TYPE
 
     assert isinstance(spec, dict)
     bundle: dict[str, str | dict] = {}

@@ -1,4 +1,4 @@
-# $Id: __init__.py 9541 2024-02-17 10:37:13Z milde $
+# $Id: __init__.py 10136 2025-05-20 15:48:27Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -6,8 +6,9 @@
 PEP HTML Writer.
 """
 
-__docformat__ = 'reStructuredText'
+from __future__ import annotations
 
+__docformat__ = 'reStructuredText'
 
 import os
 import os.path
@@ -54,7 +55,7 @@ class Writer(html4css1.Writer):
     config_section_dependencies = ('writers', 'html writers',
                                    'html4css1 writer')
 
-    def __init__(self):
+    def __init__(self) -> None:
         html4css1.Writer.__init__(self)
         self.translator_class = HTMLTranslator
 
@@ -87,7 +88,7 @@ class Writer(html4css1.Writer):
             self.body_pre_docinfo + self.docinfo + self.body)
         return subs
 
-    def assemble_parts(self):
+    def assemble_parts(self) -> None:
         html4css1.Writer.assemble_parts(self)
         self.parts['title'] = [self.title]
         self.parts['pepnum'] = self.pepnum
@@ -95,7 +96,7 @@ class Writer(html4css1.Writer):
 
 class HTMLTranslator(html4css1.HTMLTranslator):
 
-    def depart_field_list(self, node):
+    def depart_field_list(self, node) -> None:
         html4css1.HTMLTranslator.depart_field_list(self, node)
         if 'rfc2822' in node['classes']:
             self.body.append('<hr />\n')

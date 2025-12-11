@@ -1,4 +1,4 @@
-# $Id: tables.py 9492 2023-11-29 16:58:13Z milde $
+# $Id: tables.py 10136 2025-05-20 15:48:27Z milde $
 # Authors: David Goodger <goodger@python.org>; David Priest
 # Copyright: This module has been placed in the public domain.
 
@@ -6,8 +6,9 @@
 Directives for table elements.
 """
 
-__docformat__ = 'reStructuredText'
+from __future__ import annotations
 
+__docformat__ = 'reStructuredText'
 
 import csv
 from urllib.request import urlopen
@@ -89,7 +90,7 @@ class Table(Directive):
                     line=self.lineno)
                 raise SystemMessagePropagation(error)
 
-    def set_table_width(self, table_node):
+    def set_table_width(self, table_node) -> None:
         if 'width' in self.options:
             table_node['width'] = self.options.get('width')
 
@@ -116,7 +117,7 @@ class Table(Directive):
             raise SystemMessagePropagation(error)
         return col_widths
 
-    def extend_short_rows_with_empty_cells(self, columns, parts):
+    def extend_short_rows_with_empty_cells(self, columns, parts) -> None:
         for part in parts:
             for row in part:
                 if len(row) < columns:
@@ -206,7 +207,7 @@ class CSVTable(Table):
         lineterminator = '\n'
         quoting = csv.QUOTE_MINIMAL
 
-        def __init__(self, options):
+        def __init__(self, options) -> None:
             if 'delim' in options:
                 self.delimiter = options['delim']
             if 'keepspace' in options:
@@ -247,14 +248,14 @@ class CSVTable(Table):
         lineterminator = '\n'
         quoting = csv.QUOTE_MINIMAL
 
-        def __init__(self):
+        def __init__(self) -> None:
             warnings.warn('CSVTable.HeaderDialect will be removed '
-                          'in Docutils 0.22.',
-                          PendingDeprecationWarning, stacklevel=2)
+                          'in Docutils 1.0',
+                          DeprecationWarning, stacklevel=2)
             super().__init__()
 
     @staticmethod
-    def check_requirements():
+    def check_requirements() -> None:
         warnings.warn('CSVTable.check_requirements()'
                       ' is not required with Python 3'
                       ' and will be removed in Docutils 0.22.',
@@ -386,22 +387,6 @@ class CSVTable(Table):
             raise SystemMessagePropagation(error)
         return csv_data, source
 
-    @staticmethod
-    def decode_from_csv(s):
-        warnings.warn('CSVTable.decode_from_csv()'
-                  ' is not required with Python 3'
-                  ' and will be removed in Docutils 0.21 or later.',
-                  DeprecationWarning, stacklevel=2)
-        return s
-
-    @staticmethod
-    def encode_for_csv(s):
-        warnings.warn('CSVTable.encode_from_csv()'
-                  ' is not required with Python 3'
-                  ' and will be removed in Docutils 0.21 or later.',
-                  DeprecationWarning, stacklevel=2)
-        return s
-
     def parse_csv_data_into_rows(self, csv_data, dialect, source):
         csv_reader = csv.reader((line + '\n' for line in csv_data),
                                 dialect=dialect)
@@ -446,7 +431,7 @@ class ListTable(Table):
         node = nodes.Element()          # anonymous container for parsing
         self.state.nested_parse(self.content, self.content_offset, node)
         try:
-            num_cols, col_widths = self.check_list_content(node)
+            _num_cols, col_widths = self.check_list_content(node)
             table_data = [[item.children for item in row_list[0]]
                           for row_list in node[0]]
             header_rows = self.options.get('header-rows', 0)
@@ -517,7 +502,7 @@ class ListTable(Table):
             if col_width is not None:
                 colspec.attributes['colwidth'] = col_width
             if stub_columns:
-                colspec.attributes['stub'] = 1
+                colspec.attributes['stub'] = True
                 stub_columns -= 1
             tgroup += colspec
         rows = []

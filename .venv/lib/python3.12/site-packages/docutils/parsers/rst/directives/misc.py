@@ -1,30 +1,36 @@
-# $Id: misc.py 9492 2023-11-29 16:58:13Z milde $
+# $Id: misc.py 10214 2025-08-20 09:39:58Z milde $
 # Authors: David Goodger <goodger@python.org>; Dethe Elza
 # Copyright: This module has been placed in the public domain.
 
 """Miscellaneous directives."""
 
+from __future__ import annotations
+
 __docformat__ = 'reStructuredText'
 
-from pathlib import Path
 import re
 import time
+from pathlib import Path
 from urllib.request import urlopen
 from urllib.error import URLError
 
-from docutils import io, nodes, statemachine, utils
+from docutils import frontend, io, nodes, statemachine, utils
 from docutils.parsers.rst import Directive, convert_directive_function
 from docutils.parsers.rst import directives, roles, states
 from docutils.parsers.rst.directives.body import CodeBlock, NumberLines
 from docutils.transforms import misc
 
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from docutils.nodes import StrPath
 
-def adapt_path(path, source='', root_prefix='/'):
+
+def adapt_path(path: str, source='', root_prefix='') -> str:
     # Adapt path to files to include or embed.
     # `root_prefix` is prepended to absolute paths (cf. root_prefix setting),
     # `source` is the `current_source` of the including directive (which may
     # be a file included by the main document).
-    if path.startswith('/'):
+    if root_prefix and path.startswith('/'):
         base = Path(root_prefix)
         path = path[1:]
     else:
@@ -44,7 +50,7 @@ class Include(Directive):
     start and end line or text to match before and/or after the text
     to be used.
 
-    https://docutils.sourceforge.io/docs/ref/rst/directives.html#including-an-external-document-fragment
+    https://docutils.sourceforge.io/docs/ref/rst/directives.html#include
     """
 
     required_arguments = 1
@@ -60,32 +66,55 @@ class Include(Directive):
                    'start-after': directives.unchanged_required,
                    'end-before': directives.unchanged_required,
                    # ignored except for 'literal' or 'code':
-                   'number-lines': directives.unchanged,  # integer or None
+                   'number-lines': directives.value_or((None,), int),
                    'class': directives.class_option,
                    'name': directives.unchanged}
 
     standard_include_path = Path(states.__file__).parent / 'include'
 
-    def run(self):
+    def run(self) -> list:
         """Include a file as part of the content of this reST file.
 
-        Depending on the options, the file (or a clipping) is
+        Depending on the options, the file content (or a clipping) is
         converted to nodes and returned or inserted into the input stream.
         """
-        settings = self.state.document.settings
+        self.settings = settings = self.state.document.settings
         if not settings.file_insertion_enabled:
             raise self.warning('"%s" directive disabled.' % self.name)
-        tab_width = self.options.get('tab-width', settings.tab_width)
-        current_source = self.state.document.current_source
+        self.tab_width = self.options.get('tab-width', settings.tab_width)
+        self.clip_options = (self.options.get('start-line', None),
+                             self.options.get('end-line', None),
+                             self.options.get('start-after', ''),
+                             self.options.get('end-before', ''))
         path = directives.path(self.arguments[0])
         if path.startswith('<') and path.endswith('>'):
             path = '/' + path[1:-1]
             root_prefix = self.standard_include_path
         else:
             root_prefix = settings.root_prefix
-        path = adapt_path(path, current_source, root_prefix)
-        encoding = self.options.get('encoding', settings.input_encoding)
-        error_handler = settings.input_encoding_error_handler
+        path = adapt_path(path,
+                          self.state.document.current_source,
+                          root_prefix)
+        self.options['source'] = path
+
+        inputstring = self.read_file(path)
+
+        if 'literal' in self.options:
+            return self.as_literal_block(inputstring)
+        if 'code' in self.options:
+            return self.as_code_block(inputstring)
+        if 'parser' in self.options:
+            return self.custom_parse(inputstring)
+        self.insert_into_input_lines(inputstring)
+        return []
+
+    def read_file(self, path: StrPath) -> str:
+        """Read text file at `path`. Clip and return content.
+
+        Provisional.
+        """
+        encoding = self.options.get('encoding', self.settings.input_encoding)
+        error_handler = self.settings.input_encoding_error_handler
         try:
             include_file = io.FileInput(source_path=path,
                                         encoding=encoding,
@@ -95,128 +124,147 @@ class Include(Directive):
                               f'Cannot encode input file path "{path}" '
                               '(wrong locale?).')
         except OSError as error:
-            raise self.severe(f'Problems with "{self.name}" directive '
-                              f'path:\n{io.error_string(error)}.')
+            raise self.severe(f'Problems with "{self.name}" directive path:\n'
+                              f'{io.error_string(error)}.')
         else:
-            settings.record_dependencies.add(path)
-
-        # Get to-be-included content
-        startline = self.options.get('start-line', None)
-        endline = self.options.get('end-line', None)
+            self.settings.record_dependencies.add(path)
         try:
-            if startline or (endline is not None):
-                lines = include_file.readlines()
-                rawtext = ''.join(lines[startline:endline])
-            else:
-                rawtext = include_file.read()
+            text = include_file.read()
         except UnicodeError as error:
             raise self.severe(f'Problem with "{self.name}" directive:\n'
                               + io.error_string(error))
+        # Clip to-be-included content
+        startline, endline, starttext, endtext = self.clip_options
+        if startline or (endline is not None):
+            lines = text.splitlines()
+            text = '\n'.join(lines[startline:endline])
         # start-after/end-before: no restrictions on newlines in match-text,
         # and no restrictions on matching inside lines vs. line boundaries
-        after_text = self.options.get('start-after', None)
-        if after_text:
-            # skip content in rawtext before *and incl.* a matching text
-            after_index = rawtext.find(after_text)
+        if starttext:
+            # skip content in text before *and incl.* a matching text
+            after_index = text.find(starttext)
             if after_index < 0:
-                raise self.severe('Problem with "start-after" option of "%s" '
-                                  'directive:\nText not found.' % self.name)
-            rawtext = rawtext[after_index + len(after_text):]
-        before_text = self.options.get('end-before', None)
-        if before_text:
-            # skip content in rawtext after *and incl.* a matching text
-            before_index = rawtext.find(before_text)
+                raise self.severe('Problem with "start-after" option of '
+                                  f'"{self.name}" directive:\nText not found.')
+            text = text[after_index + len(starttext):]
+        if endtext:
+            # skip content in text after *and incl.* a matching text
+            before_index = text.find(endtext)
             if before_index < 0:
-                raise self.severe('Problem with "end-before" option of "%s" '
-                                  'directive:\nText not found.' % self.name)
-            rawtext = rawtext[:before_index]
+                raise self.severe('Problem with "end-before" option of '
+                                  f'"{self.name}" directive:\nText not found.')
+            text = text[:before_index]
+        return text
 
-        include_lines = statemachine.string2lines(rawtext, tab_width,
-                                                  convert_whitespace=True)
-        for i, line in enumerate(include_lines):
-            if len(line) > settings.line_length_limit:
-                raise self.warning('"%s": line %d exceeds the'
-                                   ' line-length-limit.' % (path, i+1))
+    def as_literal_block(self, text: str) -> list[nodes.literal_block]:
+        """Return list with literal_block containing `text`.
 
-        if 'literal' in self.options:
-            # Don't convert tabs to spaces, if `tab_width` is negative.
-            if tab_width >= 0:
-                text = rawtext.expandtabs(tab_width)
-            else:
-                text = rawtext
-            literal_block = nodes.literal_block(
-                                rawtext, source=path,
-                                classes=self.options.get('class', []))
-            literal_block.line = 1
-            self.add_name(literal_block)
-            if 'number-lines' in self.options:
-                try:
-                    startline = int(self.options['number-lines'] or 1)
-                except ValueError:
-                    raise self.error(':number-lines: with non-integer '
-                                     'start value')
-                endline = startline + len(include_lines)
-                if text.endswith('\n'):
-                    text = text[:-1]
-                tokens = NumberLines([([], text)], startline, endline)
-                for classes, value in tokens:
-                    if classes:
-                        literal_block += nodes.inline(value, value,
-                                                      classes=classes)
-                    else:
-                        literal_block += nodes.Text(value)
-            else:
-                literal_block += nodes.Text(text)
-            return [literal_block]
+        Provisional
+        """
+        source = self.options['source']
+        # Convert tabs to spaces unless `tab_width` is negative.
+        if self.tab_width >= 0:
+            text = text.expandtabs(self.tab_width)
+        literal_block = nodes.literal_block(
+            '', source=source, classes=self.options.get('class', []))
+        literal_block.source = source
+        literal_block.line = self.options.get('start-line', 0) + 1
+        self.add_name(literal_block)
+        if 'number-lines' in self.options:
+            firstline = self.options['number-lines'] or 1
+            text = text.removesuffix('\n')
+            lastline = firstline + len(text.splitlines())
+            tokens = NumberLines([([], text)], firstline, lastline)
+            for classes, value in tokens:
+                if classes:
+                    literal_block += nodes.inline('', value, classes=classes)
+                else:
+                    literal_block += nodes.Text(value)
+        else:
+            literal_block += nodes.Text(text)
+        return [literal_block]
 
-        if 'code' in self.options:
-            self.options['source'] = path
-            # Don't convert tabs to spaces, if `tab_width` is negative:
-            if tab_width < 0:
-                include_lines = rawtext.splitlines()
-            codeblock = CodeBlock(self.name,
-                                  [self.options.pop('code')],  # arguments
-                                  self.options,
-                                  include_lines,  # content
-                                  self.lineno,
-                                  self.content_offset,
-                                  self.block_text,
-                                  self.state,
-                                  self.state_machine)
-            return codeblock.run()
+    def as_code_block(self, text: str) -> list[nodes.literal_block]:
+        """Pass `text` to the `CodeBlock` directive class.
 
-        # Prevent circular inclusion:
-        clip_options = (startline, endline, before_text, after_text)
+        Provisional.
+        """
+        # convert tabs to spaces unless `tab_width` is negative:
+        if self.tab_width >= 0:
+            text = text.expandtabs(self.tab_width)
+        codeblock = CodeBlock(self.name,
+                              [self.options.pop('code')],  # pass as argument
+                              self.options,
+                              [text.removesuffix('\n')],   # content
+                              self.lineno,
+                              self.content_offset,
+                              self.block_text,
+                              self.state,
+                              self.state_machine,
+                              )
+        return codeblock.run()
+
+    def custom_parse(self, text: str) -> list:
+        """Parse with custom parser.
+
+        Parse with ``self.options['parser']`` into a new (dummy) document,
+        apply the parser's default transforms,
+        return child elements.
+
+        Provisional.
+        """
+        parser = self.options['parser']()
+        settings = frontend.get_default_settings(parser)
+        # update with current document settings
+        for k, v in self.settings.__dict__.items():
+            setattr(settings, k, v)
+        settings._source = self.options['source']
+        document = utils.new_document(settings._source, settings)
+        document.include_log = self.state.document.include_log
+        document.ids = self.state.document.ids
+        document.nameids = self.state.document.nameids
+        document.nametypes = self.state.document.nametypes
+        parser.parse(text, document)
+        self.state.document.parse_messages.extend(document.parse_messages)
+        # clean up doctree and complete parsing
+        document.transformer.populate_from_components((parser,))
+        document.transformer.apply_transforms()
+        self.state.document.transform_messages.extend(
+            document.transform_messages)
+        return document.children
+
+    def insert_into_input_lines(self, text: str) -> None:
+        """Insert file content into the rST input of the calling parser.
+
+        Provisional.
+        """
+        source = self.options['source']
+        textlines = statemachine.string2lines(text, self.tab_width,
+                                              convert_whitespace=True)
+        # Sanity checks:
+        # excessively long lines
+        for i, line in enumerate(textlines):
+            if len(line) > self.settings.line_length_limit:
+                line_no = i + 1 + self.options.get('start-line', 0)
+                raise self.warning(f'"{source}": line {line_no} exceeds the'
+                                   ' line-length-limit.')
+        # circular inclusion
         include_log = self.state.document.include_log
-        # log entries are tuples (<source>, <clip-options>)
         if not include_log:  # new document, initialize with document source
-            include_log.append((utils.relative_path(None, current_source),
-                                (None, None, None, None)))
-        if (path, clip_options) in include_log:
-            master_paths = (pth for (pth, opt) in reversed(include_log))
-            inclusion_chain = '\n> '.join((path, *master_paths))
-            raise self.warning('circular inclusion in "%s" directive:\n%s'
-                               % (self.name, inclusion_chain))
+            current_source = utils.relative_path(
+                                None, self.state.document.current_source)
+            include_log.append((current_source, (None, None, '', '')))
+        if (source, self.clip_options) in include_log:
+            source_chain = (pth for (pth, opt) in reversed(include_log))
+            inclusion_chain = '\n> '.join((source, *source_chain))
+            raise self.warning(f'circular inclusion in "{self.name}"'
+                               f' directive:\n{inclusion_chain}')
+        include_log.append((source, self.clip_options))
+        # marker for removing log entry (cf. parsers.rst.states.Body.comment())
+        textlines += ['', f'.. end of inclusion from "{source}"']
 
-        if 'parser' in self.options:
-            # parse into a dummy document and return created nodes
-            document = utils.new_document(path, settings)
-            document.include_log = include_log + [(path, clip_options)]
-            parser = self.options['parser']()
-            parser.parse('\n'.join(include_lines), document)
-            # clean up doctree and complete parsing
-            document.transformer.populate_from_components((parser,))
-            document.transformer.apply_transforms()
-            return document.children
-
-        # Include as rST source:
-        #
-        # mark end (cf. parsers.rst.states.Body.comment())
-        include_lines += ['', '.. end of inclusion from "%s"' % path]
-        self.state_machine.insert_input(include_lines, path)
-        # update include-log
-        include_log.append((path, clip_options))
-        return []
+        self.state_machine.insert_input(textlines, source)
+        # TODO: if startline != 0, line numbers are wrong.
 
 
 class Raw(Directive):

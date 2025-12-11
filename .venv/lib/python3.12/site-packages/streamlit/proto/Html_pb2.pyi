@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -31,12 +37,15 @@ class Html(google.protobuf.message.Message):
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
     BODY_FIELD_NUMBER: builtins.int
+    UNSAFE_ALLOW_JAVASCRIPT_FIELD_NUMBER: builtins.int
     body: builtins.str
+    unsafe_allow_javascript: builtins.bool
     def __init__(
         self,
         *,
         body: builtins.str = ...,
+        unsafe_allow_javascript: builtins.bool = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["body", b"body"]) -> None: ...
+    def ClearField(self, field_name: typing.Literal["body", b"body", "unsafe_allow_javascript", b"unsafe_allow_javascript"]) -> None: ...
 
-global___Html = Html
+Global___Html: typing_extensions.TypeAlias = Html

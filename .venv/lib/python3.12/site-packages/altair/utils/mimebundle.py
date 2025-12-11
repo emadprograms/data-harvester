@@ -140,7 +140,7 @@ def spec_to_mimebundle(
     if format in {"png", "svg", "pdf", "vega"}:
         return _spec_to_mimebundle_with_engine(
             spec,
-            cast(Literal["png", "svg", "pdf", "vega"], format),
+            cast("Literal['png', 'svg', 'pdf', 'vega']", format),
             internal_mode,
             engine=engine,
             format_locale=embed_options.get("formatLocale", None),
@@ -218,7 +218,7 @@ def _spec_to_mimebundle_with_engine(
                 vg = spec
             else:
                 vg = vlc.vegalite_to_vega(spec, vl_version=vl_version)
-            return {"application/vnd.vega.v5+json": vg}
+            return {"application/vnd.vega.v6+json": vg}
         elif format == "svg":
             if mode == "vega":
                 svg = vlc.vega_to_svg(
@@ -336,7 +336,7 @@ def _validate_normalize_engine(
 
 def _pngxy(data):
     """
-    read the (width, height) from a PNG header.
+    Read the (width, height) from a PNG header.
 
     Taken from IPython.display
     """

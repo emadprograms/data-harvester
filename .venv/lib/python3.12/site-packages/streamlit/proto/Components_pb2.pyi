@@ -22,7 +22,13 @@ import collections.abc
 import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -51,7 +57,7 @@ class ComponentInstance(google.protobuf.message.Message):
     form_id: builtins.str
     tab_index: builtins.int
     @property
-    def special_args(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___SpecialArg]:
+    def special_args(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___SpecialArg]:
         """Additional, non-JSON args. These require special processing
         on the other end.
         """
@@ -61,7 +67,7 @@ class ComponentInstance(google.protobuf.message.Message):
         *,
         id: builtins.str = ...,
         json_args: builtins.str = ...,
-        special_args: collections.abc.Iterable[global___SpecialArg] | None = ...,
+        special_args: collections.abc.Iterable[Global___SpecialArg] | None = ...,
         component_name: builtins.str = ...,
         url: builtins.str = ...,
         form_id: builtins.str = ...,
@@ -71,7 +77,7 @@ class ComponentInstance(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["_tab_index", b"_tab_index", "component_name", b"component_name", "form_id", b"form_id", "id", b"id", "json_args", b"json_args", "special_args", b"special_args", "tab_index", b"tab_index", "url", b"url"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["_tab_index", b"_tab_index"]) -> typing.Literal["tab_index"] | None: ...
 
-global___ComponentInstance = ComponentInstance
+Global___ComponentInstance: typing_extensions.TypeAlias = ComponentInstance
 
 @typing.final
 class SpecialArg(google.protobuf.message.Message):
@@ -83,19 +89,19 @@ class SpecialArg(google.protobuf.message.Message):
     key: builtins.str
     bytes: builtins.bytes
     @property
-    def arrow_dataframe(self) -> global___ArrowDataframe: ...
+    def arrow_dataframe(self) -> Global___ArrowDataframe: ...
     def __init__(
         self,
         *,
         key: builtins.str = ...,
-        arrow_dataframe: global___ArrowDataframe | None = ...,
+        arrow_dataframe: Global___ArrowDataframe | None = ...,
         bytes: builtins.bytes = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["arrow_dataframe", b"arrow_dataframe", "bytes", b"bytes", "value", b"value"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["arrow_dataframe", b"arrow_dataframe", "bytes", b"bytes", "key", b"key", "value", b"value"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["value", b"value"]) -> typing.Literal["arrow_dataframe", "bytes"] | None: ...
 
-global___SpecialArg = SpecialArg
+Global___SpecialArg: typing_extensions.TypeAlias = SpecialArg
 
 @typing.final
 class ArrowDataframe(google.protobuf.message.Message):
@@ -113,18 +119,18 @@ class ArrowDataframe(google.protobuf.message.Message):
     height: builtins.int
     width: builtins.int
     @property
-    def data(self) -> global___ArrowTable: ...
+    def data(self) -> Global___ArrowTable: ...
     def __init__(
         self,
         *,
-        data: global___ArrowTable | None = ...,
+        data: Global___ArrowTable | None = ...,
         height: builtins.int = ...,
         width: builtins.int = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["data", b"data"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["data", b"data", "height", b"height", "width", b"width"]) -> None: ...
 
-global___ArrowDataframe = ArrowDataframe
+Global___ArrowDataframe: typing_extensions.TypeAlias = ArrowDataframe
 
 @typing.final
 class ArrowTable(google.protobuf.message.Message):
@@ -138,19 +144,19 @@ class ArrowTable(google.protobuf.message.Message):
     index: builtins.bytes
     columns: builtins.bytes
     @property
-    def styler(self) -> global___ArrowTableStyler: ...
+    def styler(self) -> Global___ArrowTableStyler: ...
     def __init__(
         self,
         *,
         data: builtins.bytes = ...,
         index: builtins.bytes = ...,
         columns: builtins.bytes = ...,
-        styler: global___ArrowTableStyler | None = ...,
+        styler: Global___ArrowTableStyler | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["styler", b"styler"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["columns", b"columns", "data", b"data", "index", b"index", "styler", b"styler"]) -> None: ...
 
-global___ArrowTable = ArrowTable
+Global___ArrowTable: typing_extensions.TypeAlias = ArrowTable
 
 @typing.final
 class ArrowTableStyler(google.protobuf.message.Message):
@@ -174,4 +180,4 @@ class ArrowTableStyler(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["caption", b"caption", "display_values", b"display_values", "styles", b"styles", "uuid", b"uuid"]) -> None: ...
 
-global___ArrowTableStyler = ArrowTableStyler
+Global___ArrowTableStyler: typing_extensions.TypeAlias = ArrowTableStyler

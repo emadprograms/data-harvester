@@ -1,4 +1,4 @@
-# $Id: peps.py 9037 2022-03-05 23:31:10Z milde $
+# $Id: peps.py 10136 2025-05-20 15:48:27Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -10,6 +10,8 @@ Transforms for PEP processing.
 - `Contents`: Auto-inserts a table of contents.
 - `PEPZero`: Special processing for PEP 0.
 """
+
+from __future__ import annotations
 
 __docformat__ = 'reStructuredText'
 
@@ -34,8 +36,10 @@ class Headers(Transform):
     pep_cvs_url = ('http://hg.python.org'
                    '/peps/file/default/pep-%04d.txt')
     rcs_keyword_substitutions = (
-          (re.compile(r'\$' r'RCSfile: (.+),v \$$', re.IGNORECASE), r'\1'),
-          (re.compile(r'\$[a-zA-Z]+: (.+) \$$'), r'\1'),)
+        (re.compile(r'\$' r'RCSfile: (.+),v \$$',  # NoQA: ISC001
+                    re.IGNORECASE), r'\1'),
+        (re.compile(r'\$[a-zA-Z]+: (.+) \$$'), r'\1'),
+    )
 
     def apply(self):
         if not len(self.document):
@@ -117,11 +121,14 @@ class Headers(Transform):
                 space = nodes.Text(' ')
                 for refpep in re.split(r',?\s+', body.astext()):
                     pepno = int(refpep)
-                    newbody.append(nodes.reference(
-                        refpep, refpep,
-                        refuri=(self.document.settings.pep_base_url
-                                + self.pep_url % pepno)))
-                    newbody.append(space)
+                    newbody.extend((
+                        nodes.reference(
+                            refpep, refpep,
+                            refuri=(self.document.settings.pep_base_url
+                                    + self.pep_url % pepno)
+                        ),
+                        space,
+                    ))
                 para[:] = newbody[:-1]  # drop trailing space
             elif name == 'last-modified':
                 utils.clean_rcs_keywords(para, self.rcs_keyword_substitutions)
@@ -145,7 +152,7 @@ class Contents(Transform):
 
     default_priority = 380
 
-    def apply(self):
+    def apply(self) -> None:
         language = languages.get_language(self.document.settings.language_code,
                                           self.document.reporter)
         name = language.labels['contents']
@@ -171,25 +178,25 @@ class TargetNotes(Transform):
 
     default_priority = 520
 
-    def apply(self):
+    def apply(self) -> None:
         doc = self.document
         i = len(doc) - 1
-        refsect = copyright = None
+        refsect = copyright_ = None
         while i >= 0 and isinstance(doc[i], nodes.section):
             title_words = doc[i][0].astext().lower().split()
             if 'references' in title_words:
                 refsect = doc[i]
                 break
             elif 'copyright' in title_words:
-                copyright = i
+                copyright_ = i
             i -= 1
         if not refsect:
             refsect = nodes.section()
             refsect += nodes.title('', 'References')
             doc.set_id(refsect)
-            if copyright:
+            if copyright_:
                 # Put the new "References" section before "Copyright":
-                doc.insert(copyright, refsect)
+                doc.insert(copyright_, refsect)
             else:
                 # Put the new "References" section at end of doc:
                 doc.append(refsect)
@@ -201,7 +208,7 @@ class TargetNotes(Transform):
         refsect.append(pending)
         self.document.note_pending(pending, 1)
 
-    def cleanup_callback(self, pending):
+    def cleanup_callback(self, pending) -> None:
         """
         Remove an empty "References" section.
 
@@ -219,7 +226,7 @@ class PEPZero(Transform):
 
     default_priority = 760
 
-    def apply(self):
+    def apply(self) -> None:
         visitor = PEPZeroSpecial(self.document)
         self.document.walk(visitor)
         self.startnode.parent.remove(self.startnode)
@@ -238,29 +245,29 @@ class PEPZeroSpecial(nodes.SparseNodeVisitor):
 
     pep_url = Headers.pep_url
 
-    def unknown_visit(self, node):
+    def unknown_visit(self, node) -> None:
         pass
 
-    def visit_reference(self, node):
+    def visit_reference(self, node) -> None:
         node.replace_self(mask_email(node))
 
     def visit_field_list(self, node):
         if 'rfc2822' in node['classes']:
             raise nodes.SkipNode
 
-    def visit_tgroup(self, node):
+    def visit_tgroup(self, node) -> None:
         self.pep_table = node['cols'] == 4
         self.entry = 0
 
-    def visit_colspec(self, node):
+    def visit_colspec(self, node) -> None:
         self.entry += 1
         if self.pep_table and self.entry == 2:
             node['classes'].append('num')
 
-    def visit_row(self, node):
+    def visit_row(self, node) -> None:
         self.entry = 0
 
-    def visit_entry(self, node):
+    def visit_entry(self, node) -> None:
         self.entry += 1
         if self.pep_table and self.entry == 2 and len(node) == 1:
             node['classes'].append('num')

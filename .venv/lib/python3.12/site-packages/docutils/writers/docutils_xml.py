@@ -1,4 +1,4 @@
-# $Id: docutils_xml.py 9502 2023-12-14 22:39:08Z milde $
+# $Id: docutils_xml.py 10136 2025-05-20 15:48:27Z milde $
 # Author: David Goodger, Paul Tremblay, Guenter Milde
 # Maintainer: docutils-develop@lists.sourceforge.net
 # Copyright: This module has been placed in the public domain.
@@ -7,6 +7,8 @@
 Simple document tree Writer, writes Docutils XML according to
 https://docutils.sourceforge.io/docs/ref/docutils.dtd.
 """
+
+from __future__ import annotations
 
 __docformat__ = 'reStructuredText'
 
@@ -52,11 +54,11 @@ class Writer(writers.Writer):
     output = None
     """Final translated form of `document`."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         writers.Writer.__init__(self)
         self.translator_class = XMLTranslator
 
-    def translate(self):
+    def translate(self) -> None:
         self.visitor = visitor = self.translator_class(self.document)
         self.document.walkabout(visitor)
         self.output = ''.join(visitor.output)
@@ -77,7 +79,7 @@ class XMLTranslator(nodes.GenericNodeVisitor):
     xmlparser.setFeature(
         "http://xml.org/sax/features/external-general-entities", True)
 
-    def __init__(self, document):
+    def __init__(self, document) -> None:
         nodes.NodeVisitor.__init__(self, document)
 
         # Reporter
@@ -114,12 +116,13 @@ class XMLTranslator(nodes.GenericNodeVisitor):
     simple_nodes = (nodes.TextElement, nodes.meta,
                     nodes.image, nodes.colspec, nodes.transition)
 
-    def default_visit(self, node):
+    def default_visit(self, node) -> None:
         """Default node visit method."""
         if not self.in_simple:
             self.output.append(self.indent*self.level)
         self.output.append(node.starttag(xml.sax.saxutils.quoteattr))
-        self.level += 1
+        if not isinstance(node, nodes.Inline):
+            self.level += 1
         # `nodes.literal` is not an instance of FixedTextElement by design,
         # see docs/ref/rst/restructuredtext.html#inline-literals
         if isinstance(node, (nodes.FixedTextElement, nodes.literal)):
@@ -129,9 +132,10 @@ class XMLTranslator(nodes.GenericNodeVisitor):
         if not self.in_simple:
             self.output.append(self.newline)
 
-    def default_departure(self, node):
+    def default_departure(self, node) -> None:
         """Default node depart method."""
-        self.level -= 1
+        if not isinstance(node, nodes.Inline):
+            self.level -= 1
         if not self.in_simple:
             self.output.append(self.indent*self.level)
         self.output.append(node.endtag())
@@ -145,14 +149,14 @@ class XMLTranslator(nodes.GenericNodeVisitor):
     # specific visit and depart methods
     # ---------------------------------
 
-    def visit_Text(self, node):
+    def visit_Text(self, node) -> None:
         text = xml.sax.saxutils.escape(node.astext())
         # indent text if we are not in a FixedText element:
         if not self.fixed_text:
             text = text.replace('\n', '\n'+self.indent*self.level)
         self.output.append(text)
 
-    def depart_Text(self, node):
+    def depart_Text(self, node) -> None:
         pass
 
     def visit_raw(self, node):
@@ -183,5 +187,5 @@ class XMLTranslator(nodes.GenericNodeVisitor):
 
 class TestXml(xml.sax.handler.ContentHandler):
 
-    def setDocumentLocator(self, locator):
+    def setDocumentLocator(self, locator) -> None:
         self.locator = locator

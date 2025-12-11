@@ -1,4 +1,4 @@
-# $Id: en.py 9417 2023-06-27 20:04:54Z milde $
+# $Id: en.py 10169 2025-06-16 10:05:35Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -54,6 +54,7 @@ directives = {
       'unicode': 'unicode',
       'date': 'date',
       'class': 'class',
+      'rst-class': 'class',  # Sphinx compatibility alias
       'role': 'role',
       'default-role': 'default-role',
       'title': 'title',

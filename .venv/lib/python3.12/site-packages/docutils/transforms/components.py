@@ -1,4 +1,4 @@
-# $Id: components.py 9037 2022-03-05 23:31:10Z milde $
+# $Id: components.py 10136 2025-05-20 15:48:27Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -6,9 +6,11 @@
 Docutils component-related transforms.
 """
 
-from docutils.transforms import Transform
+from __future__ import annotations
 
 __docformat__ = 'reStructuredText'
+
+from docutils.transforms import Transform
 
 
 class Filter(Transform):
@@ -41,7 +43,7 @@ class Filter(Transform):
 
     default_priority = 780
 
-    def apply(self):
+    def apply(self) -> None:
         pending = self.startnode
         component_type = pending.details['component']  # 'reader' or 'writer'
         formats = (pending.details['format']).split(',')

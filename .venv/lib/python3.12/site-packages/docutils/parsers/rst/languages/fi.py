@@ -1,4 +1,4 @@
-# $Id: fi.py 9452 2023-09-27 00:11:54Z milde $
+# $Id: fi.py 9782 2024-07-29 12:37:02Z milde $
 # Author: Asko Soukka <asko.soukka@iki.fi>
 # Copyright: This module has been placed in the public domain.
 
@@ -17,6 +17,7 @@ __docformat__ = 'reStructuredText'
 
 directives = {
       # language-dependent: fixed
+      'admonition (translation required)': 'admonition',
       'huomio': 'attention',
       'varo': 'caution',
       'code (translation required)': 'code',
@@ -27,7 +28,6 @@ directives = {
       'huomautus': 'note',
       'neuvo': 'tip',
       'varoitus': 'warning',
-      'kehotus': 'admonition',  # sic! advice/advisory/remark, not reprimand
       'sivupalkki': 'sidebar',
       'aihe': 'topic',
       'rivi': 'line-block',

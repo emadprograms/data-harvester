@@ -1,4 +1,4 @@
-# $Id: af.py 9417 2023-06-27 20:04:54Z milde $
+# $Id: af.py 9782 2024-07-29 12:37:02Z milde $
 # Author: Jannie Hofmeyr <jhsh@sun.ac.za>
 # Copyright: This module has been placed in the public domain.
 
@@ -27,7 +27,6 @@ directives = {
       'tip': 'tip',  # hint and tip both have the same translation: wenk
       'waarskuwing': 'warning',
       'advies': 'admonition',
-      'vermaning': 'admonition',  # sic! kept for backwards compatibiltity
       'kantstreep': 'sidebar',
       'onderwerp': 'topic',
       'lynblok': 'line-block',

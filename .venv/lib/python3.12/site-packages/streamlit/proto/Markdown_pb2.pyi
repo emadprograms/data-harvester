@@ -70,7 +70,7 @@ class Markdown(google.protobuf.message.Message):
     allow_html: builtins.bool
     is_caption: builtins.bool
     """TODO [Karen]: Remove this field if favor of element_type"""
-    element_type: global___Markdown.Type.ValueType
+    element_type: Global___Markdown.Type.ValueType
     help: builtins.str
     def __init__(
         self,
@@ -78,9 +78,9 @@ class Markdown(google.protobuf.message.Message):
         body: builtins.str = ...,
         allow_html: builtins.bool = ...,
         is_caption: builtins.bool = ...,
-        element_type: global___Markdown.Type.ValueType = ...,
+        element_type: Global___Markdown.Type.ValueType = ...,
         help: builtins.str = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["allow_html", b"allow_html", "body", b"body", "element_type", b"element_type", "help", b"help", "is_caption", b"is_caption"]) -> None: ...
 
-global___Markdown = Markdown
+Global___Markdown: typing_extensions.TypeAlias = Markdown

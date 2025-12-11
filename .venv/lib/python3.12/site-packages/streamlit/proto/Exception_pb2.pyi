@@ -23,7 +23,13 @@ import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.WidthConfig_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -77,4 +83,4 @@ class Exception(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["width_config", b"width_config"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["is_warning", b"is_warning", "message", b"message", "message_is_markdown", b"message_is_markdown", "stack_trace", b"stack_trace", "type", b"type", "width_config", b"width_config"]) -> None: ...
 
-global___Exception = Exception
+Global___Exception: typing_extensions.TypeAlias = Exception

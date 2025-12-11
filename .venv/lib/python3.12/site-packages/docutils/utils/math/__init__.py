@@ -1,4 +1,4 @@
-# :Id: $Id: __init__.py 9516 2024-01-15 16:11:08Z milde $
+# :Id: $Id: __init__.py 10136 2025-05-20 15:48:27Z milde $
 # :Author: Guenter Milde.
 # :License: Released under the terms of the `2-Clause BSD license`_, in short:
 #
@@ -23,6 +23,10 @@ It contains various modules for conversion between different math formats
 :tex2mathml_extern: Wrapper for 3rd party TeX -> MathML converters
 """
 
+from __future__ import annotations
+
+__docformat__ = 'reStructuredText'
+
 # helpers for Docutils math support
 # =================================
 
@@ -33,7 +37,7 @@ class MathError(ValueError):
     The additional attribute `details` may hold a list of Docutils
     nodes suitable as children for a ``<system_message>``.
     """
-    def __init__(self, msg, details=[]):
+    def __init__(self, msg, details=[]) -> None:
         super().__init__(msg)
         self.details = details
 
@@ -64,7 +68,7 @@ def pick_math_environment(code, numbered=False):
     return env
 
 
-def wrap_math_code(code, as_block):
+def wrap_math_code(code, as_block) -> str:
     # Wrap math-code in mode-switching TeX command/environment.
     # If `as_block` is True, use environment for displayed equation(s).
     if as_block:

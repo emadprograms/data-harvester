@@ -51,7 +51,7 @@ class SubtitleTrack(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["label", b"label", "url", b"url"]) -> None: ...
 
-global___SubtitleTrack = SubtitleTrack
+Global___SubtitleTrack: typing_extensions.TypeAlias = SubtitleTrack
 
 @typing.final
 class Video(google.protobuf.message.Message):
@@ -88,7 +88,7 @@ class Video(google.protobuf.message.Message):
     """A url pointing to a video file"""
     start_time: builtins.int
     """The currentTime attribute of the HTML <video> tag's <source> subtag."""
-    type: global___Video.Type.ValueType
+    type: Global___Video.Type.ValueType
     """Type affects how browser wraps the video in tags: plain HTML5, YouTube..."""
     end_time: builtins.int
     """The time at which the video should stop playing. If not specified, plays to the end."""
@@ -98,7 +98,7 @@ class Video(google.protobuf.message.Message):
     muted: builtins.bool
     id: builtins.str
     @property
-    def subtitles(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___SubtitleTrack]:
+    def subtitles(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___SubtitleTrack]:
         """Repeated field for subtitle tracks"""
 
     @property
@@ -108,8 +108,8 @@ class Video(google.protobuf.message.Message):
         *,
         url: builtins.str = ...,
         start_time: builtins.int = ...,
-        type: global___Video.Type.ValueType = ...,
-        subtitles: collections.abc.Iterable[global___SubtitleTrack] | None = ...,
+        type: Global___Video.Type.ValueType = ...,
+        subtitles: collections.abc.Iterable[Global___SubtitleTrack] | None = ...,
         end_time: builtins.int = ...,
         loop: builtins.bool = ...,
         autoplay: builtins.bool = ...,
@@ -121,4 +121,4 @@ class Video(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["_width_config", b"_width_config", "autoplay", b"autoplay", "end_time", b"end_time", "id", b"id", "loop", b"loop", "muted", b"muted", "start_time", b"start_time", "subtitles", b"subtitles", "type", b"type", "url", b"url", "width_config", b"width_config"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["_width_config", b"_width_config"]) -> typing.Literal["width_config"] | None: ...
 
-global___Video = Video
+Global___Video: typing_extensions.TypeAlias = Video

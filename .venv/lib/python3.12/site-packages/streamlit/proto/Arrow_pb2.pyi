@@ -132,6 +132,7 @@ class Arrow(google.protobuf.message.Message):
     SELECTION_MODE_FIELD_NUMBER: builtins.int
     ROW_HEIGHT_FIELD_NUMBER: builtins.int
     BORDER_MODE_FIELD_NUMBER: builtins.int
+    PLACEHOLDER_FIELD_NUMBER: builtins.int
     data: builtins.bytes
     """The serialized arrow dataframe"""
     width: builtins.int
@@ -144,7 +145,7 @@ class Arrow(google.protobuf.message.Message):
     """The id of the widget, this is required if the dataframe is editable"""
     columns: builtins.str
     """Column configuration as JSON"""
-    editing_mode: global___Arrow.EditingMode.ValueType
+    editing_mode: Global___Arrow.EditingMode.ValueType
     """Activate table editing"""
     disabled: builtins.bool
     """Deactivates editing"""
@@ -152,12 +153,14 @@ class Arrow(google.protobuf.message.Message):
     """The form ID of the widget, this is required if the dataframe is editable"""
     row_height: builtins.int
     """Row height in pixels"""
-    border_mode: global___Arrow.BorderMode.ValueType
+    border_mode: Global___Arrow.BorderMode.ValueType
     """How to show borders around the table and between cells. Note that this property
     is only used for `st.table` at the moment.
     """
+    placeholder: builtins.str
+    """Placeholder string used when rendering missing values (e.g. nulls, NaNs)."""
     @property
-    def styler(self) -> global___Styler:
+    def styler(self) -> Global___Styler:
         """Pandas styler information"""
 
     @property
@@ -165,32 +168,36 @@ class Arrow(google.protobuf.message.Message):
         """Defines the order in which columns are displayed"""
 
     @property
-    def selection_mode(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[global___Arrow.SelectionMode.ValueType]:
+    def selection_mode(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[Global___Arrow.SelectionMode.ValueType]:
         """Activated dataframe selections events"""
 
     def __init__(
         self,
         *,
         data: builtins.bytes = ...,
-        styler: global___Styler | None = ...,
+        styler: Global___Styler | None = ...,
         width: builtins.int = ...,
         height: builtins.int = ...,
         use_container_width: builtins.bool = ...,
         id: builtins.str = ...,
         columns: builtins.str = ...,
-        editing_mode: global___Arrow.EditingMode.ValueType = ...,
+        editing_mode: Global___Arrow.EditingMode.ValueType = ...,
         disabled: builtins.bool = ...,
         form_id: builtins.str = ...,
         column_order: collections.abc.Iterable[builtins.str] | None = ...,
-        selection_mode: collections.abc.Iterable[global___Arrow.SelectionMode.ValueType] | None = ...,
+        selection_mode: collections.abc.Iterable[Global___Arrow.SelectionMode.ValueType] | None = ...,
         row_height: builtins.int | None = ...,
-        border_mode: global___Arrow.BorderMode.ValueType = ...,
+        border_mode: Global___Arrow.BorderMode.ValueType = ...,
+        placeholder: builtins.str | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["_row_height", b"_row_height", "row_height", b"row_height", "styler", b"styler"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["_row_height", b"_row_height", "border_mode", b"border_mode", "column_order", b"column_order", "columns", b"columns", "data", b"data", "disabled", b"disabled", "editing_mode", b"editing_mode", "form_id", b"form_id", "height", b"height", "id", b"id", "row_height", b"row_height", "selection_mode", b"selection_mode", "styler", b"styler", "use_container_width", b"use_container_width", "width", b"width"]) -> None: ...
+    def HasField(self, field_name: typing.Literal["_placeholder", b"_placeholder", "_row_height", b"_row_height", "placeholder", b"placeholder", "row_height", b"row_height", "styler", b"styler"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing.Literal["_placeholder", b"_placeholder", "_row_height", b"_row_height", "border_mode", b"border_mode", "column_order", b"column_order", "columns", b"columns", "data", b"data", "disabled", b"disabled", "editing_mode", b"editing_mode", "form_id", b"form_id", "height", b"height", "id", b"id", "placeholder", b"placeholder", "row_height", b"row_height", "selection_mode", b"selection_mode", "styler", b"styler", "use_container_width", b"use_container_width", "width", b"width"]) -> None: ...
+    @typing.overload
+    def WhichOneof(self, oneof_group: typing.Literal["_placeholder", b"_placeholder"]) -> typing.Literal["placeholder"] | None: ...
+    @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["_row_height", b"_row_height"]) -> typing.Literal["row_height"] | None: ...
 
-global___Arrow = Arrow
+Global___Arrow: typing_extensions.TypeAlias = Arrow
 
 @typing.final
 class Styler(google.protobuf.message.Message):
@@ -222,4 +229,4 @@ class Styler(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["caption", b"caption", "display_values", b"display_values", "styles", b"styles", "uuid", b"uuid"]) -> None: ...
 
-global___Styler = Styler
+Global___Styler: typing_extensions.TypeAlias = Styler

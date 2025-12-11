@@ -1,4 +1,4 @@
-# $Id: parts.py 9038 2022-03-05 23:31:46Z milde $
+# $Id: parts.py 10136 2025-05-20 15:48:27Z milde $
 # Authors: David Goodger <goodger@python.org>; Ueli Schlaepfer; Dmitry Jemerov
 # Copyright: This module has been placed in the public domain.
 
@@ -6,8 +6,9 @@
 Transforms related to document parts.
 """
 
-__docformat__ = 'reStructuredText'
+from __future__ import annotations
 
+__docformat__ = 'reStructuredText'
 
 import sys
 from docutils import nodes
@@ -20,7 +21,7 @@ class SectNum(Transform):
     Automatically assigns numbers to the titles of document sections.
 
     It is possible to limit the maximum section level for which the numbers
-    are added.  For those sections that are auto-numbered, the "autonum"
+    are added.  For those sections that are auto-numbered, the "auto"
     attribute is set, informing the contents table generator that a different
     form of the TOC should be used.
     """
@@ -28,7 +29,7 @@ class SectNum(Transform):
     default_priority = 710
     """Should be applied before `Contents`."""
 
-    def apply(self):
+    def apply(self) -> None:
         self.maxdepth = self.startnode.details.get('depth', None)
         self.startvalue = self.startnode.details.get('start', 1)
         self.prefix = self.startnode.details.get('prefix', '')
@@ -44,7 +45,7 @@ class SectNum(Transform):
             self.document.settings.sectnum_prefix = self.prefix
             self.document.settings.sectnum_suffix = self.suffix
 
-    def update_section_numbers(self, node, prefix=(), depth=0):
+    def update_section_numbers(self, node, prefix=(), depth=0) -> None:
         depth += 1
         if prefix:
             sectnum = 1
@@ -84,9 +85,12 @@ class Contents(Transform):
 
     default_priority = 720
 
-    def apply(self):
+    def apply(self) -> None:
         # let the writer (or output software) build the contents list?
         toc_by_writer = getattr(self.document.settings, 'use_latex_toc', False)
+        # TODO: handle "generate_oowriter_toc" setting of the "ODT" writer.
+        if toc_by_writer:
+            return
         details = self.startnode.details
         if 'local' in details:
             startnode = self.startnode.parent.parent
@@ -101,16 +105,11 @@ class Contents(Transform):
             self.backlinks = details['backlinks']
         else:
             self.backlinks = self.document.settings.toc_backlinks
-        if toc_by_writer:
-            # move customization settings to the parent node
-            self.startnode.parent.attributes.update(details)
-            self.startnode.parent.remove(self.startnode)
+        contents = self.build_contents(startnode)
+        if len(contents):
+            self.startnode.replace_self(contents)
         else:
-            contents = self.build_contents(startnode)
-            if len(contents):
-                self.startnode.replace_self(contents)
-            else:
-                self.startnode.parent.parent.remove(self.startnode.parent)
+            self.startnode.parent.parent.remove(self.startnode.parent)
 
     def build_contents(self, node, level=0):
         level += 1

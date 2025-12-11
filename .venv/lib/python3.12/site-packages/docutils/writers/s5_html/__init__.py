@@ -1,4 +1,4 @@
-# $Id: __init__.py 9542 2024-02-17 10:37:23Z milde $
+# $Id: __init__.py 10136 2025-05-20 15:48:27Z milde $
 # Authors: Chris Liechti <cliechti@gmx.net>;
 #          David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
@@ -6,12 +6,15 @@
 """
 S5/HTML Slideshow Writer.
 """
+from __future__ import annotations
 
 __docformat__ = 'reStructuredText'
 
-import sys
 import os
 import re
+import sys
+from pathlib import Path
+
 import docutils
 from docutils import frontend, nodes, utils
 from docutils.writers import html4css1
@@ -85,7 +88,7 @@ class Writer(html4css1.Writer):
     config_section_dependencies = ('writers', 'html writers',
                                    'html4css1 writer')
 
-    def __init__(self):
+    def __init__(self) -> None:
         html4css1.Writer.__init__(self)
         self.translator_class = S5HTMLTranslator
 
@@ -149,7 +152,7 @@ class S5HTMLTranslator(html4css1.HTMLTranslator):
     required_theme_files = indirect_theme_files + direct_theme_files
     """Names of mandatory theme files."""
 
-    def __init__(self, *args):
+    def __init__(self, *args) -> None:
         html4css1.HTMLTranslator.__init__(self, *args)
         # insert S5-specific stylesheet and script stuff:
         self.theme_file_path = None
@@ -196,12 +199,12 @@ class S5HTMLTranslator(html4css1.HTMLTranslator):
         required_files_copied = {}
         # This is a link (URL) in HTML, so we use "/", not os.sep:
         self.theme_file_path = 'ui/%s' % settings.theme
-        if not settings.output:
+        if not settings.output_path:
             raise docutils.ApplicationError(
                 'Output path not specified, you may need to copy'
                 ' the S5 theme files "by hand" or set the "--output" option.')
         dest = os.path.join(
-            os.path.dirname(settings.output), 'ui', settings.theme)
+            os.path.dirname(settings.output_path), 'ui', settings.theme)
         if not os.path.isdir(dest):
             os.makedirs(dest)
         default = False
@@ -266,20 +269,18 @@ class S5HTMLTranslator(html4css1.HTMLTranslator):
             if os.path.exists(dest) and not settings.overwrite_theme_files:
                 settings.record_dependencies.add(dest)
             else:
-                with open(source, 'rb') as src_file:
-                    src_data = src_file.read()
-                with open(dest, 'wb') as dest_file:
-                    dest_dir = dest_dir.replace(os.sep, '/')
-                    dest_file.write(src_data.replace(
-                        b'ui/default',
-                        dest_dir[dest_dir.rfind('ui/'):].encode(
-                            sys.getfilesystemencoding())))
+                src_data = Path(source).read_bytes()
+                dest_dir = dest_dir.replace(os.sep, '/')
+                Path(dest).write_bytes(src_data.replace(
+                    b'ui/default',
+                    dest_dir[dest_dir.rfind('ui/'):].encode(
+                        sys.getfilesystemencoding())))
                 settings.record_dependencies.add(source)
             return True
         if os.path.isfile(dest):
             return True
 
-    def depart_document(self, node):
+    def depart_document(self, node) -> None:
         self.head_prefix.extend([self.doctype,
                                  self.head_prefix_template %
                                  {'lang': self.settings.language_code}])
@@ -312,14 +313,14 @@ class S5HTMLTranslator(html4css1.HTMLTranslator):
                               + self.docinfo + self.body
                               + self.body_suffix[:-1])
 
-    def depart_footer(self, node):
+    def depart_footer(self, node) -> None:
         start = self.context.pop()
         self.s5_footer.append('<h2>')
         self.s5_footer.extend(self.body[start:])
         self.s5_footer.append('</h2>')
         del self.body[start:]
 
-    def depart_header(self, node):
+    def depart_header(self, node) -> None:
         start = self.context.pop()
         header = ['<div id="header">\n']
         header.extend(self.body[start:])
@@ -327,7 +328,7 @@ class S5HTMLTranslator(html4css1.HTMLTranslator):
         del self.body[start:]
         self.s5_header.extend(header)
 
-    def visit_section(self, node):
+    def visit_section(self, node) -> None:
         if not self.section_count:
             self.body.append('\n</div>\n')
         self.section_count += 1
@@ -338,7 +339,7 @@ class S5HTMLTranslator(html4css1.HTMLTranslator):
         else:
             self.body.append(self.starttag(node, 'div', CLASS='slide'))
 
-    def visit_subtitle(self, node):
+    def visit_subtitle(self, node) -> None:
         if isinstance(node.parent, nodes.section):
             level = self.section_level + self.initial_header_level - 1
             if level == 1:
@@ -349,5 +350,5 @@ class S5HTMLTranslator(html4css1.HTMLTranslator):
         else:
             html4css1.HTMLTranslator.visit_subtitle(self, node)
 
-    def visit_title(self, node):
+    def visit_title(self, node) -> None:
         html4css1.HTMLTranslator.visit_title(self, node)

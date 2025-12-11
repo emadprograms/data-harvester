@@ -87,7 +87,7 @@ class DeckGlJsonChart(google.protobuf.message.Message):
     form_id: builtins.str
     """The form ID of the widget, this is required if the chart has selection events"""
     @property
-    def selection_mode(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[global___DeckGlJsonChart.SelectionMode.ValueType]:
+    def selection_mode(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[Global___DeckGlJsonChart.SelectionMode.ValueType]:
         """If non-empty, treat this instance as a Widget"""
 
     def __init__(
@@ -100,9 +100,9 @@ class DeckGlJsonChart(google.protobuf.message.Message):
         mapbox_token: builtins.str = ...,
         width: builtins.int = ...,
         height: builtins.int = ...,
-        selection_mode: collections.abc.Iterable[global___DeckGlJsonChart.SelectionMode.ValueType] | None = ...,
+        selection_mode: collections.abc.Iterable[Global___DeckGlJsonChart.SelectionMode.ValueType] | None = ...,
         form_id: builtins.str = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["form_id", b"form_id", "height", b"height", "id", b"id", "json", b"json", "mapbox_token", b"mapbox_token", "selection_mode", b"selection_mode", "tooltip", b"tooltip", "use_container_width", b"use_container_width", "width", b"width"]) -> None: ...
 
-global___DeckGlJsonChart = DeckGlJsonChart
+Global___DeckGlJsonChart: typing_extensions.TypeAlias = DeckGlJsonChart

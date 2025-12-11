@@ -21,7 +21,13 @@ import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
 import streamlit.proto.LabelVisibilityMessage_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -55,4 +61,4 @@ class CameraInput(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["label_visibility", b"label_visibility"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["disabled", b"disabled", "form_id", b"form_id", "help", b"help", "id", b"id", "label", b"label", "label_visibility", b"label_visibility"]) -> None: ...
 
-global___CameraInput = CameraInput
+Global___CameraInput: typing_extensions.TypeAlias = CameraInput

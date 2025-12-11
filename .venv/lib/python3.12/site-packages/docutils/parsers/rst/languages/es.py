@@ -1,4 +1,4 @@
-# $Id: es.py 9452 2023-09-27 00:11:54Z milde $
+# $Id: es.py 9782 2024-07-29 12:37:02Z milde $
 # Author: Marcelo Huerta San Martín <richieadler@users.sourceforge.net>
 # Copyright: This module has been placed in the public domain.
 
@@ -28,8 +28,6 @@ directives = {
     'consejo': 'tip',
     'advertencia': 'warning',
     'aviso': 'admonition',
-    'exhortacion': 'admonition',  # sic! kept for backwards compatibiltity
-    'exhortación': 'admonition',  # sic! kept for backwards compatibiltity
     'nota-al-margen': 'sidebar',
     'tema': 'topic',
     'bloque-de-lineas': 'line-block',

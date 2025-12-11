@@ -8,11 +8,11 @@ import re
 import sys
 import traceback
 import warnings
-from collections.abc import Iterator, Mapping, MutableMapping
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from copy import deepcopy
 from itertools import groupby
 from operator import itemgetter
-from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 import jsonschema
 import narwhals.stable.v1 as nw
@@ -32,13 +32,13 @@ else:
 
 
 if TYPE_CHECKING:
-    import typing as t
-
     import pandas as pd
     from narwhals.stable.v1.typing import IntoExpr
 
     from altair.utils._dfi_types import DataFrame as DfiDataFrame
-    from altair.vegalite.v5.schema._typing import StandardType_T as InferredVegaLiteType
+    from altair.vegalite.v6.schema._typing import StandardType_T as InferredVegaLiteType
+
+    _PandasDataFrameT = TypeVar("_PandasDataFrameT", bound="pd.DataFrame")
 
 TIntoDataFrame = TypeVar("TIntoDataFrame", bound=IntoDataFrame)
 T = TypeVar("T")
@@ -287,9 +287,9 @@ def merge_props_geom(feat: dict[str, Any]) -> dict[str, Any]:
     return props_geom
 
 
-def sanitize_geo_interface(geo: t.MutableMapping[Any, Any]) -> dict[str, Any]:
+def sanitize_geo_interface(geo: MutableMapping[Any, Any]) -> dict[str, Any]:
     """
-    Santize a geo_interface to prepare it for serialization.
+    Sanitize a geo_interface to prepare it for serialization.
 
     * Make a copy
     * Convert type array or _Array to list
@@ -325,12 +325,12 @@ def numpy_is_subtype(dtype: Any, subtype: Any) -> bool:
     import numpy as np
 
     try:
-        return np.issubdtype(dtype, subtype)
+        return cast("bool", np.issubdtype(dtype, subtype))
     except (NotImplementedError, TypeError):
         return False
 
 
-def sanitize_pandas_dataframe(df: pd.DataFrame) -> pd.DataFrame:  # noqa: C901
+def sanitize_pandas_dataframe(df: _PandasDataFrameT) -> _PandasDataFrameT:  # noqa: C901
     """
     Sanitize a DataFrame to prepare it for serialization.
 
@@ -353,7 +353,7 @@ def sanitize_pandas_dataframe(df: pd.DataFrame) -> pd.DataFrame:  # noqa: C901
     import numpy as np
     import pandas as pd
 
-    df = df.copy()
+    df = cast("_PandasDataFrameT", df.copy())
 
     if isinstance(df.columns, pd.RangeIndex):
         df.columns = df.columns.astype(str)
@@ -383,7 +383,7 @@ def sanitize_pandas_dataframe(df: pd.DataFrame) -> pd.DataFrame:  # noqa: C901
         # We know that the column names are strings from the isinstance check
         # further above but mypy thinks it is of type Hashable and therefore does not
         # let us assign it to the col_name variable which is already of type str.
-        col_name = cast(str, dtype_item[0])
+        col_name = cast("str", dtype_item[0])
         dtype = dtype_item[1]
         dtype_name = str(dtype)
         if dtype_name == "category":
@@ -768,21 +768,21 @@ def use_signature(tp: Callable[P, Any], /):
 
 @overload
 def update_nested(
-    original: t.MutableMapping[Any, Any],
-    update: t.Mapping[Any, Any],
+    original: MutableMapping[Any, Any],
+    update: Mapping[Any, Any],
     copy: Literal[False] = ...,
-) -> t.MutableMapping[Any, Any]: ...
+) -> MutableMapping[Any, Any]: ...
 @overload
 def update_nested(
-    original: t.Mapping[Any, Any],
-    update: t.Mapping[Any, Any],
+    original: Mapping[Any, Any],
+    update: Mapping[Any, Any],
     copy: Literal[True],
-) -> t.MutableMapping[Any, Any]: ...
+) -> MutableMapping[Any, Any]: ...
 def update_nested(
     original: Any,
-    update: t.Mapping[Any, Any],
+    update: Mapping[Any, Any],
     copy: bool = False,
-) -> t.MutableMapping[Any, Any]:
+) -> MutableMapping[Any, Any]:
     """
     Update nested dictionaries.
 
@@ -912,7 +912,7 @@ def _init_channel_to_name():
     -------
         mapping: dict[type[`<subclass of FieldChannelMixin and SchemaBase>`] | type[`<subclass of ValueChannelMixin and SchemaBase>`] | type[`<subclass of DatumChannelMixin and SchemaBase>`], str]
     """
-    from altair.vegalite.v5.schema import channels as ch
+    from altair.vegalite.v6.schema import channels as ch
 
     mixins = ch.FieldChannelMixin, ch.ValueChannelMixin, ch.DatumChannelMixin
 

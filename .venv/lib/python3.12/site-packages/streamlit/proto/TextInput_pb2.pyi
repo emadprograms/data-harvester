@@ -70,7 +70,7 @@ class TextInput(google.protobuf.message.Message):
     id: builtins.str
     label: builtins.str
     default: builtins.str
-    type: global___TextInput.Type.ValueType
+    type: Global___TextInput.Type.ValueType
     max_chars: builtins.int
     help: builtins.str
     form_id: builtins.str
@@ -88,7 +88,7 @@ class TextInput(google.protobuf.message.Message):
         id: builtins.str = ...,
         label: builtins.str = ...,
         default: builtins.str | None = ...,
-        type: global___TextInput.Type.ValueType = ...,
+        type: Global___TextInput.Type.ValueType = ...,
         max_chars: builtins.int = ...,
         help: builtins.str = ...,
         form_id: builtins.str = ...,
@@ -107,4 +107,4 @@ class TextInput(google.protobuf.message.Message):
     @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["_value", b"_value"]) -> typing.Literal["value"] | None: ...
 
-global___TextInput = TextInput
+Global___TextInput: typing_extensions.TypeAlias = TextInput

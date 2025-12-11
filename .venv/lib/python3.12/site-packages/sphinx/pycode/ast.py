@@ -134,7 +134,7 @@ class _UnparseVisitor(ast.NodeVisitor):
     def visit_Constant(self, node: ast.Constant) -> str:
         if node.value is Ellipsis:
             return '...'
-        elif isinstance(node.value, int | float | complex):
+        elif isinstance(node.value, (int, float, complex)):
             if self.code:
                 return ast.get_source_segment(self.code, node) or repr(node.value)
             else:
@@ -201,6 +201,9 @@ class _UnparseVisitor(ast.NodeVisitor):
             return '(%s,)' % self.visit(node.elts[0])
         else:
             return '(' + ', '.join(self.visit(e) for e in node.elts) + ')'
+
+    def visit_Starred(self, node: ast.Starred) -> str:
+        return f'*{self.visit(node.value)}'
 
     def generic_visit(self, node: ast.AST) -> NoReturn:
         raise NotImplementedError('Unable to parse %s object' % type(node).__name__)

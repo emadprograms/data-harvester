@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -54,4 +60,4 @@ class SessionStatus(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["run_on_save", b"run_on_save", "script_is_running", b"script_is_running"]) -> None: ...
 
-global___SessionStatus = SessionStatus
+Global___SessionStatus: typing_extensions.TypeAlias = SessionStatus

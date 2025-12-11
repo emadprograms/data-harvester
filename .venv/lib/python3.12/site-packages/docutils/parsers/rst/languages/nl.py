@@ -1,4 +1,4 @@
-# $Id: nl.py 9417 2023-06-27 20:04:54Z milde $
+# $Id: nl.py 9782 2024-07-29 12:37:02Z milde $
 # Author: Martijn Pieters <mjpieters@users.sourceforge.net>
 # Copyright: This module has been placed in the public domain.
 
@@ -28,7 +28,6 @@ directives = {
       'tip': 'tip',
       'waarschuwing': 'warning',
       'advies': 'admonition',
-      'aanmaning': 'admonition',  # sic! kept for backwards compatibiltity
       'katern': 'sidebar',
       'onderwerp': 'topic',
       'lijn-blok': 'line-block',

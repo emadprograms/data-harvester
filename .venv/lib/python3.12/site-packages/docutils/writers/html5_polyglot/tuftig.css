@@ -5,7 +5,7 @@
 /*          based on tufte.css_ by Dave Liepmann                           */
 /*          and the tufte-latex_ package.                                  */
 /*                                                                         */
-/* :Id: $Id: tuftig.css 9503 2023-12-16 22:37:59Z milde $                                                               */
+/* :Id: $Id: tuftig.css 10079 2025-04-10 12:01:48Z milde $                                                               */
 /* :Copyright: © 2020 Günter Milde.                                        */
 /* :License: Released under the terms of the `2-Clause BSD license`_,      */
 /*    in short:                                                            */
@@ -145,8 +145,7 @@ div.dedication p.topic-title {
 }
 
 /* Attribution */
-blockquote p.attribution,
-.topic p.attribution {
+blockquote p.attribution {
   text-align: right;
 }
 

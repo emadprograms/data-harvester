@@ -1,5 +1,5 @@
-#!/usr/bin/python3
-# :Id: $Id: smartquotes.py 9481 2023-11-19 21:19:20Z milde $
+#! /usr/bin/env python3
+# :Id: $Id: smartquotes.py 10136 2025-05-20 15:48:27Z milde $
 # :Copyright: © 2010-2023 Günter Milde,
 #             original `SmartyPants`_: © 2003 John Gruber
 #             smartypants.py:          © 2004, 2007 Chad Miller
@@ -315,6 +315,8 @@ Version History
         - Initial release
 """
 
+from __future__ import annotations
+
 import re
 import sys
 
@@ -494,7 +496,7 @@ class smartchars:
         'zh-tw':        '「」『』',
         }
 
-    def __init__(self, language='en'):
+    def __init__(self, language='en') -> None:
         self.language = language
         try:
             (self.opquote, self.cpquote,
@@ -911,14 +913,14 @@ if __name__ == "__main__":
     try:
         locale.setlocale(locale.LC_ALL, '')  # set to user defaults
         defaultlanguage = locale.getlocale()[0]
-    except:  # noqa  catchall
+    except:  # NoQA: E722 (catchall)
         defaultlanguage = 'en'
 
     # Normalize and drop unsupported subtags:
     defaultlanguage = defaultlanguage.lower().replace('-', '_')
     # split (except singletons, which mark the following tag as non-standard):
     defaultlanguage = re.sub(r'_([a-zA-Z0-9])_', r'_\1-', defaultlanguage)
-    _subtags = [subtag for subtag in defaultlanguage.split('_')]
+    _subtags = list(defaultlanguage.split('_'))
     _basetag = _subtags.pop(0)
     # find all combinations of subtags
     for n in range(len(_subtags), 0, -1):
@@ -974,7 +976,7 @@ if __name__ == "__main__":
 
         class TestSmartypantsAllAttributes(unittest.TestCase):
             # the default attribute is "1", which means "all".
-            def test_dates(self):
+            def test_dates(self) -> None:
                 self.assertEqual(smartyPants("1440-80's"), "1440-80’s")
                 self.assertEqual(smartyPants("1440-'80s"), "1440-’80s")
                 self.assertEqual(smartyPants("1440---'80s"), "1440–’80s")
@@ -982,11 +984,11 @@ if __name__ == "__main__":
                 self.assertEqual(smartyPants("one two '60s"), "one two ’60s")
                 self.assertEqual(smartyPants("'60s"), "’60s")
 
-            def test_educated_quotes(self):
+            def test_educated_quotes(self) -> None:
                 self.assertEqual(smartyPants('"Isn\'t this fun?"'),
                                  '“Isn’t this fun?”')
 
-            def test_html_tags(self):
+            def test_html_tags(self) -> None:
                 text = '<a src="foo">more</a>'
                 self.assertEqual(smartyPants(text), text)
 

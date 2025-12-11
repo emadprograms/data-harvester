@@ -1,4 +1,4 @@
-# $Id: __init__.py 9649 2024-04-23 18:54:26Z grubert $
+# $Id: __init__.py 10258 2025-11-06 02:17:08Z grubert $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -50,11 +50,42 @@ Subpackages:
 - writers: Format-specific output translators.
 """
 
+from __future__ import annotations
+
 from collections import namedtuple
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from typing import Any, ClassVar, Literal, Protocol, Union
+
+    from docutils.nodes import Element
+    from docutils.transforms import Transform
+
+    _Components = Literal['reader', 'parser', 'writer', 'input', 'output']
+    _OptionTuple = tuple[str, list[str], dict[str, Any]]
+    _ReleaseLevels = Literal['alpha', 'beta', 'candidate', 'final']
+    _SettingsSpecTuple = Union[
+        tuple[str|None, str|None, Sequence[_OptionTuple]],
+        tuple[str|None, str|None, Sequence[_OptionTuple],
+              str|None, str|None, Sequence[_OptionTuple]],
+        tuple[str|None, str|None, Sequence[_OptionTuple],
+              str|None, str|None, Sequence[_OptionTuple],
+              str|None, str|None, Sequence[_OptionTuple]],
+        ]
+
+    class _UnknownReferenceResolver(Protocol):
+        """Deprecated. Will be removed in Docutils 1.0."""
+        # See `TransformSpec.unknown_reference_resolvers`.
+
+        priority: int
+
+        def __call__(self, node: Element, /) -> bool:
+            ...
 
 __docformat__ = 'reStructuredText'
 
-__version__ = '0.21.2'
+__version__ = '0.22.3'
 """Docutils version identifier (complies with PEP 440)::
 
     major.minor[.micro][releaselevel[serial]][.dev]
@@ -74,9 +105,20 @@ For development and release status, use `__version__ and `__version_info__`.
 
 class VersionInfo(namedtuple('VersionInfo',
                              'major minor micro releaselevel serial release')):
+    __slots__ = ()
 
-    def __new__(cls, major=0, minor=0, micro=0,
-                releaselevel='final', serial=0, release=True):
+    major: int
+    minor: int
+    micro: int
+    releaselevel: _ReleaseLevels
+    serial: int
+    release: bool
+
+    def __new__(cls,
+                major: int = 0, minor: int = 0, micro: int = 0,
+                releaselevel: _ReleaseLevels = 'final',
+                serial: int = 0, release: bool = True,
+                ) -> VersionInfo:
         releaselevels = ('alpha', 'beta', 'candidate', 'final')
         if releaselevel not in releaselevels:
             raise ValueError('releaselevel must be one of %r.'
@@ -86,29 +128,29 @@ class VersionInfo(namedtuple('VersionInfo',
                 raise ValueError('releaselevel "final" must not be used '
                                  'with development versions (leads to wrong '
                                  'version ordering of the related __version__')
-                # cf. https://peps.python.org/pep-0440/#summary-of-permitted-suffixes-and-relative-ordering  # noqa
+                # cf. https://peps.python.org/pep-0440/#summary-of-permitted-suffixes-and-relative-ordering  # NoQA: E501
             if serial != 0:
                 raise ValueError('"serial" must be 0 for final releases')
 
         return super().__new__(cls, major, minor, micro,
                                releaselevel, serial, release)
 
-    def __lt__(self, other):
+    def __lt__(self, other: object) -> bool:
         if isinstance(other, tuple):
             other = VersionInfo(*other)
         return tuple.__lt__(self, other)
 
-    def __gt__(self, other):
+    def __gt__(self, other: object) -> bool:
         if isinstance(other, tuple):
             other = VersionInfo(*other)
         return tuple.__gt__(self, other)
 
-    def __le__(self, other):
+    def __le__(self, other: object) -> bool:
         if isinstance(other, tuple):
             other = VersionInfo(*other)
         return tuple.__le__(self, other)
 
-    def __ge__(self, other):
+    def __ge__(self, other: object) -> bool:
         if isinstance(other, tuple):
             other = VersionInfo(*other)
         return tuple.__ge__(self, other)
@@ -116,8 +158,8 @@ class VersionInfo(namedtuple('VersionInfo',
 
 __version_info__ = VersionInfo(
     major=0,
-    minor=21,
-    micro=2,
+    minor=22,
+    micro=3,
     releaselevel='final',  # one of 'alpha', 'beta', 'candidate', 'final'
     serial=0,  # pre-release number (0 for final releases and snapshots)
     release=True  # True for official releases and pre-releases
@@ -151,7 +193,7 @@ class SettingsSpec:
     #   https://github.com/sphinx-doc/sphinx/blob/4.x/sphinx/writers/html.py
     #   This should be changed (before retiring the old format)
     #   to use `settings_default_overrides` instead.
-    settings_spec = ()
+    settings_spec: ClassVar[_SettingsSpecTuple] = ()
     """Runtime settings specification.  Override in subclasses.
 
     Defines runtime settings and associated command-line options, as used by
@@ -190,25 +232,25 @@ class SettingsSpec:
       needed.  Thus, `settings_spec` tuples can be simply concatenated.
     """
 
-    settings_defaults = None
+    settings_defaults: ClassVar[dict[str, Any] | None] = None
     """A dictionary of defaults for settings not in `settings_spec` (internal
     settings, intended to be inaccessible by command-line and config file).
     Override in subclasses."""
 
-    settings_default_overrides = None
+    settings_default_overrides: ClassVar[dict[str, Any] | None] = None
     """A dictionary of auxiliary defaults, to override defaults for settings
     defined in other components' `setting_specs`.  Override in subclasses."""
 
-    relative_path_settings = ()
+    relative_path_settings: ClassVar[tuple[str, ...]] = ()
     """Settings containing filesystem paths.  Override in subclasses.
     Settings listed here are to be interpreted relative to the current working
     directory."""
 
-    config_section = None
+    config_section: ClassVar[str | None] = None
     """The name of the config file section specific to this component
     (lowercase, no brackets).  Override in subclasses."""
 
-    config_section_dependencies = None
+    config_section_dependencies: ClassVar[tuple[str, ...] | None] = None
     """A list of names of config file sections that are to be applied before
     `config_section`, in order (from general to specific).  In other words,
     the settings in `config_section` are to be overlaid on top of the settings
@@ -226,7 +268,7 @@ class TransformSpec:
     https://docutils.sourceforge.io/docs/ref/transforms.html
     """
 
-    def get_transforms(self):
+    def get_transforms(self) -> list[type[Transform]]:
         """Transforms required by this class.  Override in subclasses."""
         if self.default_transforms != ():
             import warnings
@@ -238,50 +280,58 @@ class TransformSpec:
         return []
 
     # Deprecated; for compatibility.
-    default_transforms = ()
+    default_transforms: ClassVar[tuple[()]] = ()
 
-    unknown_reference_resolvers = ()
-    """List of functions to try to resolve unknown references.
+    unknown_reference_resolvers: Sequence[_UnknownReferenceResolver] = ()
+    """List of hook functions which assist in resolving references.
 
-    Unknown references have a 'refname' attribute which doesn't correspond
-    to any target in the document.  Called when the transforms in
-    `docutils.transforms.references` are unable to find a correct target.
-
-    The list should contain functions which will try to resolve unknown
-    references, with the following signature::
-
-        def reference_resolver(node):
-            '''Returns boolean: true if resolved, false if not.'''
-
-    If the function is able to resolve the reference, it should also remove
-    the 'refname' attribute and mark the node as resolved::
-
-        del node['refname']
-        node.resolved = 1
-
-    Each function must have a "priority" attribute which will affect the order
-    the unknown_reference_resolvers are run::
-
-        reference_resolver.priority = 100
-
-    This hook is provided for 3rd party extensions.
-    Example use case: the `MoinMoin - ReStructured Text Parser`
-    in ``sandbox/mmgilbe/rst.py``.
+    Deprecated. Will be removed in Docutils 1.0
     """
+    # Override in subclasses to implement component-specific resolving of
+    # unknown references.
+    #
+    # Unknown references have a 'refname' attribute which doesn't correspond
+    # to any target in the document.  Called when the transforms in
+    # `docutils.transforms.references` are unable to find a correct target.
+    #
+    # The list should contain functions which will try to resolve unknown
+    # references, with the following signature::
+    #
+    #     def reference_resolver(node: nodes.Element) -> bool:
+    #         '''Returns boolean: true if resolved, false if not.'''
+    #
+    # If the function is able to resolve the reference, it should also remove
+    # the 'refname' attribute and mark the node as resolved::
+    #
+    #     del node['refname']
+    #     node.resolved = True
+    #
+    # Each function must have a "priority" attribute which will affect the
+    # order the unknown_reference_resolvers are run
+    # cf. ../docs/api/transforms.html#transform-priority-range-categories ::
+    #
+    #     reference_resolver.priority = 500
+    #
+    # Examples:
+    #   The `MoinMoin ReStructured Text Parser`__ provided a resolver for
+    #   "WikiWiki links" in the 1.9 version.
+    #
+    #   __ https://github.com/moinwiki/moin-1.9/blob/1.9.11/MoinMoin/parser/
+    #      text_rst.py
 
 
 class Component(SettingsSpec, TransformSpec):
 
     """Base class for Docutils components."""
 
-    component_type = None
-    """Name of the component type ('reader', 'parser', 'writer').  Override in
-    subclasses."""
+    component_type: ClassVar[_Components | None] = None
+    """Name of the component type ('reader', 'parser', 'writer').
+    Override in subclasses."""
 
-    supported = ()
+    supported: ClassVar[tuple[str, ...]] = ()
     """Name and aliases for this component.  Override in subclasses."""
 
-    def supports(self, format):
+    def supports(self, format: str) -> bool:
         """
         Is `format` supported by this component?
 

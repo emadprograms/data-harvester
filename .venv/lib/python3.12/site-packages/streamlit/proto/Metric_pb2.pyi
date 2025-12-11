@@ -96,11 +96,11 @@ class Metric(google.protobuf.message.Message):
     label: builtins.str
     body: builtins.str
     delta: builtins.str
-    direction: global___Metric.MetricDirection.ValueType
-    color: global___Metric.MetricColor.ValueType
+    direction: Global___Metric.MetricDirection.ValueType
+    color: Global___Metric.MetricColor.ValueType
     help: builtins.str
     show_border: builtins.bool
-    chart_type: global___Metric.ChartType.ValueType
+    chart_type: Global___Metric.ChartType.ValueType
     @property
     def label_visibility(self) -> streamlit.proto.LabelVisibilityMessage_pb2.LabelVisibilityMessage: ...
     @property
@@ -111,15 +111,15 @@ class Metric(google.protobuf.message.Message):
         label: builtins.str = ...,
         body: builtins.str = ...,
         delta: builtins.str = ...,
-        direction: global___Metric.MetricDirection.ValueType = ...,
-        color: global___Metric.MetricColor.ValueType = ...,
+        direction: Global___Metric.MetricDirection.ValueType = ...,
+        color: Global___Metric.MetricColor.ValueType = ...,
         help: builtins.str = ...,
         label_visibility: streamlit.proto.LabelVisibilityMessage_pb2.LabelVisibilityMessage | None = ...,
         show_border: builtins.bool = ...,
         chart_data: collections.abc.Iterable[builtins.float] | None = ...,
-        chart_type: global___Metric.ChartType.ValueType = ...,
+        chart_type: Global___Metric.ChartType.ValueType = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["label_visibility", b"label_visibility"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["body", b"body", "chart_data", b"chart_data", "chart_type", b"chart_type", "color", b"color", "delta", b"delta", "direction", b"direction", "help", b"help", "label", b"label", "label_visibility", b"label_visibility", "show_border", b"show_border"]) -> None: ...
 
-global___Metric = Metric
+Global___Metric: typing_extensions.TypeAlias = Metric

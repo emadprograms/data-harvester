@@ -19,7 +19,13 @@ limitations under the License.
 
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -33,4 +39,4 @@ class Empty(google.protobuf.message.Message):
         self,
     ) -> None: ...
 
-global___Empty = Empty
+Global___Empty: typing_extensions.TypeAlias = Empty

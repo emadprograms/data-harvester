@@ -86,11 +86,11 @@ class PlotlyChart(google.protobuf.message.Message):
     url: builtins.str
     """DEPRECATED and unused."""
     @property
-    def selection_mode(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[global___PlotlyChart.SelectionMode.ValueType]:
+    def selection_mode(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[Global___PlotlyChart.SelectionMode.ValueType]:
         """Activate selections types on the chart."""
 
     @property
-    def figure(self) -> global___Figure:
+    def figure(self) -> Global___Figure:
         """DEPRECATED and unused."""
 
     def __init__(
@@ -99,18 +99,18 @@ class PlotlyChart(google.protobuf.message.Message):
         use_container_width: builtins.bool = ...,
         theme: builtins.str = ...,
         id: builtins.str = ...,
-        selection_mode: collections.abc.Iterable[global___PlotlyChart.SelectionMode.ValueType] | None = ...,
+        selection_mode: collections.abc.Iterable[Global___PlotlyChart.SelectionMode.ValueType] | None = ...,
         form_id: builtins.str = ...,
         spec: builtins.str = ...,
         config: builtins.str = ...,
         url: builtins.str = ...,
-        figure: global___Figure | None = ...,
+        figure: Global___Figure | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["chart", b"chart", "figure", b"figure", "url", b"url"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["chart", b"chart", "config", b"config", "figure", b"figure", "form_id", b"form_id", "id", b"id", "selection_mode", b"selection_mode", "spec", b"spec", "theme", b"theme", "url", b"url", "use_container_width", b"use_container_width"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["chart", b"chart"]) -> typing.Literal["url", "figure"] | None: ...
 
-global___PlotlyChart = PlotlyChart
+Global___PlotlyChart: typing_extensions.TypeAlias = PlotlyChart
 
 @typing.final
 class Figure(google.protobuf.message.Message):
@@ -130,4 +130,4 @@ class Figure(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["config", b"config", "spec", b"spec"]) -> None: ...
 
-global___Figure = Figure
+Global___Figure: typing_extensions.TypeAlias = Figure

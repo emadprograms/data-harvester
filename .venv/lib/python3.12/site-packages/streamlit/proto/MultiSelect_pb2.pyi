@@ -23,7 +23,13 @@ import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.LabelVisibilityMessage_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -90,4 +96,4 @@ class MultiSelect(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["_accept_new_options", b"_accept_new_options", "accept_new_options", b"accept_new_options", "default", b"default", "disabled", b"disabled", "form_id", b"form_id", "help", b"help", "id", b"id", "label", b"label", "label_visibility", b"label_visibility", "max_selections", b"max_selections", "options", b"options", "placeholder", b"placeholder", "raw_values", b"raw_values", "set_value", b"set_value", "value", b"value"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["_accept_new_options", b"_accept_new_options"]) -> typing.Literal["accept_new_options"] | None: ...
 
-global___MultiSelect = MultiSelect
+Global___MultiSelect: typing_extensions.TypeAlias = MultiSelect

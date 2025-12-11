@@ -1,4 +1,4 @@
-# $Id: body.py 9500 2023-12-14 22:38:49Z milde $
+# $Id: body.py 10256 2025-11-02 17:51:21Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -14,14 +14,13 @@ __docformat__ = 'reStructuredText'
 from docutils import nodes
 from docutils.parsers.rst import Directive
 from docutils.parsers.rst import directives
-from docutils.parsers.rst.roles import set_classes
+from docutils.parsers.rst.roles import normalize_options
 from docutils.utils.code_analyzer import Lexer, LexerError, NumberLines
 
 
 class BasePseudoSection(Directive):
+    """Base class for Topic and Sidebar."""
 
-    required_arguments = 1
-    optional_arguments = 0
     final_argument_whitespace = True
     option_spec = {'class': directives.class_option,
                    'name': directives.unchanged}
@@ -30,9 +29,18 @@ class BasePseudoSection(Directive):
     node_class = None
     """Node class to be used (must be set in subclasses)."""
 
+    invalid_parents = (nodes.SubStructural, nodes.Bibliographic,
+                       nodes.Decorative, nodes.Body, nodes.Part, nodes.topic)
+    """
+    Node categories where topics and sidebars are invalid children.
+
+    Sidebars are only valid in <document> and <section> elements,
+    topics also in <sidebar> elements. However, during parsing,
+    there may be wrapper nodes (like `sphinx.addnodes.only`).
+    """
+
     def run(self):
-        if not (self.state_machine.match_titles
-                or isinstance(self.state_machine.node, nodes.sidebar)):
+        if isinstance(self.state_machine.node, self.invalid_parents):
             raise self.error('The "%s" directive may not be used within '
                              'topics or body elements.' % self.name)
         self.assert_has_content()
@@ -54,6 +62,8 @@ class BasePseudoSection(Directive):
         text = '\n'.join(self.content)
         node = self.node_class(text, *(titles + messages))
         node['classes'] += self.options.get('class', [])
+        (node.source,
+         node.line) = self.state_machine.get_source_and_line(self.lineno)
         self.add_name(node)
         if text:
             self.state.nested_parse(self.content, self.content_offset, node)
@@ -62,17 +72,16 @@ class BasePseudoSection(Directive):
 
 class Topic(BasePseudoSection):
 
+    required_arguments = 1
     node_class = nodes.topic
 
 
 class Sidebar(BasePseudoSection):
 
-    node_class = nodes.sidebar
-
-    required_arguments = 0
     optional_arguments = 1
-    option_spec = BasePseudoSection.option_spec.copy()
-    option_spec['subtitle'] = directives.unchanged_required
+    node_class = nodes.sidebar
+    option_spec = BasePseudoSection.option_spec | {
+                      'subtitle': directives.unchanged_required}
 
     def run(self):
         if isinstance(self.state_machine.node, nodes.sidebar):
@@ -86,6 +95,11 @@ class Sidebar(BasePseudoSection):
 
 
 class LineBlock(Directive):
+    """Legacy directive for line blocks.
+
+    Use is deprecated in favour of the line block syntax,
+    cf. `parsers.rst.states.Body.line_block()`.
+    """
 
     option_spec = {'class': directives.class_option,
                    'name': directives.unchanged}
@@ -94,12 +108,16 @@ class LineBlock(Directive):
     def run(self):
         self.assert_has_content()
         block = nodes.line_block(classes=self.options.get('class', []))
+        (block.source,
+         block.line) = self.state_machine.get_source_and_line(self.lineno)
         self.add_name(block)
         node_list = [block]
-        for line_text in self.content:
+        for i, line_text in enumerate(self.content):
             text_nodes, messages = self.state.inline_text(
                 line_text.strip(), self.lineno + self.content_offset)
             line = nodes.line(line_text, '', *text_nodes)
+            line.source = block.source
+            line.line = block.line + i
             if line_text.strip():
                 line.indent = len(line_text) - len(line_text.lstrip())
             block += line
@@ -116,11 +134,11 @@ class ParsedLiteral(Directive):
     has_content = True
 
     def run(self):
-        set_classes(self.options)
+        options = normalize_options(self.options)
         self.assert_has_content()
         text = '\n'.join(self.content)
         text_nodes, messages = self.state.inline_text(text, self.lineno)
-        node = nodes.literal_block(text, '', *text_nodes, **self.options)
+        node = nodes.literal_block(text, '', *text_nodes, **options)
         node.line = self.content_offset + 1
         self.add_name(node)
         return [node] + messages
@@ -147,12 +165,12 @@ class CodeBlock(Directive):
             language = self.arguments[0]
         else:
             language = ''
-        set_classes(self.options)
+        options = normalize_options(self.options)
         classes = ['code']
         if language:
             classes.append(language)
-        if 'classes' in self.options:
-            classes.extend(self.options['classes'])
+        if 'classes' in options:
+            classes.extend(options['classes'])
 
         # set up lexical analyzer
         try:
@@ -165,10 +183,10 @@ class CodeBlock(Directive):
             else:
                 raise self.warning(error)
 
-        if 'number-lines' in self.options:
+        if 'number-lines' in options:
             # optional argument `startline`, defaults to 1
             try:
-                startline = int(self.options['number-lines'] or 1)
+                startline = int(options['number-lines'] or 1)
             except ValueError:
                 raise self.error(':number-lines: with non-integer start value')
             endline = startline + len(self.content)
@@ -178,8 +196,8 @@ class CodeBlock(Directive):
         node = nodes.literal_block('\n'.join(self.content), classes=classes)
         self.add_name(node)
         # if called from "include", set the source
-        if 'source' in self.options:
-            node.attributes['source'] = self.options['source']
+        if 'source' in options:
+            node.attributes['source'] = options['source']
         # analyze content and add nodes for every token
         for classes, value in tokens:
             if classes:
@@ -201,7 +219,7 @@ class MathBlock(Directive):
     has_content = True
 
     def run(self):
-        set_classes(self.options)
+        options = normalize_options(self.options)
         self.assert_has_content()
         # join lines, separate blocks
         content = '\n'.join(self.content).split('\n\n')
@@ -209,7 +227,7 @@ class MathBlock(Directive):
         for block in content:
             if not block:
                 continue
-            node = nodes.math_block(self.block_text, block, **self.options)
+            node = nodes.math_block(self.block_text, block, **options)
             (node.source,
              node.line) = self.state_machine.get_source_and_line(self.lineno)
             self.add_name(node)
@@ -226,10 +244,10 @@ class Rubric(Directive):
                    'name': directives.unchanged}
 
     def run(self):
-        set_classes(self.options)
+        options = normalize_options(self.options)
         rubric_text = self.arguments[0]
         textnodes, messages = self.state.inline_text(rubric_text, self.lineno)
-        rubric = nodes.rubric(rubric_text, '', *textnodes, **self.options)
+        rubric = nodes.rubric(rubric_text, '', *textnodes, **options)
         self.add_name(rubric)
         return [rubric] + messages
 
@@ -274,6 +292,8 @@ class Compound(Directive):
         text = '\n'.join(self.content)
         node = nodes.compound(text)
         node['classes'] += self.options.get('class', [])
+        (node.source,
+         node.line) = self.state_machine.get_source_and_line(self.lineno)
         self.add_name(node)
         self.state.nested_parse(self.content, self.content_offset, node)
         return [node]
@@ -300,6 +320,8 @@ class Container(Directive):
                 % (self.name, self.arguments[0]))
         node = nodes.container(text)
         node['classes'].extend(classes)
+        (node.source,
+         node.line) = self.state_machine.get_source_and_line(self.lineno)
         self.add_name(node)
         self.state.nested_parse(self.content, self.content_offset, node)
         return [node]

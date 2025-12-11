@@ -25,6 +25,7 @@ from requests.exceptions import Timeout as RequestTimeout
 
 from sphinx._cli.util.colour import darkgray, darkgreen, purple, red, turquoise
 from sphinx.builders.dummy import DummyBuilder
+from sphinx.errors import ConfigError
 from sphinx.locale import __
 from sphinx.transforms.post_transforms import SphinxPostTransform
 from sphinx.util import logging, requests
@@ -33,7 +34,7 @@ from sphinx.util.http_date import rfc1123_to_epoch
 from sphinx.util.nodes import get_node_line
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Sequence
     from typing import Any, Literal, TypeAlias
 
     from requests import Response
@@ -70,6 +71,15 @@ QUEUE_POLL_SECS = 1
 DEFAULT_DELAY = 60.0
 
 
+@object.__new__
+class _SENTINEL_LAR:
+    def __repr__(self) -> str:
+        return '_SENTINEL_LAR'
+
+    def __reduce__(self) -> str:
+        return self.__class__.__name__
+
+
 class CheckExternalLinksBuilder(DummyBuilder):
     """Checks for broken external links."""
 
@@ -97,7 +107,7 @@ class CheckExternalLinksBuilder(DummyBuilder):
                 self.process_result(result)
 
         if self.broken_hyperlinks or self.timed_out_hyperlinks:
-            self.app.statuscode = 1
+            self._app.statuscode = 1
 
     def process_result(self, result: CheckResult) -> None:
         filename = self.env.doc2path(result.docname, False)
@@ -129,7 +139,7 @@ class CheckExternalLinksBuilder(DummyBuilder):
             case _Status.WORKING:
                 logger.info(darkgreen('ok        ') + f'{res_uri}{result.message}')  # NoQA: G003
             case _Status.TIMEOUT:
-                if self.app.quiet:
+                if self.config.verbosity < 0:
                     msg = 'timeout   ' + f'{res_uri}{result.message}'
                     logger.warning(msg, location=(result.docname, result.lineno))
                 else:
@@ -144,7 +154,7 @@ class CheckExternalLinksBuilder(DummyBuilder):
                 )
                 self.timed_out_hyperlinks += 1
             case _Status.BROKEN:
-                if self.app.quiet:
+                if self.config.verbosity < 0:
                     logger.warning(
                         __('broken link: %s (%s)'),
                         res_uri,
@@ -178,7 +188,7 @@ class CheckExternalLinksBuilder(DummyBuilder):
                         text = 'with unknown code'
                 linkstat['text'] = text
                 redirection = f'{text} to {result.message}'
-                if self.config.linkcheck_allowed_redirects:
+                if self.config.linkcheck_allowed_redirects is not _SENTINEL_LAR:
                     msg = f'redirect  {res_uri} - {redirection}'
                     logger.warning(msg, location=(result.docname, result.lineno))
                 else:
@@ -258,11 +268,11 @@ class HyperlinkCollector(SphinxPostTransform):
         :param uri: URI to add
         :param node: A node class where the URI was found
         """
-        builder = cast('CheckExternalLinksBuilder', self.app.builder)
+        builder = cast('CheckExternalLinksBuilder', self.env._app.builder)
         hyperlinks = builder.hyperlinks
-        docname = self.env.docname
+        docname = self.env.current_document.docname
 
-        if newuri := self.app.events.emit_firstresult('linkcheck-process-uri', uri):
+        if newuri := self.env.events.emit_firstresult('linkcheck-process-uri', uri):
             uri = newuri
 
         try:
@@ -374,6 +384,9 @@ class HyperlinkAvailabilityCheckWorker(Thread):
         )
         self.documents_exclude: list[re.Pattern[str]] = list(
             map(re.compile, config.linkcheck_exclude_documents)
+        )
+        self.ignore_case: Sequence[re.Pattern[str]] = tuple(
+            map(re.compile, config.linkcheck_case_insensitive_urls)
         )
         self.auth = [
             (re.compile(pattern), auth_info)
@@ -619,8 +632,15 @@ class HyperlinkAvailabilityCheckWorker(Thread):
         netloc = urlsplit(req_url).netloc
         self.rate_limits.pop(netloc, None)
 
+        # Check if URL should be normalised case-insensitively
+        ignore_case = any(pat.match(req_url) for pat in self.ignore_case)
+        normalised_req_url = self._normalise_url(req_url, ignore_case=ignore_case)
+        normalised_response_url = self._normalise_url(
+            response_url, ignore_case=ignore_case
+        )
+
         if (
-            (response_url.rstrip('/') == req_url.rstrip('/'))
+            normalised_response_url == normalised_req_url
             or _allowed_redirect(req_url, response_url, self.allowed_redirects)
         ):  # fmt: skip
             return _Status.WORKING, '', 0
@@ -665,6 +685,17 @@ class HyperlinkAvailabilityCheckWorker(Thread):
             next_check = time.time() + delay
         self.rate_limits[netloc] = RateLimit(delay, next_check)
         return next_check
+
+    @staticmethod
+    def _normalise_url(url: str, *, ignore_case: bool) -> str:
+        normalised_url = url.rstrip('/')
+        if not ignore_case:
+            return normalised_url
+        # URI fragments are case-sensitive
+        url_part, sep, fragment = normalised_url.partition('#')
+        if sep:
+            return f'{url_part.casefold()}#{fragment}'
+        return url_part.casefold()
 
 
 def _get_request_headers(
@@ -721,6 +752,8 @@ class AnchorCheckParser(HTMLParser):
 def _allowed_redirect(
     url: str, new_url: str, allowed_redirects: dict[re.Pattern[str], re.Pattern[str]]
 ) -> bool:
+    if allowed_redirects is _SENTINEL_LAR:
+        return False
     return any(
         from_url.match(url) and to_url.match(new_url)
         for from_url, to_url in allowed_redirects.items()
@@ -748,20 +781,26 @@ def rewrite_github_anchor(app: Sphinx, uri: str) -> str | None:
 
 
 def compile_linkcheck_allowed_redirects(app: Sphinx, config: Config) -> None:
-    """Compile patterns in linkcheck_allowed_redirects to the regexp objects."""
-    linkcheck_allowed_redirects = app.config.linkcheck_allowed_redirects
-    for url, pattern in list(linkcheck_allowed_redirects.items()):
+    """Compile patterns to the regexp objects."""
+    if config.linkcheck_allowed_redirects is _SENTINEL_LAR:
+        return
+    if not isinstance(config.linkcheck_allowed_redirects, dict):
+        msg = __(
+            f'Invalid value `{config.linkcheck_allowed_redirects!r}` in '
+            'linkcheck_allowed_redirects. Expected a dictionary.'
+        )
+        raise ConfigError(msg)
+    allowed_redirects = {}
+    for url, pattern in config.linkcheck_allowed_redirects.items():
         try:
-            linkcheck_allowed_redirects[re.compile(url)] = re.compile(pattern)
+            allowed_redirects[re.compile(url)] = re.compile(pattern)
         except re.error as exc:
             logger.warning(
                 __('Failed to compile regex in linkcheck_allowed_redirects: %r %s'),
                 exc.pattern,
                 exc.msg,
             )
-        finally:
-            # Remove the original regexp-string
-            linkcheck_allowed_redirects.pop(url)
+    config.linkcheck_allowed_redirects = allowed_redirects
 
 
 def setup(app: Sphinx) -> ExtensionMetadata:
@@ -772,7 +811,9 @@ def setup(app: Sphinx) -> ExtensionMetadata:
     app.add_config_value(
         'linkcheck_exclude_documents', [], '', types=frozenset({list, tuple})
     )
-    app.add_config_value('linkcheck_allowed_redirects', {}, '', types=frozenset({dict}))
+    app.add_config_value(
+        'linkcheck_allowed_redirects', _SENTINEL_LAR, '', types=frozenset({dict})
+    )
     app.add_config_value('linkcheck_auth', [], '', types=frozenset({list, tuple}))
     app.add_config_value('linkcheck_request_headers', {}, '', types=frozenset({dict}))
     app.add_config_value('linkcheck_retries', 1, '', types=frozenset({int}))
@@ -796,10 +837,17 @@ def setup(app: Sphinx) -> ExtensionMetadata:
     app.add_config_value(
         'linkcheck_report_timeouts_as_broken', False, '', types=frozenset({bool})
     )
+    app.add_config_value(
+        'linkcheck_case_insensitive_urls',
+        (),
+        '',
+        types=frozenset({frozenset, list, set, tuple}),
+    )
 
     app.add_event('linkcheck-process-uri')
 
-    app.connect('config-inited', compile_linkcheck_allowed_redirects, priority=800)
+    # priority 900 to happen after ``check_confval_types()``
+    app.connect('config-inited', compile_linkcheck_allowed_redirects, priority=900)
 
     # FIXME: Disable URL rewrite handler for github.com temporarily.
     # See: https://github.com/sphinx-doc/sphinx/issues/9435

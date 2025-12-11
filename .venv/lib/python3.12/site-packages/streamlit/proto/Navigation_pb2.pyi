@@ -66,7 +66,7 @@ class Navigation(google.protobuf.message.Message):
     POSITION_FIELD_NUMBER: builtins.int
     PAGE_SCRIPT_HASH_FIELD_NUMBER: builtins.int
     EXPANDED_FIELD_NUMBER: builtins.int
-    position: global___Navigation.Position.ValueType
+    position: Global___Navigation.Position.ValueType
     page_script_hash: builtins.str
     """The script hash for the page identified by st.navigation"""
     expanded: builtins.bool
@@ -79,10 +79,10 @@ class Navigation(google.protobuf.message.Message):
         *,
         sections: collections.abc.Iterable[builtins.str] | None = ...,
         app_pages: collections.abc.Iterable[streamlit.proto.AppPage_pb2.AppPage] | None = ...,
-        position: global___Navigation.Position.ValueType = ...,
+        position: Global___Navigation.Position.ValueType = ...,
         page_script_hash: builtins.str = ...,
         expanded: builtins.bool = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["app_pages", b"app_pages", "expanded", b"expanded", "page_script_hash", b"page_script_hash", "position", b"position", "sections", b"sections"]) -> None: ...
 
-global___Navigation = Navigation
+Global___Navigation: typing_extensions.TypeAlias = Navigation

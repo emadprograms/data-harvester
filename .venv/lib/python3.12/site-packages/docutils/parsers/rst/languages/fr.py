@@ -1,4 +1,4 @@
-# $Id: fr.py 9417 2023-06-27 20:04:54Z milde $
+# $Id: fr.py 9782 2024-07-29 12:37:02Z milde $
 # Authors: David Goodger <goodger@python.org>; William Dode
 # Copyright: This module has been placed in the public domain.
 
@@ -26,7 +26,6 @@ directives = {
       'astuce': 'tip',
       'avertissement': 'warning',
       'annonce': 'admonition',
-      'admonition': 'admonition',  # sic! kept for backwards compatibiltity
       # suggestions: annonce, avis, indication, remarque, renseignement
       # see also https://sourceforge.net/p/docutils/bugs/453/
       'encadré': 'sidebar',

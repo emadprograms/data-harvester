@@ -21,7 +21,13 @@ import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
 import streamlit.proto.Exception_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -59,4 +65,4 @@ class SessionEvent(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["script_changed_on_disk", b"script_changed_on_disk", "script_compilation_exception", b"script_compilation_exception", "script_was_manually_stopped", b"script_was_manually_stopped", "type", b"type"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["script_changed_on_disk", "script_was_manually_stopped", "script_compilation_exception"] | None: ...
 
-global___SessionEvent = SessionEvent
+Global___SessionEvent: typing_extensions.TypeAlias = SessionEvent

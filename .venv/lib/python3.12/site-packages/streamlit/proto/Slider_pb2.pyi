@@ -100,14 +100,14 @@ class Slider(google.protobuf.message.Message):
     form_id: builtins.str
     label: builtins.str
     format: builtins.str
-    data_type: global___Slider.DataType.ValueType
+    data_type: Global___Slider.DataType.ValueType
     min: builtins.float
     max: builtins.float
     step: builtins.float
     set_value: builtins.bool
     help: builtins.str
     disabled: builtins.bool
-    type: global___Slider.Type.ValueType
+    type: Global___Slider.Type.ValueType
     @property
     def default(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.float]: ...
     @property
@@ -123,7 +123,7 @@ class Slider(google.protobuf.message.Message):
         form_id: builtins.str = ...,
         label: builtins.str = ...,
         format: builtins.str = ...,
-        data_type: global___Slider.DataType.ValueType = ...,
+        data_type: Global___Slider.DataType.ValueType = ...,
         default: collections.abc.Iterable[builtins.float] | None = ...,
         min: builtins.float = ...,
         max: builtins.float = ...,
@@ -134,9 +134,9 @@ class Slider(google.protobuf.message.Message):
         help: builtins.str = ...,
         disabled: builtins.bool = ...,
         label_visibility: streamlit.proto.LabelVisibilityMessage_pb2.LabelVisibilityMessage | None = ...,
-        type: global___Slider.Type.ValueType = ...,
+        type: Global___Slider.Type.ValueType = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["label_visibility", b"label_visibility"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["data_type", b"data_type", "default", b"default", "disabled", b"disabled", "form_id", b"form_id", "format", b"format", "help", b"help", "id", b"id", "label", b"label", "label_visibility", b"label_visibility", "max", b"max", "min", b"min", "options", b"options", "set_value", b"set_value", "step", b"step", "type", b"type", "value", b"value"]) -> None: ...
 
-global___Slider = Slider
+Global___Slider: typing_extensions.TypeAlias = Slider

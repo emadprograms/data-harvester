@@ -1,10 +1,12 @@
-# $Id: references.py 9613 2024-04-06 13:27:52Z milde $
+# $Id: references.py 10211 2025-08-19 20:28:48Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
 """
 Transforms for resolving references.
 """
+
+from __future__ import annotations
 
 __docformat__ = 'reStructuredText'
 
@@ -37,7 +39,7 @@ class PropagateTargets(Transform):
 
     default_priority = 260
 
-    def apply(self):
+    def apply(self) -> None:
         for target in self.document.findall(nodes.target):
             # Only block-level targets without reference (like ".. _target:"):
             if (isinstance(target.parent, nodes.TextElement)
@@ -76,11 +78,18 @@ class PropagateTargets(Transform):
                 getattr(target, 'expect_referenced_by_name', {}))
             next_node.expect_referenced_by_id.update(
                 getattr(target, 'expect_referenced_by_id', {}))
+            # Remove target node from places where it is invalid.
+            # TODO: always remove target?
+            # +1 It did complete its mission and is currently ignored.
+            # -1 It may help a future rST writer.
+            if isinstance(target.parent, nodes.figure) and isinstance(
+                    next_node, nodes.caption):
+                target.parent.remove(target)
+                continue
             # Set refid to point to the first former ID of target
             # which is now an ID of next_node.
             target['refid'] = target['ids'][0]
-            # Clear ids and names; they have been moved to
-            # next_node.
+            # Clear ids and names; they have been moved to next_node.
             target['ids'] = []
             target['names'] = []
             self.document.note_refid(target)
@@ -112,15 +121,13 @@ class AnonymousHyperlinks(Transform):
 
     default_priority = 440
 
-    def apply(self):
-        anonymous_refs = []
-        anonymous_targets = []
-        for node in self.document.findall(nodes.reference):
-            if node.get('anonymous'):
-                anonymous_refs.append(node)
-        for node in self.document.findall(nodes.target):
-            if node.get('anonymous'):
-                anonymous_targets.append(node)
+    def apply(self) -> None:
+        anonymous_refs = [
+            node for node in self.document.findall(nodes.reference)
+            if node.get('anonymous')]
+        anonymous_targets = [
+            node for node in self.document.findall(nodes.target)
+            if node.get('anonymous')]
         if len(anonymous_refs) != len(anonymous_targets):
             msg = self.document.reporter.error(
                   'Anonymous hyperlink mismatch: %s references but %s '
@@ -135,11 +142,13 @@ class AnonymousHyperlinks(Transform):
                 ref.replace_self(prb)
             return
         for ref, target in zip(anonymous_refs, anonymous_targets):
-            target.referenced = 1
+            if ref.hasattr('refid') or ref.hasattr('refuri'):
+                continue
+            target.referenced = True
             while True:
                 if target.hasattr('refuri'):
                     ref['refuri'] = target['refuri']
-                    ref.resolved = 1
+                    ref.resolved = True
                     break
                 else:
                     if not target['ids']:
@@ -157,23 +166,23 @@ class IndirectHyperlinks(Transform):
     a) Indirect external references::
 
            <paragraph>
-               <reference refname="indirect external">
+               <reference refname="indirect-external">
                    indirect external
-           <target id="id1" name="direct external"
+           <target ids="id1" names="direct-external"
                refuri="http://indirect">
-           <target id="id2" name="indirect external"
-               refname="direct external">
+           <target ids="id2" names="indirect-external"
+               refname="direct-external">
 
        The "refuri" attribute is migrated back to all indirect targets
        from the final direct target (i.e. a target not referring to
        another indirect target)::
 
            <paragraph>
-               <reference refname="indirect external">
+               <reference refname="indirect-external">
                    indirect external
-           <target id="id1" name="direct external"
+           <target ids="id1" names="direct-external"
                refuri="http://indirect">
-           <target id="id2" name="indirect external"
+           <target ids="id2" names="indirect-external"
                refuri="http://indirect">
 
        Once the attribute is migrated, the preexisting "refname" attribute
@@ -181,37 +190,37 @@ class IndirectHyperlinks(Transform):
 
     b) Indirect internal references::
 
-           <target id="id1" name="final target">
+           <target ids="id1" names="final-target">
            <paragraph>
-               <reference refname="indirect internal">
+               <reference refname="indirect-internal">
                    indirect internal
-           <target id="id2" name="indirect internal 2"
+           <target ids="id2" names="indirect-internal-2"
                refname="final target">
-           <target id="id3" name="indirect internal"
-               refname="indirect internal 2">
+           <target ids="id3" names="indirect-internal"
+               refname="indirect-internal-2">
 
        Targets which indirectly refer to an internal target become one-hop
        indirect (their "refid" attributes are directly set to the internal
        target's "id"). References which indirectly refer to an internal
        target become direct internal references::
 
-           <target id="id1" name="final target">
+           <target ids="id1" names="final-target">
            <paragraph>
                <reference refid="id1">
                    indirect internal
-           <target id="id2" name="indirect internal 2" refid="id1">
-           <target id="id3" name="indirect internal" refid="id1">
+           <target ids="id2" names="indirect-internal-2" refid="id1">
+           <target ids="id3" names="indirect-internal" refid="id1">
     """
 
     default_priority = 460
 
-    def apply(self):
+    def apply(self) -> None:
         for target in self.document.indirect_targets:
             if not target.resolved:
                 self.resolve_indirect_target(target)
             self.resolve_indirect_references(target)
 
-    def resolve_indirect_target(self, target):
+    def resolve_indirect_target(self, target) -> None:
         refname = target.get('refname')
         if refname is None:
             reftarget_id = target['refid']
@@ -253,19 +262,19 @@ class IndirectHyperlinks(Transform):
                 return
         if refname is not None:
             del target['refname']
-        target.resolved = 1
+        target.resolved = True
 
-    def nonexistent_indirect_target(self, target):
+    def nonexistent_indirect_target(self, target) -> None:
         if target['refname'] in self.document.nameids:
             self.indirect_target_error(target, 'which is a duplicate, and '
                                        'cannot be used as a unique reference')
         else:
             self.indirect_target_error(target, 'which does not exist')
 
-    def circular_indirect_reference(self, target):
+    def circular_indirect_reference(self, target) -> None:
         self.indirect_target_error(target, 'forming a circular reference')
 
-    def indirect_target_error(self, target, explanation):
+    def indirect_target_error(self, target, explanation) -> None:
         naming = ''
         reflist = []
         if target['names']:
@@ -286,9 +295,9 @@ class IndirectHyperlinks(Transform):
             prbid = self.document.set_id(prb)
             msg.add_backref(prbid)
             ref.replace_self(prb)
-        target.resolved = 1
+        target.resolved = True
 
-    def resolve_indirect_references(self, target):
+    def resolve_indirect_references(self, target) -> None:
         if target.hasattr('refid'):
             attname = 'refid'
             call_method = self.document.note_refid
@@ -309,7 +318,7 @@ class IndirectHyperlinks(Transform):
                 ref[attname] = attval
                 if call_method:
                     call_method(ref)
-                ref.resolved = 1
+                ref.resolved = True
                 if isinstance(ref, nodes.target):
                     self.resolve_indirect_references(ref)
         for id in target['ids']:
@@ -323,7 +332,7 @@ class IndirectHyperlinks(Transform):
                 ref[attname] = attval
                 if call_method:
                     call_method(ref)
-                ref.resolved = 1
+                ref.resolved = True
                 if isinstance(ref, nodes.target):
                     self.resolve_indirect_references(ref)
 
@@ -334,21 +343,21 @@ class ExternalTargets(Transform):
     Given::
 
         <paragraph>
-            <reference refname="direct external">
+            <reference refname="direct-external">
                 direct external
-        <target id="id1" name="direct external" refuri="http://direct">
+        <target ids="id1" names="direct-external" refuri="http://direct">
 
     The "refname" attribute is replaced by the direct "refuri" attribute::
 
         <paragraph>
             <reference refuri="http://direct">
                 direct external
-        <target id="id1" name="direct external" refuri="http://direct">
+        <target ids="id1" names="direct-external" refuri="http://direct">
     """
 
     default_priority = 640
 
-    def apply(self):
+    def apply(self) -> None:
         for target in self.document.findall(nodes.target):
             if target.hasattr('refuri'):
                 refuri = target['refuri']
@@ -361,26 +370,26 @@ class ExternalTargets(Transform):
                             continue
                         del ref['refname']
                         ref['refuri'] = refuri
-                        ref.resolved = 1
+                        ref.resolved = True
 
 
 class InternalTargets(Transform):
 
     default_priority = 660
 
-    def apply(self):
+    def apply(self) -> None:
         for target in self.document.findall(nodes.target):
             if not target.hasattr('refuri') and not target.hasattr('refid'):
                 self.resolve_reference_ids(target)
 
-    def resolve_reference_ids(self, target):
+    def resolve_reference_ids(self, target) -> None:
         """
         Given::
 
             <paragraph>
-                <reference refname="direct internal">
+                <reference refname="direct-internal">
                     direct internal
-            <target id="id1" name="direct internal">
+            <target ids="id1" names="direct-internal">
 
         The "refname" attribute is replaced by "refid" linking to the target's
         "id"::
@@ -388,7 +397,7 @@ class InternalTargets(Transform):
             <paragraph>
                 <reference refid="id1">
                     direct internal
-            <target id="id1" name="direct internal">
+            <target ids="id1" names="direct-internal">
         """
         for name in target['names']:
             refid = self.document.nameids.get(name)
@@ -401,7 +410,7 @@ class InternalTargets(Transform):
                 if refid:
                     del ref['refname']
                     ref['refid'] = refid
-                ref.resolved = 1
+                ref.resolved = True
 
 
 class Footnotes(Transform):
@@ -415,14 +424,14 @@ class Footnotes(Transform):
         <document>
             <paragraph>
                 A labeled autonumbered footnote reference:
-                <footnote_reference auto="1" id="id1" refname="footnote">
+                <footnote_reference auto="1" ids="id1" refname="footnote">
             <paragraph>
                 An unlabeled autonumbered footnote reference:
-                <footnote_reference auto="1" id="id2">
-            <footnote auto="1" id="id3">
+                <footnote_reference auto="1" ids="id2">
+            <footnote auto="1" ids="id3">
                 <paragraph>
                     Unlabeled autonumbered footnote.
-            <footnote auto="1" id="footnote" name="footnote">
+            <footnote auto="1" ids="footnote" names="footnote">
                 <paragraph>
                     Labeled autonumbered footnote.
 
@@ -437,18 +446,18 @@ class Footnotes(Transform):
         <document>
             <paragraph>
                 A labeled autonumbered footnote reference:
-                <footnote_reference auto="1" id="id1" refid="footnote">
+                <footnote_reference auto="1" ids="id1" refid="footnote">
                     2
             <paragraph>
                 An unlabeled autonumbered footnote reference:
-                <footnote_reference auto="1" id="id2" refid="id3">
+                <footnote_reference auto="1" ids="id2" refid="id3">
                     1
-            <footnote auto="1" id="id3" backrefs="id2">
+            <footnote auto="1" ids="id3" backrefs="id2">
                 <label>
                     1
                 <paragraph>
                     Unlabeled autonumbered footnote.
-            <footnote auto="1" id="footnote" name="footnote" backrefs="id1">
+            <footnote auto="1" ids="footnote" names="footnote" backrefs="id1">
                 <label>
                     2
                 <paragraph>
@@ -487,7 +496,7 @@ class Footnotes(Transform):
           '\u2663',                    # ♣ &clubs; club suit
           ]
 
-    def apply(self):
+    def apply(self) -> None:
         self.autofootnote_labels = []
         startnum = self.document.autofootnote_start
         self.document.autofootnote_start = self.number_footnotes(startnum)
@@ -517,14 +526,14 @@ class Footnotes(Transform):
                     ref['refid'] = footnote['ids'][0]
                     footnote.add_backref(ref['ids'][0])
                     self.document.note_refid(ref)
-                    ref.resolved = 1
+                    ref.resolved = True
             if not footnote['names'] and not footnote['dupnames']:
                 footnote['names'].append(label)
                 self.document.note_explicit_target(footnote, footnote)
                 self.autofootnote_labels.append(label)
         return startnum
 
-    def number_footnote_references(self, startnum):
+    def number_footnote_references(self, startnum) -> None:
         """Assign numbers to autonumbered footnote references."""
         i = 0
         for ref in self.document.autofootnote_refs:
@@ -533,10 +542,12 @@ class Footnotes(Transform):
             try:
                 label = self.autofootnote_labels[i]
             except IndexError:
+                n = len(self.autofootnote_labels)
+                s = 's' if n > 1 else ''
                 msg = self.document.reporter.error(
-                      'Too many autonumbered footnote references: only %s '
-                      'corresponding footnotes available.'
-                      % len(self.autofootnote_labels), base_node=ref)
+                          'Too many autonumbered footnote references: '
+                          f'only {n} corresponding footnote{s} available.',
+                          base_node=ref)
                 msgid = self.document.set_id(msg)
                 for ref in self.document.autofootnote_refs[i:]:
                     if ref.resolved or ref.hasattr('refname'):
@@ -554,10 +565,10 @@ class Footnotes(Transform):
             self.document.note_refid(ref)
             assert len(ref['ids']) == 1
             footnote.add_backref(ref['ids'][0])
-            ref.resolved = 1
+            ref.resolved = True
             i += 1
 
-    def symbolize_footnotes(self):
+    def symbolize_footnotes(self) -> None:
         """Add symbols indexes to "[*]"-style footnotes and references."""
         labels = []
         for footnote in self.document.symbol_footnotes:
@@ -594,7 +605,7 @@ class Footnotes(Transform):
             footnote.add_backref(ref['ids'][0])
             i += 1
 
-    def resolve_footnotes_and_citations(self):
+    def resolve_footnotes_and_citations(self) -> None:
         """
         Link manually-labeled footnotes and citations to/from their
         references.
@@ -610,7 +621,7 @@ class Footnotes(Transform):
                     reflist = self.document.citation_refs[label]
                     self.resolve_references(citation, reflist)
 
-    def resolve_references(self, note, reflist):
+    def resolve_references(self, note, reflist) -> None:
         assert len(note['ids']) == 1
         id = note['ids'][0]
         for ref in reflist:
@@ -620,8 +631,8 @@ class Footnotes(Transform):
             ref['refid'] = id
             assert len(ref['ids']) == 1
             note.add_backref(ref['ids'][0])
-            ref.resolved = 1
-        note.resolved = 1
+            ref.resolved = True
+        note.resolved = True
 
 
 class CircularSubstitutionDefinitionError(Exception):
@@ -639,7 +650,7 @@ class Substitutions(Transform):
                 <substitution_reference refname="biohazard">
                     biohazard
                  symbol is deservedly scary-looking.
-            <substitution_definition name="biohazard">
+            <substitution_definition names="biohazard">
                 <image alt="biohazard" uri="biohazard.png">
 
     The ``substitution_reference`` will simply be replaced by the
@@ -652,7 +663,7 @@ class Substitutions(Transform):
                 The
                 <image alt="biohazard" uri="biohazard.png">
                  symbol is deservedly scary-looking.
-            <substitution_definition name="biohazard">
+            <substitution_definition names="biohazard">
                 <image alt="biohazard" uri="biohazard.png">
     """
 
@@ -748,7 +759,7 @@ class Substitutions(Transform):
             for node in subdef_copy.children:
                 if isinstance(node, nodes.Referential):
                     # HACK: verify refname attribute exists.
-                    # Test with docs/dev/todo.txt, see. |donate|
+                    # Test with docs/dev/todo.rst, see. |donate|
                     if 'refname' in node:
                         self.document.note_refname(node)
 
@@ -764,12 +775,12 @@ class TargetNotes(Transform):
     """The TargetNotes transform has to be applied after `IndirectHyperlinks`
     but before `Footnotes`."""
 
-    def __init__(self, document, startnode):
+    def __init__(self, document, startnode) -> None:
         Transform.__init__(self, document, startnode=startnode)
 
         self.classes = startnode.details.get('class', [])
 
-    def apply(self):
+    def apply(self) -> None:
         notes = {}
         nodelist = []
         for target in self.document.findall(nodes.target):
@@ -836,16 +847,51 @@ class TargetNotes(Transform):
         return footnote
 
 
+class CitationReferences(Transform):
+    """Resolve <citation_references>.
+
+    The 'use_bibtex'__ configuration setting indicates that citation entries
+    are fetched from a BibTeX database by the backend (LaTeX).
+
+    __ https://docutils.sourceforge.io/docs/user/config.html#use-bibtex
+    """
+    # TODO: Bibliography database support for other output formats.
+
+    default_priority = 770
+    # Apply between `InternalTargets` (660) and `DanglingReferences` (850)
+
+    def apply(self) -> None:
+        if not getattr(self.document.settings, 'use_bibtex', []):
+            return
+        for node in self.document.findall(nodes.citation_reference):
+            # Skip nodes that are resolved or have a matching target
+            # and will be resolved by `DanglingReferences`:
+            # TODO: drop the second condition when `DanglingReferences` is
+            #       replaced by two separate transitions.
+            if node.resolved or self.document.nameids.get(node.get('refname')):
+                continue
+            if node.astext():  # ensure text content (becomes the BibTeX key)
+                node.delattr('refname')
+                node.resolved = True
+
+
 class DanglingReferences(Transform):
 
     """
     Check for dangling references (incl. footnote & citation) and for
     unreferenced targets.
+
+    Provisional : pending deprecation
+      Docutils readers will add separate transforms for resolving
+      refnames to refids and for reporting unresolved references
+      instead of this transform (to make space for reference-resolving
+      transforms added by extensions or applications) in Docutils 1.0.
+      This transform will be removed in Docutils 2.0.
     """
 
     default_priority = 850
 
-    def apply(self):
+    def apply(self) -> None:
         visitor = DanglingReferencesVisitor(
             self.document,
             self.document.transformer.unknown_reference_resolvers)
@@ -874,51 +920,71 @@ class DanglingReferences(Transform):
 
 
 class DanglingReferencesVisitor(nodes.SparseNodeVisitor):
+    """Provisional : pending deprecation
 
-    def __init__(self, document, unknown_reference_resolvers):
+    This auxiliary class is used by the `DanglingReferences` transform
+    which will no longer be used in Docutils 1.0.
+    It will be removed in Docutils 2.0.
+    """
+
+    def __init__(self, document, unknown_reference_resolvers) -> None:
         nodes.SparseNodeVisitor.__init__(self, document)
         self.document = document
         self.unknown_reference_resolvers = unknown_reference_resolvers
 
-    def unknown_visit(self, node):
+    def unknown_visit(self, node) -> None:
         pass
 
-    def visit_reference(self, node):
+    def visit_reference(self, node) -> None:
         if node.resolved or not node.hasattr('refname'):
             return
         refname = node['refname']
         id = self.document.nameids.get(refname)
-        if id is None:
-            for resolver_function in self.unknown_reference_resolvers:
-                if resolver_function(node):
-                    break
-            else:
-                if (getattr(self.document.settings, 'use_bibtex', False)
-                    and isinstance(node, nodes.citation_reference)):
-                    # targets added from BibTeX database by LaTeX
-                    node.resolved = True
-                    return
-                if refname in self.document.nameids:
-                    msg = self.document.reporter.error(
-                        'Duplicate target name, cannot be used as a unique '
-                        'reference: "%s".' % (node['refname']), base_node=node)
-                else:
-                    msg = self.document.reporter.error(
-                        f'Unknown target name: "{node["refname"]}".',
-                        base_node=node)
-                msgid = self.document.set_id(msg)
-                prb = nodes.problematic(
-                      node.rawsource, node.rawsource, refid=msgid)
-                try:
-                    prbid = node['ids'][0]
-                except IndexError:
-                    prbid = self.document.set_id(prb)
-                msg.add_backref(prbid)
-                node.replace_self(prb)
-        else:
+        if id is not None:
+            # target found, set refid
             del node['refname']
             node['refid'] = id
             self.document.ids[id].note_referenced_by(id=id)
             node.resolved = True
+            return
+        # Apply component-specific resolving functions (cf. TransformSpec):
+        for resolver_function in self.unknown_reference_resolvers:
+            if resolver_function(node):
+                return
+        # Report unresolved references:
+        if refname in self.document.nameids:
+            msg = self.document.reporter.error(
+                'Duplicate target name, cannot be used as a unique '
+                f'reference: "{refname}".', base_node=node)
+        else:
+            if '<' in refname or '>' in refname:
+                hint = 'Did you want to embed a URI or alias?'
+                if '<' not in refname:
+                    hint += '\nOpening bracket missing.'
+                elif ' <' not in refname:
+                    hint += ('\nThe embedded reference must be preceded'
+                             ' by whitespace.')
+                if '>' not in refname:
+                    hint += '\nClosing bracket missing.'
+                elif not refname.endswith('>'):
+                    hint += ('\nThe embedded reference must be the last text'
+                             ' before the end string.')
+                if '< ' in refname or ' >' in refname:
+                    hint += ('\nWhitespace around the embedded reference'
+                             ' is not allowed.')
+                details = [nodes.paragraph('', hint)]
+            else:
+                details = []
+            msg = self.document.reporter.error(
+                      f'Unknown target name: "{refname}".',
+                      *details, base_node=node)
+        msgid = self.document.set_id(msg)
+        prb = nodes.problematic(node.rawsource, node.rawsource, refid=msgid)
+        try:
+            prbid = node['ids'][0]
+        except IndexError:
+            prbid = self.document.set_id(prb)
+        msg.add_backref(prbid)
+        node.replace_self(prb)
 
     visit_footnote_reference = visit_citation_reference = visit_reference

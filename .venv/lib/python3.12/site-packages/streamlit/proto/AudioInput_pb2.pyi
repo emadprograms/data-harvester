@@ -21,7 +21,13 @@ import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
 import streamlit.proto.LabelVisibilityMessage_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -59,4 +65,4 @@ class AudioInput(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["_sample_rate", b"_sample_rate", "disabled", b"disabled", "form_id", b"form_id", "help", b"help", "id", b"id", "label", b"label", "label_visibility", b"label_visibility", "sample_rate", b"sample_rate"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["_sample_rate", b"_sample_rate"]) -> typing.Literal["sample_rate"] | None: ...
 
-global___AudioInput = AudioInput
+Global___AudioInput: typing_extensions.TypeAlias = AudioInput

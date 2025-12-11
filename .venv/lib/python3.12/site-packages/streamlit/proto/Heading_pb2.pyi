@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -53,4 +59,4 @@ class Heading(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["anchor", b"anchor", "body", b"body", "divider", b"divider", "help", b"help", "hide_anchor", b"hide_anchor", "tag", b"tag"]) -> None: ...
 
-global___Heading = Heading
+Global___Heading: typing_extensions.TypeAlias = Heading

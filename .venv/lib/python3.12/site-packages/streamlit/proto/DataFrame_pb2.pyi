@@ -23,7 +23,13 @@ import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.Common_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -40,33 +46,33 @@ class DataFrame(google.protobuf.message.Message):
     COLUMNS_FIELD_NUMBER: builtins.int
     STYLE_FIELD_NUMBER: builtins.int
     @property
-    def data(self) -> global___Table:
+    def data(self) -> Global___Table:
         """The data in the array."""
 
     @property
-    def index(self) -> global___Index:
+    def index(self) -> Global___Index:
         """List of row names. (Multiple implies a multi-index.)"""
 
     @property
-    def columns(self) -> global___Index:
+    def columns(self) -> Global___Index:
         """List of column names. (Multiple implies a multi-index.)"""
 
     @property
-    def style(self) -> global___TableStyle:
+    def style(self) -> Global___TableStyle:
         """Cell style and formatting data. Optional."""
 
     def __init__(
         self,
         *,
-        data: global___Table | None = ...,
-        index: global___Index | None = ...,
-        columns: global___Index | None = ...,
-        style: global___TableStyle | None = ...,
+        data: Global___Table | None = ...,
+        index: Global___Index | None = ...,
+        columns: Global___Index | None = ...,
+        style: Global___TableStyle | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["columns", b"columns", "data", b"data", "index", b"index", "style", b"style"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["columns", b"columns", "data", b"data", "index", b"index", "style", b"style"]) -> None: ...
 
-global___DataFrame = DataFrame
+Global___DataFrame: typing_extensions.TypeAlias = DataFrame
 
 @typing.final
 class Index(google.protobuf.message.Message):
@@ -82,43 +88,43 @@ class Index(google.protobuf.message.Message):
     INT_64_INDEX_FIELD_NUMBER: builtins.int
     FLOAT_64_INDEX_FIELD_NUMBER: builtins.int
     @property
-    def plain_index(self) -> global___PlainIndex: ...
+    def plain_index(self) -> Global___PlainIndex: ...
     @property
-    def range_index(self) -> global___RangeIndex: ...
+    def range_index(self) -> Global___RangeIndex: ...
     @property
-    def multi_index(self) -> global___MultiIndex:
+    def multi_index(self) -> Global___MultiIndex:
         """CategoricalIndex categorical_index = 3;"""
 
     @property
-    def datetime_index(self) -> global___DatetimeIndex:
+    def datetime_index(self) -> Global___DatetimeIndex:
         """IntervalIndex interval_index = 5;"""
 
     @property
-    def timedelta_index(self) -> global___TimedeltaIndex: ...
+    def timedelta_index(self) -> Global___TimedeltaIndex: ...
     @property
-    def int_64_index(self) -> global___Int64Index:
+    def int_64_index(self) -> Global___Int64Index:
         """PeriodIndex period_index = 8;"""
 
     @property
-    def float_64_index(self) -> global___Float64Index:
+    def float_64_index(self) -> Global___Float64Index:
         """UInt64Index uint_64_index = 10;"""
 
     def __init__(
         self,
         *,
-        plain_index: global___PlainIndex | None = ...,
-        range_index: global___RangeIndex | None = ...,
-        multi_index: global___MultiIndex | None = ...,
-        datetime_index: global___DatetimeIndex | None = ...,
-        timedelta_index: global___TimedeltaIndex | None = ...,
-        int_64_index: global___Int64Index | None = ...,
-        float_64_index: global___Float64Index | None = ...,
+        plain_index: Global___PlainIndex | None = ...,
+        range_index: Global___RangeIndex | None = ...,
+        multi_index: Global___MultiIndex | None = ...,
+        datetime_index: Global___DatetimeIndex | None = ...,
+        timedelta_index: Global___TimedeltaIndex | None = ...,
+        int_64_index: Global___Int64Index | None = ...,
+        float_64_index: Global___Float64Index | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["datetime_index", b"datetime_index", "float_64_index", b"float_64_index", "int_64_index", b"int_64_index", "multi_index", b"multi_index", "plain_index", b"plain_index", "range_index", b"range_index", "timedelta_index", b"timedelta_index", "type", b"type"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["datetime_index", b"datetime_index", "float_64_index", b"float_64_index", "int_64_index", b"int_64_index", "multi_index", b"multi_index", "plain_index", b"plain_index", "range_index", b"range_index", "timedelta_index", b"timedelta_index", "type", b"type"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["plain_index", "range_index", "multi_index", "datetime_index", "timedelta_index", "int_64_index", "float_64_index"] | None: ...
 
-global___Index = Index
+Global___Index: typing_extensions.TypeAlias = Index
 
 @typing.final
 class PlainIndex(google.protobuf.message.Message):
@@ -128,16 +134,16 @@ class PlainIndex(google.protobuf.message.Message):
 
     DATA_FIELD_NUMBER: builtins.int
     @property
-    def data(self) -> global___AnyArray: ...
+    def data(self) -> Global___AnyArray: ...
     def __init__(
         self,
         *,
-        data: global___AnyArray | None = ...,
+        data: Global___AnyArray | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["data", b"data"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["data", b"data"]) -> None: ...
 
-global___PlainIndex = PlainIndex
+Global___PlainIndex: typing_extensions.TypeAlias = PlainIndex
 
 @typing.final
 class RangeIndex(google.protobuf.message.Message):
@@ -159,7 +165,7 @@ class RangeIndex(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["start", b"start", "stop", b"stop"]) -> None: ...
 
-global___RangeIndex = RangeIndex
+Global___RangeIndex: typing_extensions.TypeAlias = RangeIndex
 
 @typing.final
 class MultiIndex(google.protobuf.message.Message):
@@ -172,18 +178,18 @@ class MultiIndex(google.protobuf.message.Message):
     LEVELS_FIELD_NUMBER: builtins.int
     LABELS_FIELD_NUMBER: builtins.int
     @property
-    def levels(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Index]: ...
+    def levels(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___Index]: ...
     @property
     def labels(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[streamlit.proto.Common_pb2.Int32Array]: ...
     def __init__(
         self,
         *,
-        levels: collections.abc.Iterable[global___Index] | None = ...,
+        levels: collections.abc.Iterable[Global___Index] | None = ...,
         labels: collections.abc.Iterable[streamlit.proto.Common_pb2.Int32Array] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["labels", b"labels", "levels", b"levels"]) -> None: ...
 
-global___MultiIndex = MultiIndex
+Global___MultiIndex: typing_extensions.TypeAlias = MultiIndex
 
 @typing.final
 class DatetimeIndex(google.protobuf.message.Message):
@@ -204,7 +210,7 @@ class DatetimeIndex(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["data", b"data"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["data", b"data"]) -> None: ...
 
-global___DatetimeIndex = DatetimeIndex
+Global___DatetimeIndex: typing_extensions.TypeAlias = DatetimeIndex
 
 @typing.final
 class TimedeltaIndex(google.protobuf.message.Message):
@@ -225,7 +231,7 @@ class TimedeltaIndex(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["data", b"data"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["data", b"data"]) -> None: ...
 
-global___TimedeltaIndex = TimedeltaIndex
+Global___TimedeltaIndex: typing_extensions.TypeAlias = TimedeltaIndex
 
 @typing.final
 class Int64Index(google.protobuf.message.Message):
@@ -246,7 +252,7 @@ class Int64Index(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["data", b"data"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["data", b"data"]) -> None: ...
 
-global___Int64Index = Int64Index
+Global___Int64Index: typing_extensions.TypeAlias = Int64Index
 
 @typing.final
 class Float64Index(google.protobuf.message.Message):
@@ -267,7 +273,7 @@ class Float64Index(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["data", b"data"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["data", b"data"]) -> None: ...
 
-global___Float64Index = Float64Index
+Global___Float64Index: typing_extensions.TypeAlias = Float64Index
 
 @typing.final
 class CSSStyle(google.protobuf.message.Message):
@@ -285,7 +291,7 @@ class CSSStyle(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["property", b"property", "value", b"value"]) -> None: ...
 
-global___CSSStyle = CSSStyle
+Global___CSSStyle: typing_extensions.TypeAlias = CSSStyle
 
 @typing.final
 class CellStyle(google.protobuf.message.Message):
@@ -302,17 +308,17 @@ class CellStyle(google.protobuf.message.Message):
     display_value, which itself could be ''.
     """
     @property
-    def css(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___CSSStyle]: ...
+    def css(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___CSSStyle]: ...
     def __init__(
         self,
         *,
-        css: collections.abc.Iterable[global___CSSStyle] | None = ...,
+        css: collections.abc.Iterable[Global___CSSStyle] | None = ...,
         display_value: builtins.str = ...,
         has_display_value: builtins.bool = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["css", b"css", "display_value", b"display_value", "has_display_value", b"has_display_value"]) -> None: ...
 
-global___CellStyle = CellStyle
+Global___CellStyle: typing_extensions.TypeAlias = CellStyle
 
 @typing.final
 class CellStyleArray(google.protobuf.message.Message):
@@ -320,15 +326,15 @@ class CellStyleArray(google.protobuf.message.Message):
 
     STYLES_FIELD_NUMBER: builtins.int
     @property
-    def styles(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___CellStyle]: ...
+    def styles(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___CellStyle]: ...
     def __init__(
         self,
         *,
-        styles: collections.abc.Iterable[global___CellStyle] | None = ...,
+        styles: collections.abc.Iterable[Global___CellStyle] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["styles", b"styles"]) -> None: ...
 
-global___CellStyleArray = CellStyleArray
+Global___CellStyleArray: typing_extensions.TypeAlias = CellStyleArray
 
 @typing.final
 class AnyArray(google.protobuf.message.Message):
@@ -362,7 +368,7 @@ class AnyArray(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["datetimes", b"datetimes", "doubles", b"doubles", "int64s", b"int64s", "strings", b"strings", "timedeltas", b"timedeltas", "type", b"type"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["strings", "doubles", "int64s", "datetimes", "timedeltas"] | None: ...
 
-global___AnyArray = AnyArray
+Global___AnyArray: typing_extensions.TypeAlias = AnyArray
 
 @typing.final
 class Table(google.protobuf.message.Message):
@@ -370,15 +376,15 @@ class Table(google.protobuf.message.Message):
 
     COLS_FIELD_NUMBER: builtins.int
     @property
-    def cols(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___AnyArray]: ...
+    def cols(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___AnyArray]: ...
     def __init__(
         self,
         *,
-        cols: collections.abc.Iterable[global___AnyArray] | None = ...,
+        cols: collections.abc.Iterable[Global___AnyArray] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["cols", b"cols"]) -> None: ...
 
-global___Table = Table
+Global___Table: typing_extensions.TypeAlias = Table
 
 @typing.final
 class TableStyle(google.protobuf.message.Message):
@@ -386,12 +392,12 @@ class TableStyle(google.protobuf.message.Message):
 
     COLS_FIELD_NUMBER: builtins.int
     @property
-    def cols(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___CellStyleArray]: ...
+    def cols(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___CellStyleArray]: ...
     def __init__(
         self,
         *,
-        cols: collections.abc.Iterable[global___CellStyleArray] | None = ...,
+        cols: collections.abc.Iterable[Global___CellStyleArray] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["cols", b"cols"]) -> None: ...
 
-global___TableStyle = TableStyle
+Global___TableStyle: typing_extensions.TypeAlias = TableStyle

@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -48,4 +54,4 @@ class HeightConfig(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["height_spec", b"height_spec", "pixel_height", b"pixel_height", "rem_height", b"rem_height", "use_content", b"use_content", "use_stretch", b"use_stretch"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["height_spec", b"height_spec"]) -> typing.Literal["use_stretch", "use_content", "pixel_height", "rem_height"] | None: ...
 
-global___HeightConfig = HeightConfig
+Global___HeightConfig: typing_extensions.TypeAlias = HeightConfig

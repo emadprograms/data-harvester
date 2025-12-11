@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -36,6 +42,7 @@ class PageLink(google.protobuf.message.Message):
     USE_CONTAINER_WIDTH_FIELD_NUMBER: builtins.int
     DISABLED_FIELD_NUMBER: builtins.int
     EXTERNAL_FIELD_NUMBER: builtins.int
+    QUERY_STRING_FIELD_NUMBER: builtins.int
     page: builtins.str
     label: builtins.str
     icon: builtins.str
@@ -44,6 +51,7 @@ class PageLink(google.protobuf.message.Message):
     use_container_width: builtins.bool
     disabled: builtins.bool
     external: builtins.bool
+    query_string: builtins.str
     def __init__(
         self,
         *,
@@ -55,9 +63,10 @@ class PageLink(google.protobuf.message.Message):
         use_container_width: builtins.bool | None = ...,
         disabled: builtins.bool = ...,
         external: builtins.bool = ...,
+        query_string: builtins.str = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["_use_container_width", b"_use_container_width", "use_container_width", b"use_container_width"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["_use_container_width", b"_use_container_width", "disabled", b"disabled", "external", b"external", "help", b"help", "icon", b"icon", "label", b"label", "page", b"page", "page_script_hash", b"page_script_hash", "use_container_width", b"use_container_width"]) -> None: ...
+    def ClearField(self, field_name: typing.Literal["_use_container_width", b"_use_container_width", "disabled", b"disabled", "external", b"external", "help", b"help", "icon", b"icon", "label", b"label", "page", b"page", "page_script_hash", b"page_script_hash", "query_string", b"query_string", "use_container_width", b"use_container_width"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["_use_container_width", b"_use_container_width"]) -> typing.Literal["use_container_width"] | None: ...
 
-global___PageLink = PageLink
+Global___PageLink: typing_extensions.TypeAlias = PageLink

@@ -78,7 +78,7 @@ class Alert(google.protobuf.message.Message):
     WIDTH_CONFIG_FIELD_NUMBER: builtins.int
     body: builtins.str
     """Content to display."""
-    format: global___Alert.Format.ValueType
+    format: Global___Alert.Format.ValueType
     icon: builtins.str
     @property
     def width_config(self) -> streamlit.proto.WidthConfig_pb2.WidthConfig:
@@ -88,11 +88,11 @@ class Alert(google.protobuf.message.Message):
         self,
         *,
         body: builtins.str = ...,
-        format: global___Alert.Format.ValueType = ...,
+        format: Global___Alert.Format.ValueType = ...,
         icon: builtins.str = ...,
         width_config: streamlit.proto.WidthConfig_pb2.WidthConfig | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["width_config", b"width_config"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["body", b"body", "format", b"format", "icon", b"icon", "width_config", b"width_config"]) -> None: ...
 
-global___Alert = Alert
+Global___Alert: typing_extensions.TypeAlias = Alert

@@ -22,7 +22,13 @@ import collections.abc
 import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -42,7 +48,7 @@ class StringArray(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["data", b"data"]) -> None: ...
 
-global___StringArray = StringArray
+Global___StringArray: typing_extensions.TypeAlias = StringArray
 
 @typing.final
 class DoubleArray(google.protobuf.message.Message):
@@ -58,7 +64,7 @@ class DoubleArray(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["data", b"data"]) -> None: ...
 
-global___DoubleArray = DoubleArray
+Global___DoubleArray: typing_extensions.TypeAlias = DoubleArray
 
 @typing.final
 class Int32Array(google.protobuf.message.Message):
@@ -74,7 +80,7 @@ class Int32Array(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["data", b"data"]) -> None: ...
 
-global___Int32Array = Int32Array
+Global___Int32Array: typing_extensions.TypeAlias = Int32Array
 
 @typing.final
 class Int64Array(google.protobuf.message.Message):
@@ -90,7 +96,7 @@ class Int64Array(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["data", b"data"]) -> None: ...
 
-global___Int64Array = Int64Array
+Global___Int64Array: typing_extensions.TypeAlias = Int64Array
 
 @typing.final
 class SInt64Array(google.protobuf.message.Message):
@@ -106,7 +112,7 @@ class SInt64Array(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["data", b"data"]) -> None: ...
 
-global___SInt64Array = SInt64Array
+Global___SInt64Array: typing_extensions.TypeAlias = SInt64Array
 
 @typing.final
 class UInt32Array(google.protobuf.message.Message):
@@ -122,7 +128,7 @@ class UInt32Array(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["data", b"data"]) -> None: ...
 
-global___UInt32Array = UInt32Array
+Global___UInt32Array: typing_extensions.TypeAlias = UInt32Array
 
 @typing.final
 class StringTriggerValue(google.protobuf.message.Message):
@@ -143,7 +149,7 @@ class StringTriggerValue(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["_data", b"_data", "data", b"data"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["_data", b"_data"]) -> typing.Literal["data"] | None: ...
 
-global___StringTriggerValue = StringTriggerValue
+Global___StringTriggerValue: typing_extensions.TypeAlias = StringTriggerValue
 
 @typing.final
 class FileURLsRequest(google.protobuf.message.Message):
@@ -171,7 +177,7 @@ class FileURLsRequest(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["file_names", b"file_names", "request_id", b"request_id", "session_id", b"session_id"]) -> None: ...
 
-global___FileURLsRequest = FileURLsRequest
+Global___FileURLsRequest: typing_extensions.TypeAlias = FileURLsRequest
 
 @typing.final
 class FileURLs(google.protobuf.message.Message):
@@ -192,7 +198,7 @@ class FileURLs(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["delete_url", b"delete_url", "file_id", b"file_id", "upload_url", b"upload_url"]) -> None: ...
 
-global___FileURLs = FileURLs
+Global___FileURLs: typing_extensions.TypeAlias = FileURLs
 
 @typing.final
 class FileURLsResponse(google.protobuf.message.Message):
@@ -204,17 +210,17 @@ class FileURLsResponse(google.protobuf.message.Message):
     response_id: builtins.str
     error_msg: builtins.str
     @property
-    def file_urls(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___FileURLs]: ...
+    def file_urls(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___FileURLs]: ...
     def __init__(
         self,
         *,
         response_id: builtins.str = ...,
-        file_urls: collections.abc.Iterable[global___FileURLs] | None = ...,
+        file_urls: collections.abc.Iterable[Global___FileURLs] | None = ...,
         error_msg: builtins.str = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["error_msg", b"error_msg", "file_urls", b"file_urls", "response_id", b"response_id"]) -> None: ...
 
-global___FileURLsResponse = FileURLsResponse
+Global___FileURLsResponse: typing_extensions.TypeAlias = FileURLsResponse
 
 @typing.final
 class UploadedFileInfo(google.protobuf.message.Message):
@@ -235,7 +241,7 @@ class UploadedFileInfo(google.protobuf.message.Message):
     file_id: builtins.str
     """ID that can be used to retrieve a file."""
     @property
-    def file_urls(self) -> global___FileURLs:
+    def file_urls(self) -> Global___FileURLs:
         """Metadata containing information about file_urls."""
 
     def __init__(
@@ -245,12 +251,12 @@ class UploadedFileInfo(google.protobuf.message.Message):
         name: builtins.str = ...,
         size: builtins.int = ...,
         file_id: builtins.str = ...,
-        file_urls: global___FileURLs | None = ...,
+        file_urls: Global___FileURLs | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["file_urls", b"file_urls"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["file_id", b"file_id", "file_urls", b"file_urls", "id", b"id", "name", b"name", "size", b"size"]) -> None: ...
 
-global___UploadedFileInfo = UploadedFileInfo
+Global___UploadedFileInfo: typing_extensions.TypeAlias = UploadedFileInfo
 
 @typing.final
 class FileUploaderState(google.protobuf.message.Message):
@@ -261,16 +267,16 @@ class FileUploaderState(google.protobuf.message.Message):
     max_file_id: builtins.int
     """DEPRECATED"""
     @property
-    def uploaded_file_info(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___UploadedFileInfo]: ...
+    def uploaded_file_info(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___UploadedFileInfo]: ...
     def __init__(
         self,
         *,
         max_file_id: builtins.int = ...,
-        uploaded_file_info: collections.abc.Iterable[global___UploadedFileInfo] | None = ...,
+        uploaded_file_info: collections.abc.Iterable[Global___UploadedFileInfo] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["max_file_id", b"max_file_id", "uploaded_file_info", b"uploaded_file_info"]) -> None: ...
 
-global___FileUploaderState = FileUploaderState
+Global___FileUploaderState: typing_extensions.TypeAlias = FileUploaderState
 
 @typing.final
 class ChatInputValue(google.protobuf.message.Message):
@@ -278,20 +284,26 @@ class ChatInputValue(google.protobuf.message.Message):
 
     DATA_FIELD_NUMBER: builtins.int
     FILE_UPLOADER_STATE_FIELD_NUMBER: builtins.int
+    AUDIO_FILE_INFO_FIELD_NUMBER: builtins.int
     data: builtins.str
     @property
-    def file_uploader_state(self) -> global___FileUploaderState: ...
+    def file_uploader_state(self) -> Global___FileUploaderState: ...
+    @property
+    def audio_file_info(self) -> Global___UploadedFileInfo: ...
     def __init__(
         self,
         *,
         data: builtins.str | None = ...,
-        file_uploader_state: global___FileUploaderState | None = ...,
+        file_uploader_state: Global___FileUploaderState | None = ...,
+        audio_file_info: Global___UploadedFileInfo | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["_data", b"_data", "_file_uploader_state", b"_file_uploader_state", "data", b"data", "file_uploader_state", b"file_uploader_state"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["_data", b"_data", "_file_uploader_state", b"_file_uploader_state", "data", b"data", "file_uploader_state", b"file_uploader_state"]) -> None: ...
+    def HasField(self, field_name: typing.Literal["_audio_file_info", b"_audio_file_info", "_data", b"_data", "_file_uploader_state", b"_file_uploader_state", "audio_file_info", b"audio_file_info", "data", b"data", "file_uploader_state", b"file_uploader_state"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing.Literal["_audio_file_info", b"_audio_file_info", "_data", b"_data", "_file_uploader_state", b"_file_uploader_state", "audio_file_info", b"audio_file_info", "data", b"data", "file_uploader_state", b"file_uploader_state"]) -> None: ...
+    @typing.overload
+    def WhichOneof(self, oneof_group: typing.Literal["_audio_file_info", b"_audio_file_info"]) -> typing.Literal["audio_file_info"] | None: ...
     @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["_data", b"_data"]) -> typing.Literal["data"] | None: ...
     @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["_file_uploader_state", b"_file_uploader_state"]) -> typing.Literal["file_uploader_state"] | None: ...
 
-global___ChatInputValue = ChatInputValue
+Global___ChatInputValue: typing_extensions.TypeAlias = ChatInputValue

@@ -1,4 +1,4 @@
-#!/Users/tradestation/Documents/GitHub/data-harvester/.venv/bin/python3.12
+#!/Users/emadarshadalam/Documents/GitHub/data-harvester/.venv/bin/python3.12
 import sys
 from websockets.cli import main
 if __name__ == '__main__':

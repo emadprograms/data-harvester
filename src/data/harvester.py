@@ -63,6 +63,43 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
             update_ui(ticker, "Status", "🔄 Fetching (Binance)...")
             df_crypto = fetch_binance_daily(ticker, target_date)
             
+            # --- FALLBACK: If Binance fails, try Yahoo Finance ---
+            if df_crypto.empty:
+                update_ui(ticker, "Status", "⚠️ Binance Failed. Trying Yahoo...")
+                
+                # Heuristic Mapper: Convert Binance Ticker to Yahoo Ticker
+                # Forex: EURUSDT -> EURUSD=X (if starts with standard forex)
+                # Crypto: BTCUSDT -> BTC-USD
+                
+                t_base = ticker.replace("USDT", "")
+                # Common forex currencies that might be paired with USDT in user's mind but exist as =X on Yahoo
+                forex_majors = ["EUR", "GBP", "AUD", "NZD", "CHF", "CAD", "JPY"]
+                
+                yahoo_fallback_ticker = f"{t_base}-USD" # Default to Crypto syntax (e.g. BTC-USD)
+                if t_base in forex_majors:
+                    yahoo_fallback_ticker = f"{t_base}USD=X"
+                
+                logger.log(f"⚠️ Binance failed for {ticker}. Attempting Yahoo fallback with {yahoo_fallback_ticker}...")
+                
+                # Fetch full day from Yahoo (this function already handles timezone logic mostly, but returns UTC or NY)
+                # fetch_yahoo_market_data returns a dataframe with index as Datetime (localized)
+                raw_yahoo = fetch_yahoo_market_data(yahoo_fallback_ticker, target_date, logger)
+                
+                if not raw_yahoo.empty:
+                    # Normalize using Yahoo Normalizer
+                    # Note: normalize_yahoo_df logic expects columns like 'Open', 'High' etc. 
+                    # fetch_yahoo_market_data returns columns 'Open', 'High'... 
+                    # We use "REG" as a placeholder, slicing updates it later.
+                    
+                    df_crypto = normalize_yahoo_df(raw_yahoo, ticker, "REG")
+                    
+                    # Fix timezone if needed (normalize_yahoo_df usually converts to UTC)
+                    # The Binance lane expects US/Eastern for slicing.
+                    if df_crypto['timestamp'].dt.tz is None:
+                        df_crypto['timestamp'] = df_crypto['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
+                    else:
+                        df_crypto['timestamp'] = df_crypto['timestamp'].dt.tz_convert(US_EASTERN)
+
             if not df_crypto.empty:
                 # --- 24h Handling (Green Board) ---
                 if df_crypto['timestamp'].dt.tz is None:
@@ -79,9 +116,9 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                 c_reg = df_crypto[mask_reg].copy(); c_reg['session'] = 'REG'
                 c_post = df_crypto[mask_post].copy(); c_post['session'] = 'POST'
 
-                update_ui(ticker, "Pre-Market", f"✅ Binance ({len(c_pre)})")
-                update_ui(ticker, "Regular Session", f"✅ Binance ({len(c_reg)})")
-                update_ui(ticker, "Post-Market", f"✅ Binance ({len(c_post)})")
+                update_ui(ticker, "Pre-Market", f"✅ Bin/Yho ({len(c_pre)})")
+                update_ui(ticker, "Regular Session", f"✅ Bin/Yho ({len(c_reg)})")
+                update_ui(ticker, "Post-Market", f"✅ Bin/Yho ({len(c_post)})")
                 
                 total_rows = len(df_crypto)
                 update_ui(ticker, "Total Rows", total_rows)
@@ -91,11 +128,11 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                 all_data.append(final_crypto)
                 
                 report_cards.append({
-                    "Ticker": ticker, "Mode": "Binance", 
+                    "Ticker": ticker, "Mode": "Binance/Yahoo", 
                     "Pre": len(c_pre), "Reg": len(c_reg), "Post": len(c_post), "Total": total_rows, "Status": "✅ Complete"
                 })
             else:
-                update_ui(ticker, "Status", "❌ Failed (Binance)")
+                update_ui(ticker, "Status", "❌ Failed (Binance & Yahoo)")
                 report_cards.append({
                     "Ticker": ticker, "Mode": "Binance", "Pre":0, "Reg":0, "Post":0, "Total":0, "Status": "❌ Failed"
                 })

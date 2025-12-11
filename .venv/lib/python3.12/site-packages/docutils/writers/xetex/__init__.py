@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # :Author: Günter Milde <milde@users.sf.net>
-# :Revision: $Revision: 9293 $
-# :Date: $Date: 2022-12-01 22:13:54 +0100 (Do, 01. Dez 2022) $
+# :Revision: $Revision: 10196 $
+# :Date: $Date: 2025-08-07 08:35:37 +0200 (Do, 07. Aug 2025) $
 # :Copyright: © 2010 Günter Milde.
 # :License: Released under the terms of the `2-Clause BSD license`_, in short:
 #
@@ -20,10 +20,13 @@ suited for processing with the Unicode-aware TeX engines
 LuaTeX and XeTeX.
 """
 
+from __future__ import annotations
+
 __docformat__ = 'reStructuredText'
 
 from docutils import frontend
 from docutils.writers import latex2e
+from docutils.writers.latex2e import PreambleCmds
 
 
 class Writer(latex2e.Writer):
@@ -54,10 +57,11 @@ class Writer(latex2e.Writer):
         latex_preamble=('Customization by LaTeX code in the preamble. '
                         'Default: select "Linux Libertine" fonts.',
                         ['--latex-preamble'],
-                        {'default': default_preamble}),
+                        {'metavar': '<preamble>',
+                         'default': default_preamble}),
         )
 
-    def __init__(self):
+    def __init__(self) -> None:
         latex2e.Writer.__init__(self)
         self.settings_defaults.update({'fontencoding': ''})  # use default (TU)
         self.translator_class = XeLaTeXTranslator
@@ -108,7 +112,9 @@ class Babel(latex2e.Babel):
                 ):
         del language_codes[key.lower()]
 
-    def __init__(self, language_code, reporter):
+    warn_msg = 'Language "%s" not supported by LaTeX (polyglossia)'
+
+    def __init__(self, language_code, reporter) -> None:
         self.language_code = language_code
         self.reporter = reporter
         self.language = self.language_name(language_code)
@@ -137,7 +143,7 @@ class XeLaTeXTranslator(latex2e.LaTeXTranslator):
     notes on and examples of safe subclassing.
     """
 
-    def __init__(self, document):
+    def __init__(self, document) -> None:
         self.is_xetex = True  # typeset with XeTeX or LuaTeX engine
         latex2e.LaTeXTranslator.__init__(self, document, Babel)
         if self.latex_encoding == 'utf8':
@@ -145,3 +151,18 @@ class XeLaTeXTranslator(latex2e.LaTeXTranslator):
         else:
             self.requirements['_inputenc'] = (r'\XeTeXinputencoding %s '
                                               % self.latex_encoding)
+
+    def to_latex_length(self, length_str: str, node=None) -> str:
+        """Convert "measure" `length_str` to LaTeX length specification.
+
+        XeTeX does not know the length unit px.
+        Use ``\\pdfpxdimen``, the macro holding the value of 1 px in pdfTeX.
+        This way, configuring works the same for pdftex and xetex.
+        """
+        length_str = super().to_latex_length(length_str, node)
+        if length_str.endswith('px'):
+            if not self.fallback_stylesheet:
+                self.fallbacks['_providelength'] = PreambleCmds.providelength
+            self.fallbacks['px'] = '\n\\DUprovidelength{\\pdfpxdimen}{1bp}'
+            return length_str.replace('px', '\\pdfpxdimen')
+        return length_str

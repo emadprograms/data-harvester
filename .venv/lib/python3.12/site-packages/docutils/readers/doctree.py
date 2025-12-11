@@ -1,8 +1,12 @@
-# $Id: doctree.py 4564 2006-05-21 20:44:42Z wiemann $
+# $Id: doctree.py 10136 2025-05-20 15:48:27Z milde $
 # Author: Martin Blais <blais@furius.ca>
 # Copyright: This module has been placed in the public domain.
 
 """Reader for existing document trees."""
+
+from __future__ import annotations
+
+__docformat__ = 'reStructuredText'
 
 from docutils import readers, utils, transforms
 
@@ -29,7 +33,7 @@ class Reader(readers.ReReader):
     config_section = 'doctree reader'
     config_section_dependencies = ('readers',)
 
-    def parse(self):
+    def parse(self) -> None:
         """
         No parsing to do; refurbish the document tree instead.
         Overrides the inherited method.

@@ -1,4 +1,4 @@
-# $Id: ka.py 9444 2023-08-23 12:02:41Z grubert $
+# $Id: ka.py 9795 2024-07-31 08:35:47Z aa-turner $
 # Author: Temuri Doghonadze <temuri.doghonadze@gmail.com>
 # Copyright: This module has been placed in the public domain.
 
@@ -43,7 +43,6 @@ directives = {
     'როლი': 'role',
     'ნაგულისხმევი-როლი': 'default-role',
     'სათაური': 'title',
-    'განყ-ნომერი': 'sectnum',
     'განყ-ნომერი': 'sectnum',
     'საფრთხე': 'danger',
     'ფრთხილად': 'caution',

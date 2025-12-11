@@ -1,4 +1,4 @@
-# :Id: $Id: tex2mathml_extern.py 9536 2024-02-01 13:04:22Z milde $
+# :Id: $Id: tex2mathml_extern.py 10136 2025-05-20 15:48:27Z milde $
 # :Copyright: © 2015 Günter Milde.
 # :License: Released under the terms of the `2-Clause BSD license`__, in short:
 #
@@ -14,6 +14,10 @@
 This module is provisional:
 the API is not settled and may change with any minor Docutils version.
 """
+
+from __future__ import annotations
+
+__docformat__ = 'reStructuredText'
 
 import subprocess
 
@@ -45,7 +49,7 @@ def _check_result(result, details=[]):
         raise MathError(msg, details=details)
 
 
-def blahtexml(math_code, as_block=False):
+def blahtexml(math_code, as_block=False) -> str:
     """Convert LaTeX math code to MathML with blahtexml__.
 
     __ http://gva.noekeon.org/blahtexml/
@@ -103,14 +107,13 @@ def latexml(math_code, as_block=False):
              '--',
              ]
     math_code = document_template % wrap_math_code(math_code, as_block)
+    error_tags = ('Error:', 'Warning:', 'Fatal:')
 
     result1 = subprocess.run(args1, input=math_code,
                              capture_output=True, text=True)
     if result1.stderr:
         result1.stderr = '\n'.join(line for line in result1.stderr.splitlines()
-                                   if line.startswith('Error:')
-                                   or line.startswith('Warning:')
-                                   or line.startswith('Fatal:'))
+                                   if line.startswith(error_tags))
     _check_result(result1)
 
     args2 = ['latexmlpost',
@@ -143,9 +146,7 @@ def latexml(math_code, as_block=False):
     else:
         _msg_source = result2.stderr  # just in case
     result2.stderr = '\n'.join(line for line in _msg_source.splitlines()
-                               if line.startswith('Error:')
-                               or line.startswith('Warning:')
-                               or line.startswith('Fatal:'))
+                               if line.startswith(error_tags))
     _check_result(result2)
     return result2.stdout
 
@@ -174,10 +175,11 @@ def pandoc(math_code, as_block=False):
     details = []
     if result.stderr:
         lines = result.stderr.splitlines()
-        details.append(nodes.paragraph('', lines[0]))
-        details.append(nodes.literal_block('', '\n'.join(lines[1:3])))
-        details.append(nodes.paragraph('', '\n'.join(lines[3:]),
-                                       classes=['pre-wrap']))
+        details += [nodes.paragraph('', lines[0]),
+                    nodes.literal_block('', '\n'.join(lines[1:3])),
+                    nodes.paragraph('', '\n'.join(lines[3:]),
+                                    classes=['pre-wrap']),
+                    ]
     _check_result(result, details=details)
     return result.stdout
 

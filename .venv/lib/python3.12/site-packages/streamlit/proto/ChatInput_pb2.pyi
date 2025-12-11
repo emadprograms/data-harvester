@@ -78,6 +78,8 @@ class ChatInput(google.protobuf.message.Message):
     ACCEPT_FILE_FIELD_NUMBER: builtins.int
     FILE_TYPE_FIELD_NUMBER: builtins.int
     MAX_UPLOAD_SIZE_MB_FIELD_NUMBER: builtins.int
+    ACCEPT_AUDIO_FIELD_NUMBER: builtins.int
+    AUDIO_SAMPLE_RATE_FIELD_NUMBER: builtins.int
     id: builtins.str
     placeholder: builtins.str
     max_chars: builtins.int
@@ -85,10 +87,16 @@ class ChatInput(google.protobuf.message.Message):
     value: builtins.str
     set_value: builtins.bool
     default: builtins.str
-    position: global___ChatInput.Position.ValueType
-    accept_file: global___ChatInput.AcceptFile.ValueType
+    position: Global___ChatInput.Position.ValueType
+    accept_file: Global___ChatInput.AcceptFile.ValueType
     max_upload_size_mb: builtins.int
     """Max file size allowed by server config"""
+    accept_audio: builtins.bool
+    """Whether to show audio recording button"""
+    audio_sample_rate: builtins.int
+    """Sample rate for audio recording in Hz (e.g., 16000, 48000)
+    If not set, uses browser default
+    """
     @property
     def file_type(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
         """Supported file types: For example: ["png","jpg","img"]"""
@@ -103,11 +111,15 @@ class ChatInput(google.protobuf.message.Message):
         value: builtins.str = ...,
         set_value: builtins.bool = ...,
         default: builtins.str = ...,
-        position: global___ChatInput.Position.ValueType = ...,
-        accept_file: global___ChatInput.AcceptFile.ValueType = ...,
+        position: Global___ChatInput.Position.ValueType = ...,
+        accept_file: Global___ChatInput.AcceptFile.ValueType = ...,
         file_type: collections.abc.Iterable[builtins.str] | None = ...,
         max_upload_size_mb: builtins.int = ...,
+        accept_audio: builtins.bool = ...,
+        audio_sample_rate: builtins.int | None = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["accept_file", b"accept_file", "default", b"default", "disabled", b"disabled", "file_type", b"file_type", "id", b"id", "max_chars", b"max_chars", "max_upload_size_mb", b"max_upload_size_mb", "placeholder", b"placeholder", "position", b"position", "set_value", b"set_value", "value", b"value"]) -> None: ...
+    def HasField(self, field_name: typing.Literal["_audio_sample_rate", b"_audio_sample_rate", "audio_sample_rate", b"audio_sample_rate"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing.Literal["_audio_sample_rate", b"_audio_sample_rate", "accept_audio", b"accept_audio", "accept_file", b"accept_file", "audio_sample_rate", b"audio_sample_rate", "default", b"default", "disabled", b"disabled", "file_type", b"file_type", "id", b"id", "max_chars", b"max_chars", "max_upload_size_mb", b"max_upload_size_mb", "placeholder", b"placeholder", "position", b"position", "set_value", b"set_value", "value", b"value"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing.Literal["_audio_sample_rate", b"_audio_sample_rate"]) -> typing.Literal["audio_sample_rate"] | None: ...
 
-global___ChatInput = ChatInput
+Global___ChatInput: typing_extensions.TypeAlias = ChatInput

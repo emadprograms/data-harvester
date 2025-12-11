@@ -57,12 +57,12 @@ class LabelVisibilityMessage(google.protobuf.message.Message):
     COLLAPSED: LabelVisibilityMessage.LabelVisibilityOptions.ValueType  # 2
 
     VALUE_FIELD_NUMBER: builtins.int
-    value: global___LabelVisibilityMessage.LabelVisibilityOptions.ValueType
+    value: Global___LabelVisibilityMessage.LabelVisibilityOptions.ValueType
     def __init__(
         self,
         *,
-        value: global___LabelVisibilityMessage.LabelVisibilityOptions.ValueType = ...,
+        value: Global___LabelVisibilityMessage.LabelVisibilityOptions.ValueType = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["value", b"value"]) -> None: ...
 
-global___LabelVisibilityMessage = LabelVisibilityMessage
+Global___LabelVisibilityMessage: typing_extensions.TypeAlias = LabelVisibilityMessage

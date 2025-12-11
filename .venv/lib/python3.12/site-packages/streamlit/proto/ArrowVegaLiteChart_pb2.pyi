@@ -24,7 +24,13 @@ import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.ArrowNamedDataSet_pb2
 import streamlit.proto.Arrow_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -81,4 +87,4 @@ class ArrowVegaLiteChart(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["data", b"data"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["data", b"data", "datasets", b"datasets", "form_id", b"form_id", "id", b"id", "selection_mode", b"selection_mode", "spec", b"spec", "theme", b"theme", "use_container_width", b"use_container_width"]) -> None: ...
 
-global___ArrowVegaLiteChart = ArrowVegaLiteChart
+Global___ArrowVegaLiteChart: typing_extensions.TypeAlias = ArrowVegaLiteChart

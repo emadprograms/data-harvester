@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -28,6 +34,7 @@ DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 class LinkButton(google.protobuf.message.Message):
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
+    ID_FIELD_NUMBER: builtins.int
     LABEL_FIELD_NUMBER: builtins.int
     HELP_FIELD_NUMBER: builtins.int
     URL_FIELD_NUMBER: builtins.int
@@ -35,6 +42,9 @@ class LinkButton(google.protobuf.message.Message):
     USE_CONTAINER_WIDTH_FIELD_NUMBER: builtins.int
     TYPE_FIELD_NUMBER: builtins.int
     ICON_FIELD_NUMBER: builtins.int
+    SHORTCUT_FIELD_NUMBER: builtins.int
+    id: builtins.str
+    """The ID is only needed if a shortcut is provided."""
     label: builtins.str
     help: builtins.str
     url: builtins.str
@@ -42,9 +52,11 @@ class LinkButton(google.protobuf.message.Message):
     use_container_width: builtins.bool
     type: builtins.str
     icon: builtins.str
+    shortcut: builtins.str
     def __init__(
         self,
         *,
+        id: builtins.str = ...,
         label: builtins.str = ...,
         help: builtins.str = ...,
         url: builtins.str = ...,
@@ -52,7 +64,8 @@ class LinkButton(google.protobuf.message.Message):
         use_container_width: builtins.bool = ...,
         type: builtins.str = ...,
         icon: builtins.str = ...,
+        shortcut: builtins.str = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["disabled", b"disabled", "help", b"help", "icon", b"icon", "label", b"label", "type", b"type", "url", b"url", "use_container_width", b"use_container_width"]) -> None: ...
+    def ClearField(self, field_name: typing.Literal["disabled", b"disabled", "help", b"help", "icon", b"icon", "id", b"id", "label", b"label", "shortcut", b"shortcut", "type", b"type", "url", b"url", "use_container_width", b"use_container_width"]) -> None: ...
 
-global___LinkButton = LinkButton
+Global___LinkButton: typing_extensions.TypeAlias = LinkButton

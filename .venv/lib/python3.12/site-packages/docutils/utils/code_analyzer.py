@@ -1,10 +1,13 @@
 # :Author: Georg Brandl; Lea Wiemann; Günter Milde
-# :Date: $Date: 2022-11-16 15:01:31 +0100 (Mi, 16. Nov 2022) $
+# :Date: $Date: 2025-05-20 17:48:27 +0200 (Di, 20. Mai 2025) $
 # :Copyright: This module has been placed in the public domain.
 
 """Lexical analysis of formal languages (i.e. code) using Pygments."""
 
-from docutils import ApplicationError
+from __future__ import annotations
+
+__docformat__ = 'reStructuredText'
+
 try:
     import pygments
     from pygments.lexers import get_lexer_by_name
@@ -12,6 +15,8 @@ try:
     with_pygments = True
 except ImportError:
     with_pygments = False
+
+from docutils import ApplicationError
 
 # Filter the following token types from the list of class arguments:
 unstyled_tokens = ['token',  # Token (base token type)
@@ -44,7 +49,7 @@ class Lexer:
       'none':  skip lexical analysis.
     """
 
-    def __init__(self, code, language, tokennames='short'):
+    def __init__(self, code, language, tokennames='short') -> None:
         """
         Set up a lexical analyzer for `code` in `language`.
         """
@@ -84,8 +89,7 @@ class Lexer:
             else:
                 yield lasttype, lastval
                 (lasttype, lastval) = (ttype, value)
-        if lastval.endswith('\n'):
-            lastval = lastval[:-1]
+        lastval = lastval.removesuffix('\n')
         if lastval:
             yield lasttype, lastval
 
@@ -118,11 +122,11 @@ class NumberLines:
     ``(['ln'], '<the line number>')`` token added for every code line.
     Multi-line tokens are split."""
 
-    def __init__(self, tokens, startline, endline):
+    def __init__(self, tokens, startline, endline) -> None:
         self.tokens = tokens
         self.startline = startline
         # pad linenumbers, e.g. endline == 100 -> fmt_str = '%3d '
-        self.fmt_str = '%%%dd ' % len(str(endline))
+        self.fmt_str = f'%{len(str(endline))}d '
 
     def __iter__(self):
         lineno = self.startline

@@ -1,7 +1,7 @@
 /* Minimal style sheet for the HTML output of Docutils.                    */
 /*                                                                         */
 /* :Author: Günter Milde, based on html4css1.css by David Goodger          */
-/* :Id: $Id: minimal.css 9545 2024-02-17 10:37:56Z milde $                                                               */
+/* :Id: $Id: minimal.css 10018 2025-03-06 16:19:15Z milde $                                                               */
 /* :Copyright: © 2015, 2021 Günter Milde.                                  */
 /* :License: Released under the terms of the `2-Clause BSD license`_,      */
 /*    in short:                                                            */
@@ -69,10 +69,9 @@ span.problematic {
 /* Lists */
 
 /* compact and simple lists: no margin between items */
-.simple  li, .simple  ul, .simple  ol,
-.compact li, .compact ul, .compact ol,
-.simple  > li p, dl.simple  > dd,
-.compact > li p, dl.compact > dd {
+.simple  li, .simple  ul, .simple  ol, .simple  > li p,
+.compact li, .compact ul, .compact ol, .compact > li p,
+dl.simple  > dd, dl.compact > dd, dl.docinfo > dd {
   margin-top: 0;
   margin-bottom: 0;
 }
@@ -141,7 +140,7 @@ dl.option-list > dd > *:first-child
 /* Bibliographic Fields (docinfo) */
 dl.docinfo pre.address {
   font: inherit;
-  margin: 0.5em 0;
+  margin: 0;
 }
 dl.docinfo > dd.authors > p { margin: 0; }
 
@@ -235,10 +234,11 @@ table.align-left, table.align-center, table.align-right {
 div.line-block { display: block; }
 div.line-block div.line-block, pre { margin-left: 2em; }
 
-/* Code line numbers: dropped when copying text from the page */
+/* Code line numbers: don't copy with drag-and-drop */
 pre.code .ln { display: none; }
 pre.code code:before {
-  content: attr(data-lineno); /* …, none) fallback not supported by any browser */
+  content: attr(data-lineno);
+  font-size: small;
   color: gray;
 }
 
@@ -290,4 +290,9 @@ img, svg, header, footer, main, aside, nav, section, figure, video, details {
 }
 svg { width: auto; height: auto; }  /* enable scaling of SVG images */
 /* inline images */
-p img, p svg, p video { display: inline; }
+
+p img, p svg, p video,
+h1 img, h2 img, h3 img, h4 img, h5 img, h6 img,
+h1 svg, h2 svg, h3 svg, h4 svg, h5 svg, h6 svg {
+  display: inline;
+}

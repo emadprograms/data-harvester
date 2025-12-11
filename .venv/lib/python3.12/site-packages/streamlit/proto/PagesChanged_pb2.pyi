@@ -23,7 +23,13 @@ import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.AppPage_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -45,4 +51,4 @@ class PagesChanged(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["app_pages", b"app_pages"]) -> None: ...
 
-global___PagesChanged = PagesChanged
+Global___PagesChanged: typing_extensions.TypeAlias = PagesChanged

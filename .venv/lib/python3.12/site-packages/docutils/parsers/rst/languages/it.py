@@ -1,4 +1,4 @@
-# $Id: it.py 9417 2023-06-27 20:04:54Z milde $
+# $Id: it.py 9782 2024-07-29 12:37:02Z milde $
 # Authors: Nicola Larosa <docutils@tekNico.net>;
 #          Lele Gaifax <lele@seldati.it>
 # Copyright: This module has been placed in the public domain.
@@ -28,7 +28,6 @@ directives = {
       'consiglio': 'tip',
       'avvertenza': 'warning',
       'avviso': 'admonition',
-      'ammonizione': 'admonition',  # sic! kept for backards compatibility
       'riquadro': 'sidebar',
       'argomento': 'topic',
       'blocco-di-righe': 'line-block',

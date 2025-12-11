@@ -23,7 +23,13 @@ import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.PageProfile_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -133,7 +139,7 @@ class MetricsEvent(google.protobuf.message.Message):
     @property
     def attributions(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]: ...
     @property
-    def browser_info(self) -> global___BrowserInfo: ...
+    def browser_info(self) -> Global___BrowserInfo: ...
     def __init__(
         self,
         *,
@@ -180,12 +186,12 @@ class MetricsEvent(google.protobuf.message.Message):
         page_script_hash: builtins.str = ...,
         active_theme: builtins.str = ...,
         total_load_time: builtins.int = ...,
-        browser_info: global___BrowserInfo | None = ...,
+        browser_info: Global___BrowserInfo | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["browser_info", b"browser_info"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["active_theme", b"active_theme", "anonymous_id", b"anonymous_id", "app_id", b"app_id", "attributions", b"attributions", "branch", b"branch", "browser_info", b"browser_info", "commands", b"commands", "config", b"config", "context_locale", b"context_locale", "context_page_path", b"context_page_path", "context_page_referrer", b"context_page_referrer", "context_page_search", b"context_page_search", "context_page_title", b"context_page_title", "context_page_url", b"context_page_url", "context_user_agent", b"context_user_agent", "creator_id", b"creator_id", "dev", b"dev", "event", b"event", "exec_time", b"exec_time", "has_display", b"has_display", "headless", b"headless", "hosted_at", b"hosted_at", "is_fragment_run", b"is_fragment_run", "is_hello", b"is_hello", "is_webdriver", b"is_webdriver", "label", b"label", "machine_id_v3", b"machine_id_v3", "machine_id_v4", b"machine_id_v4", "main_module", b"main_module", "numPages", b"numPages", "os", b"os", "owner", b"owner", "page_script_hash", b"page_script_hash", "prep_time", b"prep_time", "python_version", b"python_version", "repo", b"repo", "report_hash", b"report_hash", "server_os", b"server_os", "session_id", b"session_id", "source", b"source", "streamlit_version", b"streamlit_version", "timezone", b"timezone", "total_load_time", b"total_load_time", "uncaught_exception", b"uncaught_exception"]) -> None: ...
 
-global___MetricsEvent = MetricsEvent
+Global___MetricsEvent: typing_extensions.TypeAlias = MetricsEvent
 
 @typing.final
 class BrowserInfo(google.protobuf.message.Message):
@@ -209,4 +215,4 @@ class BrowserInfo(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["browser_name", b"browser_name", "browser_version", b"browser_version", "device_type", b"device_type", "os", b"os"]) -> None: ...
 
-global___BrowserInfo = BrowserInfo
+Global___BrowserInfo: typing_extensions.TypeAlias = BrowserInfo

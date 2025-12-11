@@ -22,7 +22,13 @@ import collections.abc
 import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -46,7 +52,7 @@ class DocString(google.protobuf.message.Message):
     value: builtins.str
     """A string representation of this object's value."""
     @property
-    def members(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Member]:
+    def members(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___Member]:
         """List of this object's methods and member variables."""
 
     def __init__(
@@ -56,11 +62,11 @@ class DocString(google.protobuf.message.Message):
         type: builtins.str = ...,
         name: builtins.str = ...,
         value: builtins.str = ...,
-        members: collections.abc.Iterable[global___Member] | None = ...,
+        members: collections.abc.Iterable[Global___Member] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["doc_string", b"doc_string", "members", b"members", "name", b"name", "type", b"type", "value", b"value"]) -> None: ...
 
-global___DocString = DocString
+Global___DocString: typing_extensions.TypeAlias = DocString
 
 @typing.final
 class Member(google.protobuf.message.Message):
@@ -90,4 +96,4 @@ class Member(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["contents", b"contents", "doc_string", b"doc_string", "name", b"name", "type", b"type", "value", b"value"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["contents", b"contents"]) -> typing.Literal["value", "doc_string"] | None: ...
 
-global___Member = Member
+Global___Member: typing_extensions.TypeAlias = Member

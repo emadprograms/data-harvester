@@ -1,4 +1,4 @@
-# $Id: da.py 9417 2023-06-27 20:04:54Z milde $
+# $Id: da.py 9782 2024-07-29 12:37:02Z milde $
 # Author: E D
 # Copyright: This module has been placed in the public domain.
 
@@ -30,7 +30,6 @@ directives = {
       'tips': 'tip',
       'advarsel': 'warning',
       'varsel': 'admonition',
-      'formaning': 'admonition',  # sic! kept for backwards compatibiltity
       'sidebjælke': 'sidebar',
       'emne': 'topic',
       'linje-blok': 'line-block',

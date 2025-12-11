@@ -3,7 +3,7 @@
 /*                                                                         */
 /* :Author: Günter Milde                                                   */
 /*                                                                         */
-/* :Id: $Id: responsive.css 9615 2024-04-06 13:28:15Z milde $                                                               */
+/* :Id: $Id: responsive.css 10256 2025-11-02 17:51:21Z milde $                                                               */
 /* :Copyright: © 2021 Günter Milde.                                        */
 /* :License: Released under the terms of the `2-Clause BSD license`_,      */
 /*    in short:                                                            */
@@ -72,6 +72,11 @@ div.line-block div.line-block,
 pre, dd, dl.option-list {
   margin-left: calc(2% + 1em);
 }
+/* but not in a table cell */
+td pre, td dl.option-list {
+  margin-left: 0;
+}
+
 
 /* Object styling */
 /* ============== */
@@ -91,8 +96,7 @@ div.dedication {
   display: none;
 }
 
-blockquote p.attribution,
-.topic p.attribution {
+blockquote p.attribution {
   text-align: right;
 }
 
@@ -130,7 +134,7 @@ hr {
 
 /* Lists */
 
-dl.field-list.narrow, dl.docinfo, dl.option-list {
+dl.field-list.narrow {
   --field-indent: 2.4em;
 }
 
@@ -202,6 +206,8 @@ table tr {
   text-align: left;
   vertical-align: baseline;
 }
+td *:first-child { margin-top: 0; }
+td *:last-child { margin-bottom: 0; }
 table.booktabs { /* "booktabs" style (no vertical lines) */
   border-top: 2px solid;
   border-bottom: 2px solid;
@@ -243,7 +249,7 @@ pre.literal-block, pre.doctest{
   overflow-x: auto;
 }
 .literal-block, .doctest, span.literal {
-  background-color: #f6f9f8;
+  background-color: #f0f5f3;
 }
 .system-message span.literal {
   background-color: inherit;
@@ -291,12 +297,13 @@ section:target > h2, section:target > h3, section:target > h4,
 section:target > h5, section:target > h6,
 span:target + h2, span:target + h3, span:target + h4,
 span:target + h5, span:target + h6,
-dt:target, span:target,
+dt:target, span:target, p:target,
 .contents :target,
 .contents:target > .topic-title,
-[role="doc-biblioentry"]:target > .label,
+aside.system-message:target,
+[role="doc-biblioentry"]:target,
 [role="doc-biblioref"]:target,
-[role="note"]:target, /* Docutils 0.18 ... 0.19 */
+[role="note"]:target, /* Docutils 0.18 and 0.19 */
 [role="doc-footnote"]:target, /* Docutils >= 0.20 */
 [role="doc-noteref"]:target {
   background-color: #d2e6ec;
@@ -377,6 +384,9 @@ table.align-right {
   }
   body {
     --field-indent: 4em;
+  }
+  dl.docinfo {
+    --field-indent: 5%;
   }
   pre, pre * {
   font-size: 0.9em;

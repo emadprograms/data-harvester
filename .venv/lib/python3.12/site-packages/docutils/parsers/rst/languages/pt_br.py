@@ -1,4 +1,4 @@
-# $Id: pt_br.py 9452 2023-09-27 00:11:54Z milde $
+# $Id: pt_br.py 9782 2024-07-29 12:37:02Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -28,7 +28,6 @@ directives = {
       'dica': 'tip',
       'aviso': 'warning',
       'advertência': 'admonition',
-      'exortação': 'admonition',  # sic! advice/advisory/remark, not reprimand
       'barra-lateral': 'sidebar',
       'tópico': 'topic',
       'bloco-de-linhas': 'line-block',

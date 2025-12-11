@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -39,6 +45,8 @@ class DownloadButton(google.protobuf.message.Message):
     TYPE_FIELD_NUMBER: builtins.int
     ICON_FIELD_NUMBER: builtins.int
     IGNORE_RERUN_FIELD_NUMBER: builtins.int
+    DEFERRED_FILE_ID_FIELD_NUMBER: builtins.int
+    SHORTCUT_FIELD_NUMBER: builtins.int
     id: builtins.str
     label: builtins.str
     default: builtins.bool
@@ -50,6 +58,8 @@ class DownloadButton(google.protobuf.message.Message):
     type: builtins.str
     icon: builtins.str
     ignore_rerun: builtins.bool
+    deferred_file_id: builtins.str
+    shortcut: builtins.str
     def __init__(
         self,
         *,
@@ -64,7 +74,11 @@ class DownloadButton(google.protobuf.message.Message):
         type: builtins.str = ...,
         icon: builtins.str = ...,
         ignore_rerun: builtins.bool = ...,
+        deferred_file_id: builtins.str | None = ...,
+        shortcut: builtins.str = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["default", b"default", "disabled", b"disabled", "form_id", b"form_id", "help", b"help", "icon", b"icon", "id", b"id", "ignore_rerun", b"ignore_rerun", "label", b"label", "type", b"type", "url", b"url", "use_container_width", b"use_container_width"]) -> None: ...
+    def HasField(self, field_name: typing.Literal["_deferred_file_id", b"_deferred_file_id", "deferred_file_id", b"deferred_file_id"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing.Literal["_deferred_file_id", b"_deferred_file_id", "default", b"default", "deferred_file_id", b"deferred_file_id", "disabled", b"disabled", "form_id", b"form_id", "help", b"help", "icon", b"icon", "id", b"id", "ignore_rerun", b"ignore_rerun", "label", b"label", "shortcut", b"shortcut", "type", b"type", "url", b"url", "use_container_width", b"use_container_width"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing.Literal["_deferred_file_id", b"_deferred_file_id"]) -> typing.Literal["deferred_file_id"] | None: ...
 
-global___DownloadButton = DownloadButton
+Global___DownloadButton: typing_extensions.TypeAlias = DownloadButton

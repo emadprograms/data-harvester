@@ -38,6 +38,7 @@ import streamlit.proto.ColorPicker_pb2
 import streamlit.proto.Components_pb2
 import streamlit.proto.DataFrame_pb2
 import streamlit.proto.DateInput_pb2
+import streamlit.proto.DateTimeInput_pb2
 import streamlit.proto.DeckGlJsonChart_pb2
 import streamlit.proto.DocString_pb2
 import streamlit.proto.DownloadButton_pb2
@@ -67,6 +68,7 @@ import streamlit.proto.Slider_pb2
 import streamlit.proto.Snow_pb2
 import streamlit.proto.Space_pb2
 import streamlit.proto.Spinner_pb2
+import streamlit.proto.TextAlignmentConfig_pb2
 import streamlit.proto.TextArea_pb2
 import streamlit.proto.TextInput_pb2
 import streamlit.proto.Text_pb2
@@ -75,7 +77,13 @@ import streamlit.proto.Toast_pb2
 import streamlit.proto.VegaLiteChart_pb2
 import streamlit.proto.Video_pb2
 import streamlit.proto.WidthConfig_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -87,6 +95,7 @@ class Element(google.protobuf.message.Message):
 
     HEIGHT_CONFIG_FIELD_NUMBER: builtins.int
     WIDTH_CONFIG_FIELD_NUMBER: builtins.int
+    TEXT_ALIGNMENT_CONFIG_FIELD_NUMBER: builtins.int
     ALERT_FIELD_NUMBER: builtins.int
     ARROW_DATA_FRAME_FIELD_NUMBER: builtins.int
     ARROW_TABLE_FIELD_NUMBER: builtins.int
@@ -137,6 +146,7 @@ class Element(google.protobuf.message.Message):
     TEXT_AREA_FIELD_NUMBER: builtins.int
     TEXT_INPUT_FIELD_NUMBER: builtins.int
     TIME_INPUT_FIELD_NUMBER: builtins.int
+    DATE_TIME_INPUT_FIELD_NUMBER: builtins.int
     TOAST_FIELD_NUMBER: builtins.int
     VEGA_LITE_CHART_FIELD_NUMBER: builtins.int
     VIDEO_FIELD_NUMBER: builtins.int
@@ -148,6 +158,8 @@ class Element(google.protobuf.message.Message):
 
     @property
     def width_config(self) -> streamlit.proto.WidthConfig_pb2.WidthConfig: ...
+    @property
+    def text_alignment_config(self) -> streamlit.proto.TextAlignmentConfig_pb2.TextAlignmentConfig: ...
     @property
     def alert(self) -> streamlit.proto.Alert_pb2.Alert: ...
     @property
@@ -253,6 +265,8 @@ class Element(google.protobuf.message.Message):
     @property
     def time_input(self) -> streamlit.proto.TimeInput_pb2.TimeInput: ...
     @property
+    def date_time_input(self) -> streamlit.proto.DateTimeInput_pb2.DateTimeInput: ...
+    @property
     def toast(self) -> streamlit.proto.Toast_pb2.Toast: ...
     @property
     def vega_lite_chart(self) -> streamlit.proto.VegaLiteChart_pb2.VegaLiteChart:
@@ -264,13 +278,14 @@ class Element(google.protobuf.message.Message):
     def heading(self) -> streamlit.proto.Heading_pb2.Heading: ...
     @property
     def code(self) -> streamlit.proto.Code_pb2.Code:
-        """Next ID: 61"""
+        """Next ID: 63"""
 
     def __init__(
         self,
         *,
         height_config: streamlit.proto.HeightConfig_pb2.HeightConfig | None = ...,
         width_config: streamlit.proto.WidthConfig_pb2.WidthConfig | None = ...,
+        text_alignment_config: streamlit.proto.TextAlignmentConfig_pb2.TextAlignmentConfig | None = ...,
         alert: streamlit.proto.Alert_pb2.Alert | None = ...,
         arrow_data_frame: streamlit.proto.Arrow_pb2.Arrow | None = ...,
         arrow_table: streamlit.proto.Arrow_pb2.Arrow | None = ...,
@@ -321,19 +336,22 @@ class Element(google.protobuf.message.Message):
         text_area: streamlit.proto.TextArea_pb2.TextArea | None = ...,
         text_input: streamlit.proto.TextInput_pb2.TextInput | None = ...,
         time_input: streamlit.proto.TimeInput_pb2.TimeInput | None = ...,
+        date_time_input: streamlit.proto.DateTimeInput_pb2.DateTimeInput | None = ...,
         toast: streamlit.proto.Toast_pb2.Toast | None = ...,
         vega_lite_chart: streamlit.proto.VegaLiteChart_pb2.VegaLiteChart | None = ...,
         video: streamlit.proto.Video_pb2.Video | None = ...,
         heading: streamlit.proto.Heading_pb2.Heading | None = ...,
         code: streamlit.proto.Code_pb2.Code | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["_height_config", b"_height_config", "_width_config", b"_width_config", "alert", b"alert", "arrow_data_frame", b"arrow_data_frame", "arrow_table", b"arrow_table", "arrow_vega_lite_chart", b"arrow_vega_lite_chart", "audio", b"audio", "audio_input", b"audio_input", "balloons", b"balloons", "bidi_component", b"bidi_component", "bokeh_chart", b"bokeh_chart", "button", b"button", "button_group", b"button_group", "camera_input", b"camera_input", "chat_input", b"chat_input", "checkbox", b"checkbox", "code", b"code", "color_picker", b"color_picker", "component_instance", b"component_instance", "data_frame", b"data_frame", "date_input", b"date_input", "deck_gl_json_chart", b"deck_gl_json_chart", "doc_string", b"doc_string", "download_button", b"download_button", "empty", b"empty", "exception", b"exception", "favicon", b"favicon", "file_uploader", b"file_uploader", "graphviz_chart", b"graphviz_chart", "heading", b"heading", "height_config", b"height_config", "html", b"html", "iframe", b"iframe", "imgs", b"imgs", "json", b"json", "link_button", b"link_button", "markdown", b"markdown", "metric", b"metric", "multiselect", b"multiselect", "number_input", b"number_input", "page_link", b"page_link", "plotly_chart", b"plotly_chart", "progress", b"progress", "radio", b"radio", "selectbox", b"selectbox", "skeleton", b"skeleton", "slider", b"slider", "snow", b"snow", "space", b"space", "spinner", b"spinner", "table", b"table", "text", b"text", "text_area", b"text_area", "text_input", b"text_input", "time_input", b"time_input", "toast", b"toast", "type", b"type", "vega_lite_chart", b"vega_lite_chart", "video", b"video", "width_config", b"width_config"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["_height_config", b"_height_config", "_width_config", b"_width_config", "alert", b"alert", "arrow_data_frame", b"arrow_data_frame", "arrow_table", b"arrow_table", "arrow_vega_lite_chart", b"arrow_vega_lite_chart", "audio", b"audio", "audio_input", b"audio_input", "balloons", b"balloons", "bidi_component", b"bidi_component", "bokeh_chart", b"bokeh_chart", "button", b"button", "button_group", b"button_group", "camera_input", b"camera_input", "chat_input", b"chat_input", "checkbox", b"checkbox", "code", b"code", "color_picker", b"color_picker", "component_instance", b"component_instance", "data_frame", b"data_frame", "date_input", b"date_input", "deck_gl_json_chart", b"deck_gl_json_chart", "doc_string", b"doc_string", "download_button", b"download_button", "empty", b"empty", "exception", b"exception", "favicon", b"favicon", "file_uploader", b"file_uploader", "graphviz_chart", b"graphviz_chart", "heading", b"heading", "height_config", b"height_config", "html", b"html", "iframe", b"iframe", "imgs", b"imgs", "json", b"json", "link_button", b"link_button", "markdown", b"markdown", "metric", b"metric", "multiselect", b"multiselect", "number_input", b"number_input", "page_link", b"page_link", "plotly_chart", b"plotly_chart", "progress", b"progress", "radio", b"radio", "selectbox", b"selectbox", "skeleton", b"skeleton", "slider", b"slider", "snow", b"snow", "space", b"space", "spinner", b"spinner", "table", b"table", "text", b"text", "text_area", b"text_area", "text_input", b"text_input", "time_input", b"time_input", "toast", b"toast", "type", b"type", "vega_lite_chart", b"vega_lite_chart", "video", b"video", "width_config", b"width_config"]) -> None: ...
+    def HasField(self, field_name: typing.Literal["_height_config", b"_height_config", "_text_alignment_config", b"_text_alignment_config", "_width_config", b"_width_config", "alert", b"alert", "arrow_data_frame", b"arrow_data_frame", "arrow_table", b"arrow_table", "arrow_vega_lite_chart", b"arrow_vega_lite_chart", "audio", b"audio", "audio_input", b"audio_input", "balloons", b"balloons", "bidi_component", b"bidi_component", "bokeh_chart", b"bokeh_chart", "button", b"button", "button_group", b"button_group", "camera_input", b"camera_input", "chat_input", b"chat_input", "checkbox", b"checkbox", "code", b"code", "color_picker", b"color_picker", "component_instance", b"component_instance", "data_frame", b"data_frame", "date_input", b"date_input", "date_time_input", b"date_time_input", "deck_gl_json_chart", b"deck_gl_json_chart", "doc_string", b"doc_string", "download_button", b"download_button", "empty", b"empty", "exception", b"exception", "favicon", b"favicon", "file_uploader", b"file_uploader", "graphviz_chart", b"graphviz_chart", "heading", b"heading", "height_config", b"height_config", "html", b"html", "iframe", b"iframe", "imgs", b"imgs", "json", b"json", "link_button", b"link_button", "markdown", b"markdown", "metric", b"metric", "multiselect", b"multiselect", "number_input", b"number_input", "page_link", b"page_link", "plotly_chart", b"plotly_chart", "progress", b"progress", "radio", b"radio", "selectbox", b"selectbox", "skeleton", b"skeleton", "slider", b"slider", "snow", b"snow", "space", b"space", "spinner", b"spinner", "table", b"table", "text", b"text", "text_alignment_config", b"text_alignment_config", "text_area", b"text_area", "text_input", b"text_input", "time_input", b"time_input", "toast", b"toast", "type", b"type", "vega_lite_chart", b"vega_lite_chart", "video", b"video", "width_config", b"width_config"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing.Literal["_height_config", b"_height_config", "_text_alignment_config", b"_text_alignment_config", "_width_config", b"_width_config", "alert", b"alert", "arrow_data_frame", b"arrow_data_frame", "arrow_table", b"arrow_table", "arrow_vega_lite_chart", b"arrow_vega_lite_chart", "audio", b"audio", "audio_input", b"audio_input", "balloons", b"balloons", "bidi_component", b"bidi_component", "bokeh_chart", b"bokeh_chart", "button", b"button", "button_group", b"button_group", "camera_input", b"camera_input", "chat_input", b"chat_input", "checkbox", b"checkbox", "code", b"code", "color_picker", b"color_picker", "component_instance", b"component_instance", "data_frame", b"data_frame", "date_input", b"date_input", "date_time_input", b"date_time_input", "deck_gl_json_chart", b"deck_gl_json_chart", "doc_string", b"doc_string", "download_button", b"download_button", "empty", b"empty", "exception", b"exception", "favicon", b"favicon", "file_uploader", b"file_uploader", "graphviz_chart", b"graphviz_chart", "heading", b"heading", "height_config", b"height_config", "html", b"html", "iframe", b"iframe", "imgs", b"imgs", "json", b"json", "link_button", b"link_button", "markdown", b"markdown", "metric", b"metric", "multiselect", b"multiselect", "number_input", b"number_input", "page_link", b"page_link", "plotly_chart", b"plotly_chart", "progress", b"progress", "radio", b"radio", "selectbox", b"selectbox", "skeleton", b"skeleton", "slider", b"slider", "snow", b"snow", "space", b"space", "spinner", b"spinner", "table", b"table", "text", b"text", "text_alignment_config", b"text_alignment_config", "text_area", b"text_area", "text_input", b"text_input", "time_input", b"time_input", "toast", b"toast", "type", b"type", "vega_lite_chart", b"vega_lite_chart", "video", b"video", "width_config", b"width_config"]) -> None: ...
     @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["_height_config", b"_height_config"]) -> typing.Literal["height_config"] | None: ...
     @typing.overload
+    def WhichOneof(self, oneof_group: typing.Literal["_text_alignment_config", b"_text_alignment_config"]) -> typing.Literal["text_alignment_config"] | None: ...
+    @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["_width_config", b"_width_config"]) -> typing.Literal["width_config"] | None: ...
     @typing.overload
-    def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["alert", "arrow_data_frame", "arrow_table", "arrow_vega_lite_chart", "audio", "audio_input", "balloons", "bidi_component", "bokeh_chart", "button", "button_group", "download_button", "camera_input", "chat_input", "checkbox", "color_picker", "component_instance", "data_frame", "table", "date_input", "deck_gl_json_chart", "doc_string", "empty", "exception", "favicon", "file_uploader", "graphviz_chart", "html", "iframe", "imgs", "json", "link_button", "markdown", "metric", "multiselect", "number_input", "page_link", "plotly_chart", "progress", "radio", "selectbox", "skeleton", "slider", "snow", "space", "spinner", "text", "text_area", "text_input", "time_input", "toast", "vega_lite_chart", "video", "heading", "code"] | None: ...
+    def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["alert", "arrow_data_frame", "arrow_table", "arrow_vega_lite_chart", "audio", "audio_input", "balloons", "bidi_component", "bokeh_chart", "button", "button_group", "download_button", "camera_input", "chat_input", "checkbox", "color_picker", "component_instance", "data_frame", "table", "date_input", "deck_gl_json_chart", "doc_string", "empty", "exception", "favicon", "file_uploader", "graphviz_chart", "html", "iframe", "imgs", "json", "link_button", "markdown", "metric", "multiselect", "number_input", "page_link", "plotly_chart", "progress", "radio", "selectbox", "skeleton", "slider", "snow", "space", "spinner", "text", "text_area", "text_input", "time_input", "date_time_input", "toast", "vega_lite_chart", "video", "heading", "code"] | None: ...
 
-global___Element = Element
+Global___Element: typing_extensions.TypeAlias = Element

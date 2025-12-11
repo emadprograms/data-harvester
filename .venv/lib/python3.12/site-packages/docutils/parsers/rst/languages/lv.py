@@ -1,4 +1,4 @@
-# $Id: lv.py 9030 2022-03-05 23:28:32Z milde $
+# $Id: lv.py 10039 2025-03-08 18:53:20Z aa-turner $
 # Copyright: This module has been placed in the public domain.
 
 # New language mappings are welcome.  Before doing a new translation, please
@@ -98,7 +98,7 @@ roles = {
     'kājenes-atsauce': 'footnote-reference',
     'citātā-atsauce': 'citation-reference',
     'aizvietojuma-atsauce': 'substitution-reference',
-    'mēr''kis': 'target',
+    'mērkis': 'target',
     'atsauce-uz-uri': 'uri-reference',
     'uri': 'uri-reference',
     'url': 'uri-reference',

@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -46,4 +52,4 @@ class BokehChart(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["element_id", b"element_id", "figure", b"figure", "use_container_width", b"use_container_width"]) -> None: ...
 
-global___BokehChart = BokehChart
+Global___BokehChart: typing_extensions.TypeAlias = BokehChart

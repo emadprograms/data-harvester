@@ -24,7 +24,13 @@ import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.Common_pb2
 import streamlit.proto.Components_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -36,15 +42,15 @@ class WidgetStates(google.protobuf.message.Message):
 
     WIDGETS_FIELD_NUMBER: builtins.int
     @property
-    def widgets(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___WidgetState]: ...
+    def widgets(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___WidgetState]: ...
     def __init__(
         self,
         *,
-        widgets: collections.abc.Iterable[global___WidgetState] | None = ...,
+        widgets: collections.abc.Iterable[Global___WidgetState] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["widgets", b"widgets"]) -> None: ...
 
-global___WidgetStates = WidgetStates
+Global___WidgetStates: typing_extensions.TypeAlias = WidgetStates
 
 @typing.final
 class WidgetState(google.protobuf.message.Message):
@@ -137,4 +143,4 @@ class WidgetState(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["arrow_value", b"arrow_value", "bool_value", b"bool_value", "bytes_value", b"bytes_value", "chat_input_value", b"chat_input_value", "double_array_value", b"double_array_value", "double_value", b"double_value", "file_uploader_state_value", b"file_uploader_state_value", "id", b"id", "int_array_value", b"int_array_value", "int_value", b"int_value", "json_trigger_value", b"json_trigger_value", "json_value", b"json_value", "string_array_value", b"string_array_value", "string_trigger_value", b"string_trigger_value", "string_value", b"string_value", "trigger_value", b"trigger_value", "value", b"value"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["value", b"value"]) -> typing.Literal["trigger_value", "bool_value", "double_value", "int_value", "string_value", "double_array_value", "int_array_value", "string_array_value", "json_value", "arrow_value", "bytes_value", "file_uploader_state_value", "string_trigger_value", "chat_input_value", "json_trigger_value"] | None: ...
 
-global___WidgetState = WidgetState
+Global___WidgetState: typing_extensions.TypeAlias = WidgetState

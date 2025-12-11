@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -48,4 +54,4 @@ class WidthConfig(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["pixel_width", b"pixel_width", "rem_width", b"rem_width", "use_content", b"use_content", "use_stretch", b"use_stretch", "width_spec", b"width_spec"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["width_spec", b"width_spec"]) -> typing.Literal["use_stretch", "use_content", "pixel_width", "rem_width"] | None: ...
 
-global___WidthConfig = WidthConfig
+Global___WidthConfig: typing_extensions.TypeAlias = WidthConfig

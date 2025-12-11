@@ -1,4 +1,4 @@
-# $Id: sv.py 9030 2022-03-05 23:28:32Z milde $
+# $Id: sv.py 9782 2024-07-29 12:37:02Z milde $
 # Author: Adam Chodorowski <chodorowski@users.sourceforge.net>
 # Copyright: This module has been placed in the public domain.
 
@@ -24,7 +24,7 @@ directives = {
       'notera': 'note',
       'tips': 'tip',
       'varning': 'warning',
-      'anmärkning': 'admonition',  # literal 'tillrättavisning', 'förmaning'
+      'anmärkning': 'admonition',
       'sidorad': 'sidebar',
       'ämne': 'topic',
       'tema': 'topic',

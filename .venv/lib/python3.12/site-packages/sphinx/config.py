@@ -5,13 +5,11 @@ from __future__ import annotations
 import time
 import traceback
 import types
-import warnings
 from contextlib import chdir
 from os import getenv
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
-from sphinx.deprecation import RemovedInSphinx90Warning
 from sphinx.errors import ConfigError, ExtensionError
 from sphinx.locale import _, __
 from sphinx.util import logging
@@ -65,7 +63,7 @@ def is_serializable(obj: object, *, _seen: frozenset[int] = frozenset()) -> bool
             is_serializable(key, _seen=seen) and is_serializable(value, _seen=seen)
             for key, value in obj.items()
         )
-    elif isinstance(obj, list | tuple | set | frozenset):
+    elif isinstance(obj, (list, tuple, set, frozenset)):
         seen = _seen | {id(obj)}
         return all(is_serializable(item, _seen=seen) for item in obj)
 
@@ -89,7 +87,7 @@ class ENUM:
         return f'ENUM({", ".join(sorted(map(repr, self._candidates)))})'
 
     def match(self, value: str | bool | None | Sequence[str | bool | None]) -> bool:  # NoQA: RUF036
-        if isinstance(value, str | bool | None):
+        if isinstance(value, (str, bool, types.NoneType)):
             return value in self._candidates
         return all(item in self._candidates for item in value)
 
@@ -194,15 +192,6 @@ class _Opt:
         super().__setattr__('rebuild', rebuild)
         super().__setattr__('valid_types', valid_types)
         super().__setattr__('description', description)
-
-    def __getitem__(self, item: int | slice) -> Any:
-        warnings.warn(
-            f'The {self.__class__.__name__!r} object tuple interface is deprecated, '
-            "use attribute access instead for 'default', 'rebuild', and 'valid_types'.",
-            RemovedInSphinx90Warning,
-            stacklevel=2,
-        )
-        return (self.default, self.rebuild, self.valid_types)[item]
 
 
 class Config:
@@ -320,7 +309,7 @@ class Config:
 
         for name in list(self._overrides.keys()):
             if '.' in name:
-                real_name, key = name.split('.', 1)
+                real_name, _, key = name.partition('.')
                 raw_config.setdefault(real_name, {})[key] = self._overrides.pop(name)
 
         self.setup: _ExtensionSetupFunc | None = raw_config.get('setup')
@@ -333,6 +322,8 @@ class Config:
                 raw_config['extensions'] = extensions
         self.extensions: list[str] = raw_config.get('extensions', [])
 
+        self._verbosity: int = 0  # updated in Sphinx.__init__()
+
     @property
     def values(self) -> dict[str, _Opt]:
         return self._options
@@ -341,12 +332,17 @@ class Config:
     def overrides(self) -> dict[str, Any]:
         return self._overrides
 
+    @property
+    def verbosity(self) -> int:
+        return self._verbosity
+
     @classmethod
     def read(
         cls: type[Config],
         confdir: str | os.PathLike[str],
-        overrides: dict[str, Any] | None = None,
-        tags: Tags | None = None,
+        *,
+        overrides: dict[str, Any],
+        tags: Tags,
     ) -> Config:
         """Create a Config object from configuration file."""
         filename = Path(confdir, CONFIG_FILENAME)
@@ -354,23 +350,7 @@ class Config:
             raise ConfigError(
                 __("config directory doesn't contain a conf.py file (%s)") % confdir
             )
-        namespace = eval_config_file(filename, tags)
-
-        # Note: Old sphinx projects have been configured as "language = None" because
-        #       sphinx-quickstart previously generated this by default.
-        #       To keep compatibility, they should be fallback to 'en' for a while
-        #       (This conversion should not be removed before 2025-01-01).
-        if namespace.get('language', ...) is None:
-            logger.warning(
-                __(
-                    "Invalid configuration value found: 'language = None'. "
-                    'Update your configuration to a valid language code. '
-                    "Falling back to 'en' (English)."
-                )
-            )
-            namespace['language'] = 'en'
-
-        return cls(namespace, overrides)
+        return _read_conf_py(filename, overrides=overrides, tags=tags)
 
     def convert_overrides(self, name: str, value: str) -> Any:
         opt = self._options[name]
@@ -583,12 +563,28 @@ class Config:
         self.__dict__.update(state)
 
 
-def eval_config_file(
-    filename: str | os.PathLike[str], tags: Tags | None
-) -> dict[str, Any]:
-    """Evaluate a config file."""
-    filename = Path(filename)
+def _read_conf_py(conf_path: Path, *, overrides: dict[str, Any], tags: Tags) -> Config:
+    """Create a Config object from a conf.py file."""
+    namespace = eval_config_file(conf_path, tags)
 
+    # Note: Old sphinx projects have been configured as "language = None" because
+    #       sphinx-quickstart previously generated this by default.
+    #       To keep compatibility, they should be fallback to 'en' for a while
+    #       (This conversion should not be removed before 2025-01-01).
+    if namespace.get('language', ...) is None:
+        logger.warning(
+            __(
+                "Invalid configuration value found: 'language = None'. "
+                'Update your configuration to a valid language code. '
+                "Falling back to 'en' (English)."
+            )
+        )
+        namespace['language'] = 'en'
+    return Config(namespace, overrides)
+
+
+def eval_config_file(filename: Path, tags: Tags) -> dict[str, Any]:
+    """Evaluate a config file."""
     namespace: dict[str, Any] = {
         '__file__': str(filename),
         'tags': tags,
@@ -623,12 +619,12 @@ def _validate_valid_types(
 ) -> frozenset[type] | ENUM:
     if not valid_types:
         return frozenset()
-    if isinstance(valid_types, frozenset | ENUM):
+    if isinstance(valid_types, (frozenset, ENUM)):
         return valid_types
     if isinstance(valid_types, type):
         return frozenset((valid_types,))
     if valid_types is Any:
-        return frozenset({Any})  # type: ignore[arg-type]
+        return frozenset({Any})
     if isinstance(valid_types, set):
         return frozenset(valid_types)
     try:
@@ -656,7 +652,7 @@ def convert_source_suffix(app: Sphinx, config: Config) -> None:
             source_suffix,
             config.source_suffix,
         )
-    elif isinstance(source_suffix, list | tuple):
+    elif isinstance(source_suffix, (list, tuple)):
         # if list, considers as all of them are default filetype
         config.source_suffix = dict.fromkeys(source_suffix, 'restructuredtext')
         logger.info(
@@ -888,7 +884,21 @@ def check_master_doc(
     return changed
 
 
+def deprecate_source_encoding(_app: Sphinx, config: Config) -> None:
+    """Warn on non-UTF 8 source_encoding."""
+    # RemovedInSphinx10Warning
+    if config.source_encoding.lower() not in {'utf-8', 'utf-8-sig', 'utf8'}:
+        msg = _(
+            'Support for source encodings other than UTF-8 '
+            'is deprecated and will be removed in Sphinx 10. '
+            'Please comment at https://github.com/sphinx-doc/sphinx/issues/13665 '
+            'if this causes a problem.'
+        )
+        logger.warning(msg)
+
+
 def setup(app: Sphinx) -> ExtensionMetadata:
+    app.connect('config-inited', deprecate_source_encoding, priority=790)
     app.connect('config-inited', convert_source_suffix, priority=800)
     app.connect('config-inited', convert_highlight_options, priority=800)
     app.connect('config-inited', init_numfig_format, priority=800)

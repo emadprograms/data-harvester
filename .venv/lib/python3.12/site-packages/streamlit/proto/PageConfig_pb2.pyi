@@ -127,20 +127,20 @@ class PageConfig(google.protobuf.message.Message):
     MENU_ITEMS_FIELD_NUMBER: builtins.int
     title: builtins.str
     favicon: builtins.str
-    layout: global___PageConfig.Layout.ValueType
-    initial_sidebar_state: global___PageConfig.SidebarState.ValueType
+    layout: Global___PageConfig.Layout.ValueType
+    initial_sidebar_state: Global___PageConfig.SidebarState.ValueType
     @property
-    def menu_items(self) -> global___PageConfig.MenuItems: ...
+    def menu_items(self) -> Global___PageConfig.MenuItems: ...
     def __init__(
         self,
         *,
         title: builtins.str = ...,
         favicon: builtins.str = ...,
-        layout: global___PageConfig.Layout.ValueType = ...,
-        initial_sidebar_state: global___PageConfig.SidebarState.ValueType = ...,
-        menu_items: global___PageConfig.MenuItems | None = ...,
+        layout: Global___PageConfig.Layout.ValueType = ...,
+        initial_sidebar_state: Global___PageConfig.SidebarState.ValueType = ...,
+        menu_items: Global___PageConfig.MenuItems | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["menu_items", b"menu_items"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["favicon", b"favicon", "initial_sidebar_state", b"initial_sidebar_state", "layout", b"layout", "menu_items", b"menu_items", "title", b"title"]) -> None: ...
 
-global___PageConfig = PageConfig
+Global___PageConfig: typing_extensions.TypeAlias = PageConfig

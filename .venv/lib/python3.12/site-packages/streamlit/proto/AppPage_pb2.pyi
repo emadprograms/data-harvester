@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -61,4 +67,4 @@ class AppPage(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["icon", b"icon", "is_default", b"is_default", "page_name", b"page_name", "page_script_hash", b"page_script_hash", "section_header", b"section_header", "url_pathname", b"url_pathname"]) -> None: ...
 
-global___AppPage = AppPage
+Global___AppPage: typing_extensions.TypeAlias = AppPage

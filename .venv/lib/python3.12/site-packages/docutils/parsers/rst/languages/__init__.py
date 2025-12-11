@@ -1,4 +1,4 @@
-# $Id: __init__.py 9026 2022-03-04 15:57:13Z milde $
+# $Id: __init__.py 10046 2025-03-09 01:45:28Z aa-turner $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -10,10 +10,24 @@ This package contains modules for language-dependent features of
 reStructuredText.
 """
 
+from __future__ import annotations
+
 __docformat__ = 'reStructuredText'
 
-
 from docutils.languages import LanguageImporter
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    import types
+    from typing import NoReturn, Protocol, overload
+
+    class RSTLanguageModule(Protocol):
+        __name__: str
+
+        directives: dict[str, str]
+        roles: dict[str, str]
+else:
+    from docutils.utils._typing import overload
 
 
 class RstLanguageImporter(LanguageImporter):
@@ -30,11 +44,20 @@ class RstLanguageImporter(LanguageImporter):
     warn_msg = 'rST localisation for language "%s" not found.'
     fallback = None
 
-    def check_content(self, module):
+    @overload
+    def check_content(self, module: RSTLanguageModule) -> None:
+        ...
+
+    @overload
+    def check_content(self, module: types.ModuleType) -> NoReturn:
+        ...
+
+    def check_content(self, module: RSTLanguageModule | types.ModuleType
+                      ) -> None:
         """Check if we got an rST language module."""
         if not (isinstance(module.directives, dict)
                 and isinstance(module.roles, dict)):
             raise ImportError
 
 
-get_language = RstLanguageImporter()
+get_language: LanguageImporter[RSTLanguageModule] = RstLanguageImporter()

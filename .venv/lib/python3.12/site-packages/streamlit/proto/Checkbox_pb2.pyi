@@ -67,7 +67,7 @@ class Checkbox(google.protobuf.message.Message):
     value: builtins.bool
     set_value: builtins.bool
     disabled: builtins.bool
-    type: global___Checkbox.StyleType.ValueType
+    type: Global___Checkbox.StyleType.ValueType
     @property
     def label_visibility(self) -> streamlit.proto.LabelVisibilityMessage_pb2.LabelVisibilityMessage: ...
     def __init__(
@@ -82,9 +82,9 @@ class Checkbox(google.protobuf.message.Message):
         set_value: builtins.bool = ...,
         disabled: builtins.bool = ...,
         label_visibility: streamlit.proto.LabelVisibilityMessage_pb2.LabelVisibilityMessage | None = ...,
-        type: global___Checkbox.StyleType.ValueType = ...,
+        type: Global___Checkbox.StyleType.ValueType = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["label_visibility", b"label_visibility"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["default", b"default", "disabled", b"disabled", "form_id", b"form_id", "help", b"help", "id", b"id", "label", b"label", "label_visibility", b"label_visibility", "set_value", b"set_value", "type", b"type", "value", b"value"]) -> None: ...
 
-global___Checkbox = Checkbox
+Global___Checkbox: typing_extensions.TypeAlias = Checkbox

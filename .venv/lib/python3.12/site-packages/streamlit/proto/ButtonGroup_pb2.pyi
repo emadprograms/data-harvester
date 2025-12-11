@@ -126,15 +126,15 @@ class ButtonGroup(google.protobuf.message.Message):
     HELP_FIELD_NUMBER: builtins.int
     id: builtins.str
     disabled: builtins.bool
-    click_mode: global___ButtonGroup.ClickMode.ValueType
+    click_mode: Global___ButtonGroup.ClickMode.ValueType
     form_id: builtins.str
     set_value: builtins.bool
-    selection_visualization: global___ButtonGroup.SelectionVisualization.ValueType
-    style: global___ButtonGroup.Style.ValueType
+    selection_visualization: Global___ButtonGroup.SelectionVisualization.ValueType
+    style: Global___ButtonGroup.Style.ValueType
     label: builtins.str
     help: builtins.str
     @property
-    def options(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___ButtonGroup.Option]: ...
+    def options(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___ButtonGroup.Option]: ...
     @property
     def default(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.int]:
         """default is an array of indexes that are selected by default"""
@@ -149,15 +149,15 @@ class ButtonGroup(google.protobuf.message.Message):
         self,
         *,
         id: builtins.str = ...,
-        options: collections.abc.Iterable[global___ButtonGroup.Option] | None = ...,
+        options: collections.abc.Iterable[Global___ButtonGroup.Option] | None = ...,
         default: collections.abc.Iterable[builtins.int] | None = ...,
         disabled: builtins.bool = ...,
-        click_mode: global___ButtonGroup.ClickMode.ValueType = ...,
+        click_mode: Global___ButtonGroup.ClickMode.ValueType = ...,
         form_id: builtins.str = ...,
         value: collections.abc.Iterable[builtins.int] | None = ...,
         set_value: builtins.bool = ...,
-        selection_visualization: global___ButtonGroup.SelectionVisualization.ValueType = ...,
-        style: global___ButtonGroup.Style.ValueType = ...,
+        selection_visualization: Global___ButtonGroup.SelectionVisualization.ValueType = ...,
+        style: Global___ButtonGroup.Style.ValueType = ...,
         label: builtins.str = ...,
         label_visibility: streamlit.proto.LabelVisibilityMessage_pb2.LabelVisibilityMessage | None = ...,
         help: builtins.str | None = ...,
@@ -166,4 +166,4 @@ class ButtonGroup(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["_help", b"_help", "click_mode", b"click_mode", "default", b"default", "disabled", b"disabled", "form_id", b"form_id", "help", b"help", "id", b"id", "label", b"label", "label_visibility", b"label_visibility", "options", b"options", "selection_visualization", b"selection_visualization", "set_value", b"set_value", "style", b"style", "value", b"value"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["_help", b"_help"]) -> typing.Literal["help"] | None: ...
 
-global___ButtonGroup = ButtonGroup
+Global___ButtonGroup: typing_extensions.TypeAlias = ButtonGroup

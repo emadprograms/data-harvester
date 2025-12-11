@@ -14,7 +14,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1astreamlit/proto/Html.proto\"\x14\n\x04Html\x12\x0c\n\x04\x62ody\x18\x01 \x01(\tB)\n\x1c\x63om.snowflake.apps.streamlitB\tHtmlProtob\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1astreamlit/proto/Html.proto\"5\n\x04Html\x12\x0c\n\x04\x62ody\x18\x01 \x01(\t\x12\x1f\n\x17unsafe_allow_javascript\x18\x02 \x01(\x08\x42)\n\x1c\x63om.snowflake.apps.streamlitB\tHtmlProtob\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -23,5 +23,5 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\034com.snowflake.apps.streamlitB\tHtmlProto'
   _globals['_HTML']._serialized_start=30
-  _globals['_HTML']._serialized_end=50
+  _globals['_HTML']._serialized_end=83
 # @@protoc_insertion_point(module_scope)

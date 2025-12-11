@@ -63,7 +63,7 @@ class GitInfo(google.protobuf.message.Message):
     repository: builtins.str
     branch: builtins.str
     module: builtins.str
-    state: global___GitInfo.GitStates.ValueType
+    state: Global___GitInfo.GitStates.ValueType
     @property
     def untracked_files(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]: ...
     @property
@@ -76,8 +76,8 @@ class GitInfo(google.protobuf.message.Message):
         module: builtins.str = ...,
         untracked_files: collections.abc.Iterable[builtins.str] | None = ...,
         uncommitted_files: collections.abc.Iterable[builtins.str] | None = ...,
-        state: global___GitInfo.GitStates.ValueType = ...,
+        state: Global___GitInfo.GitStates.ValueType = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["branch", b"branch", "module", b"module", "repository", b"repository", "state", b"state", "uncommitted_files", b"uncommitted_files", "untracked_files", b"untracked_files"]) -> None: ...
 
-global___GitInfo = GitInfo
+Global___GitInfo: typing_extensions.TypeAlias = GitInfo

@@ -1,4 +1,4 @@
-# $Id: de.py 9428 2023-07-07 06:50:26Z milde $
+# $Id: de.py 9782 2024-07-29 12:37:02Z milde $
 # Authors: Engelbert Gruber <grubert@users.sourceforge.net>;
 #          Lea Wiemann <LeWiemann@gmail.com>
 # Copyright: This module has been placed in the public domain.
@@ -18,7 +18,6 @@ __docformat__ = 'reStructuredText'
 
 directives = {
       'warnhinweis': 'admonition',  # or, more generally, 'anmerkung'?
-      'ermahnung': 'admonition',  # sic! kept for backwards compatibiltity
       'achtung': 'attention',
       'vorsicht': 'caution',
       'code': 'code',

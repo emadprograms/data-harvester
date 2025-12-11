@@ -1,4 +1,4 @@
-# $Id: parts.py 8993 2022-01-29 13:20:04Z milde $
+# $Id: parts.py 10256 2025-11-02 17:51:21Z milde $
 # Authors: David Goodger <goodger@python.org>; Dmitry Jemerov
 # Copyright: This module has been placed in the public domain.
 
@@ -12,6 +12,7 @@ from docutils import nodes, languages
 from docutils.transforms import parts
 from docutils.parsers.rst import Directive
 from docutils.parsers.rst import directives
+from docutils.parsers.rst.directives.body import BasePseudoSection
 
 
 class Contents(Directive):
@@ -43,8 +44,8 @@ class Contents(Directive):
                    'class': directives.class_option}
 
     def run(self):
-        if not (self.state_machine.match_titles
-                or isinstance(self.state_machine.node, nodes.sidebar)):
+        if isinstance(self.state_machine.node,
+                      BasePseudoSection.invalid_parents):
             raise self.error('The "%s" directive may not be used within '
                              'topics or body elements.' % self.name)
         document = self.state_machine.document

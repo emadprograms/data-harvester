@@ -1,4 +1,4 @@
-# $Id: writer_aux.py 9037 2022-03-05 23:31:10Z milde $
+# $Id: writer_aux.py 10136 2025-05-20 15:48:27Z milde $
 # Author: Lea Wiemann <LeWiemann@gmail.com>
 # Copyright: This module has been placed in the public domain.
 
@@ -11,54 +11,12 @@ conflicting imports like this one::
     from docutils import writers
     from docutils.transforms import writers
 """
+from __future__ import annotations
 
 __docformat__ = 'reStructuredText'
 
-import warnings
-
 from docutils import nodes, languages
 from docutils.transforms import Transform
-
-
-class Compound(Transform):
-
-    """
-    .. warning:: This transform is not used by Docutils since Dec 2010
-                 and will be removed in Docutils 0.21 or later.
-
-    Flatten all compound paragraphs.  For example, transform ::
-
-        <compound>
-            <paragraph>
-            <literal_block>
-            <paragraph>
-
-    into ::
-
-        <paragraph>
-        <literal_block classes="continued">
-        <paragraph classes="continued">
-    """
-
-    default_priority = 910
-
-    def __init__(self, document, startnode=None):
-        warnings.warn('docutils.transforms.writer_aux.Compound is deprecated'
-                      ' and will be removed in Docutils 0.21 or later.',
-                      DeprecationWarning, stacklevel=2)
-        super().__init__(document, startnode)
-
-    def apply(self):
-        for compound in self.document.findall(nodes.compound):
-            first_child = True
-            for child in compound:
-                if first_child:
-                    if not isinstance(child, nodes.Invisible):
-                        first_child = False
-                else:
-                    child['classes'].append('continued')
-            # Substitute children for compound.
-            compound.replace_self(compound[:])
 
 
 class Admonitions(Transform):
@@ -83,7 +41,7 @@ class Admonitions(Transform):
 
     default_priority = 920
 
-    def apply(self):
+    def apply(self) -> None:
         language = languages.get_language(self.document.settings.language_code,
                                           self.document.reporter)
         for node in self.document.findall(nodes.Admonition):

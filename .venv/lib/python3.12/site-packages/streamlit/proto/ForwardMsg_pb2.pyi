@@ -102,10 +102,11 @@ class ForwardMsg(google.protobuf.message.Message):
     AUTH_REDIRECT_FIELD_NUMBER: builtins.int
     PARENT_MESSAGE_FIELD_NUMBER: builtins.int
     REF_HASH_FIELD_NUMBER: builtins.int
+    DEFERRED_FILE_RESPONSE_FIELD_NUMBER: builtins.int
     DEBUG_LAST_BACKMSG_ID_FIELD_NUMBER: builtins.int
     hash: builtins.str
     """A hash that uniquely identifies this ForwardMsg, for caching."""
-    script_finished: global___ForwardMsg.ScriptFinishedStatus.ValueType
+    script_finished: Global___ForwardMsg.ScriptFinishedStatus.ValueType
     ref_hash: builtins.str
     """A reference to a ForwardMsg that has already been delivered
     and cached in the frontend. The client should substitute the message
@@ -117,7 +118,7 @@ class ForwardMsg(google.protobuf.message.Message):
     testing.
     """
     @property
-    def metadata(self) -> global___ForwardMsgMetadata:
+    def metadata(self) -> Global___ForwardMsgMetadata:
         """Contains 'non-payload' ForwardMsg data that isn't cached for the purposes
         of ForwardMsg de-duping.
         """
@@ -166,16 +167,20 @@ class ForwardMsg(google.protobuf.message.Message):
     def parent_message(self) -> streamlit.proto.ParentMessage_pb2.ParentMessage:
         """Platform - message to host"""
 
+    @property
+    def deferred_file_response(self) -> Global___DeferredFileResponse:
+        """Response for a deferred file request"""
+
     def __init__(
         self,
         *,
         hash: builtins.str = ...,
-        metadata: global___ForwardMsgMetadata | None = ...,
+        metadata: Global___ForwardMsgMetadata | None = ...,
         new_session: streamlit.proto.NewSession_pb2.NewSession | None = ...,
         delta: streamlit.proto.Delta_pb2.Delta | None = ...,
         page_info_changed: streamlit.proto.PageInfo_pb2.PageInfo | None = ...,
         page_config_changed: streamlit.proto.PageConfig_pb2.PageConfig | None = ...,
-        script_finished: global___ForwardMsg.ScriptFinishedStatus.ValueType = ...,
+        script_finished: Global___ForwardMsg.ScriptFinishedStatus.ValueType = ...,
         git_info_changed: streamlit.proto.GitInfo_pb2.GitInfo | None = ...,
         page_profile: streamlit.proto.PageProfile_pb2.PageProfile | None = ...,
         session_status_changed: streamlit.proto.SessionStatus_pb2.SessionStatus | None = ...,
@@ -189,13 +194,35 @@ class ForwardMsg(google.protobuf.message.Message):
         auth_redirect: streamlit.proto.AuthRedirect_pb2.AuthRedirect | None = ...,
         parent_message: streamlit.proto.ParentMessage_pb2.ParentMessage | None = ...,
         ref_hash: builtins.str = ...,
+        deferred_file_response: Global___DeferredFileResponse | None = ...,
         debug_last_backmsg_id: builtins.str = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["auth_redirect", b"auth_redirect", "auto_rerun", b"auto_rerun", "delta", b"delta", "file_urls_response", b"file_urls_response", "git_info_changed", b"git_info_changed", "logo", b"logo", "metadata", b"metadata", "navigation", b"navigation", "new_session", b"new_session", "page_config_changed", b"page_config_changed", "page_info_changed", b"page_info_changed", "page_not_found", b"page_not_found", "page_profile", b"page_profile", "pages_changed", b"pages_changed", "parent_message", b"parent_message", "ref_hash", b"ref_hash", "script_finished", b"script_finished", "session_event", b"session_event", "session_status_changed", b"session_status_changed", "type", b"type"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["auth_redirect", b"auth_redirect", "auto_rerun", b"auto_rerun", "debug_last_backmsg_id", b"debug_last_backmsg_id", "delta", b"delta", "file_urls_response", b"file_urls_response", "git_info_changed", b"git_info_changed", "hash", b"hash", "logo", b"logo", "metadata", b"metadata", "navigation", b"navigation", "new_session", b"new_session", "page_config_changed", b"page_config_changed", "page_info_changed", b"page_info_changed", "page_not_found", b"page_not_found", "page_profile", b"page_profile", "pages_changed", b"pages_changed", "parent_message", b"parent_message", "ref_hash", b"ref_hash", "script_finished", b"script_finished", "session_event", b"session_event", "session_status_changed", b"session_status_changed", "type", b"type"]) -> None: ...
-    def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["new_session", "delta", "page_info_changed", "page_config_changed", "script_finished", "git_info_changed", "page_profile", "session_status_changed", "session_event", "navigation", "page_not_found", "pages_changed", "file_urls_response", "auto_rerun", "logo", "auth_redirect", "parent_message", "ref_hash"] | None: ...
+    def HasField(self, field_name: typing.Literal["auth_redirect", b"auth_redirect", "auto_rerun", b"auto_rerun", "deferred_file_response", b"deferred_file_response", "delta", b"delta", "file_urls_response", b"file_urls_response", "git_info_changed", b"git_info_changed", "logo", b"logo", "metadata", b"metadata", "navigation", b"navigation", "new_session", b"new_session", "page_config_changed", b"page_config_changed", "page_info_changed", b"page_info_changed", "page_not_found", b"page_not_found", "page_profile", b"page_profile", "pages_changed", b"pages_changed", "parent_message", b"parent_message", "ref_hash", b"ref_hash", "script_finished", b"script_finished", "session_event", b"session_event", "session_status_changed", b"session_status_changed", "type", b"type"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing.Literal["auth_redirect", b"auth_redirect", "auto_rerun", b"auto_rerun", "debug_last_backmsg_id", b"debug_last_backmsg_id", "deferred_file_response", b"deferred_file_response", "delta", b"delta", "file_urls_response", b"file_urls_response", "git_info_changed", b"git_info_changed", "hash", b"hash", "logo", b"logo", "metadata", b"metadata", "navigation", b"navigation", "new_session", b"new_session", "page_config_changed", b"page_config_changed", "page_info_changed", b"page_info_changed", "page_not_found", b"page_not_found", "page_profile", b"page_profile", "pages_changed", b"pages_changed", "parent_message", b"parent_message", "ref_hash", b"ref_hash", "script_finished", b"script_finished", "session_event", b"session_event", "session_status_changed", b"session_status_changed", "type", b"type"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["new_session", "delta", "page_info_changed", "page_config_changed", "script_finished", "git_info_changed", "page_profile", "session_status_changed", "session_event", "navigation", "page_not_found", "pages_changed", "file_urls_response", "auto_rerun", "logo", "auth_redirect", "parent_message", "ref_hash", "deferred_file_response"] | None: ...
 
-global___ForwardMsg = ForwardMsg
+Global___ForwardMsg: typing_extensions.TypeAlias = ForwardMsg
+
+@typing.final
+class DeferredFileResponse(google.protobuf.message.Message):
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    FILE_ID_FIELD_NUMBER: builtins.int
+    URL_FIELD_NUMBER: builtins.int
+    ERROR_MSG_FIELD_NUMBER: builtins.int
+    file_id: builtins.str
+    url: builtins.str
+    error_msg: builtins.str
+    def __init__(
+        self,
+        *,
+        file_id: builtins.str = ...,
+        url: builtins.str = ...,
+        error_msg: builtins.str = ...,
+    ) -> None: ...
+    def ClearField(self, field_name: typing.Literal["error_msg", b"error_msg", "file_id", b"file_id", "url", b"url"]) -> None: ...
+
+Global___DeferredFileResponse: typing_extensions.TypeAlias = DeferredFileResponse
 
 @typing.final
 class ForwardMsgMetadata(google.protobuf.message.Message):
@@ -226,7 +253,7 @@ class ForwardMsgMetadata(google.protobuf.message.Message):
         """
 
     @property
-    def element_dimension_spec(self) -> global___ElementDimensionSpec:
+    def element_dimension_spec(self) -> Global___ElementDimensionSpec:
         """DEPRECATED: This is not used anymore."""
 
     def __init__(
@@ -234,13 +261,13 @@ class ForwardMsgMetadata(google.protobuf.message.Message):
         *,
         cacheable: builtins.bool = ...,
         delta_path: collections.abc.Iterable[builtins.int] | None = ...,
-        element_dimension_spec: global___ElementDimensionSpec | None = ...,
+        element_dimension_spec: Global___ElementDimensionSpec | None = ...,
         active_script_hash: builtins.str = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["element_dimension_spec", b"element_dimension_spec"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["active_script_hash", b"active_script_hash", "cacheable", b"cacheable", "delta_path", b"delta_path", "element_dimension_spec", b"element_dimension_spec"]) -> None: ...
 
-global___ForwardMsgMetadata = ForwardMsgMetadata
+Global___ForwardMsgMetadata: typing_extensions.TypeAlias = ForwardMsgMetadata
 
 @typing.final
 class ElementDimensionSpec(google.protobuf.message.Message):
@@ -264,7 +291,7 @@ class ElementDimensionSpec(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["height", b"height", "width", b"width"]) -> None: ...
 
-global___ElementDimensionSpec = ElementDimensionSpec
+Global___ElementDimensionSpec: typing_extensions.TypeAlias = ElementDimensionSpec
 
 @typing.final
 class ForwardMsgList(google.protobuf.message.Message):
@@ -279,12 +306,12 @@ class ForwardMsgList(google.protobuf.message.Message):
 
     MESSAGES_FIELD_NUMBER: builtins.int
     @property
-    def messages(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___ForwardMsg]: ...
+    def messages(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___ForwardMsg]: ...
     def __init__(
         self,
         *,
-        messages: collections.abc.Iterable[global___ForwardMsg] | None = ...,
+        messages: collections.abc.Iterable[Global___ForwardMsg] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["messages", b"messages"]) -> None: ...
 
-global___ForwardMsgList = ForwardMsgList
+Global___ForwardMsgList: typing_extensions.TypeAlias = ForwardMsgList

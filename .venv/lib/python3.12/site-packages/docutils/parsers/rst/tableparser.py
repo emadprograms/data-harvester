@@ -1,4 +1,4 @@
-# $Id: tableparser.py 9038 2022-03-05 23:31:46Z milde $
+# $Id: tableparser.py 10251 2025-09-22 21:00:13Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -17,8 +17,9 @@ and produce a well-formed data structure suitable for building a CALS table.
     `update_dict_of_lists()`: Merge two dictionaries containing list values.
 """
 
-__docformat__ = 'reStructuredText'
+from __future__ import annotations
 
+__docformat__ = 'reStructuredText'
 
 import re
 import sys
@@ -35,7 +36,7 @@ class TableMarkupError(DataError):
     from the table's start line.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self.offset = kwargs.pop('offset', 0)
         DataError.__init__(self, *args)
 
@@ -143,7 +144,7 @@ class GridTableParser(TableParser):
 
     head_body_separator_pat = re.compile(r'\+=[=+]+=\+ *$')
 
-    def setup(self, block):
+    def setup(self, block) -> None:
         self.block = block[:]           # make a copy; it may be modified
         self.block.disconnect()         # don't propagate changes to parent
         self.bottom = len(block) - 1
@@ -166,6 +167,9 @@ class GridTableParser(TableParser):
         We'll end up knowing all the row and column boundaries, cell positions
         and their dimensions.
         """
+        # a copy of the block without combining characters:
+        self.stripped_block = [strip_combining_chars(line)
+                               for line in self.block]
         corners = [(0, 0)]
         while corners:
             top, left = corners.pop(0)
@@ -190,7 +194,7 @@ class GridTableParser(TableParser):
         if not self.check_parse_complete():
             raise TableMarkupError('Malformed table; parse incomplete.')
 
-    def mark_done(self, top, left, bottom, right):
+    def mark_done(self, top, left, bottom, right) -> None:
         """For keeping track of how much of each text column has been seen."""
         before = top - 1
         after = bottom - 1
@@ -198,7 +202,7 @@ class GridTableParser(TableParser):
             assert self.done[col] == before
             self.done[col] = after
 
-    def check_parse_complete(self):
+    def check_parse_complete(self) -> bool:
         """Each text column should have been completely seen."""
         last = self.bottom - 1
         for col in range(self.right):
@@ -208,7 +212,7 @@ class GridTableParser(TableParser):
 
     def scan_cell(self, top, left):
         """Starting at the top-left corner, start tracing out a cell."""
-        assert self.block[top][left] == '+'
+        assert self.stripped_block[top][left] == '+'
         return self.scan_right(top, left)
 
     def scan_right(self, top, left):
@@ -217,7 +221,7 @@ class GridTableParser(TableParser):
         boundaries ('+').
         """
         colseps = {}
-        line = self.block[top]
+        line = self.stripped_block[top]
         for i in range(left + 1, self.right + 1):
             if line[i] == '+':
                 colseps[i] = [top]
@@ -237,14 +241,14 @@ class GridTableParser(TableParser):
         """
         rowseps = {}
         for i in range(top + 1, self.bottom + 1):
-            if self.block[i][right] == '+':
+            if self.stripped_block[i][right] == '+':
                 rowseps[i] = [right]
                 result = self.scan_left(top, left, i, right)
                 if result:
                     newrowseps, colseps = result
                     update_dict_of_lists(rowseps, newrowseps)
                     return i, rowseps, colseps
-            elif self.block[i][right] != '|':
+            elif self.stripped_block[i][right] != '|':
                 return None
         return None
 
@@ -254,7 +258,7 @@ class GridTableParser(TableParser):
         It must line up with the starting point.
         """
         colseps = {}
-        line = self.block[bottom]
+        line = self.stripped_block[bottom]
         for i in range(right - 1, left, -1):
             if line[i] == '+':
                 colseps[i] = [bottom]
@@ -274,9 +278,9 @@ class GridTableParser(TableParser):
         """
         rowseps = {}
         for i in range(bottom - 1, top, -1):
-            if self.block[i][left] == '+':
+            if self.stripped_block[i][left] == '+':
                 rowseps[i] = [left]
-            elif self.block[i][left] != '|':
+            elif self.stripped_block[i][left] != '|':
                 return None
         return rowseps
 
@@ -372,7 +376,7 @@ class SimpleTableParser(TableParser):
     head_body_separator_pat = re.compile('=[ =]*$')
     span_pat = re.compile('-[ -]*$')
 
-    def setup(self, block):
+    def setup(self, block) -> None:
         self.block = block[:]           # make a copy; it will be modified
         self.block.disconnect()         # don't propagate changes to parent
         # Convert top & bottom borders to column span underlines:
@@ -386,7 +390,7 @@ class SimpleTableParser(TableParser):
         self.rowseps = {0: [0]}
         self.colseps = {0: [0]}
 
-    def parse_table(self):
+    def parse_table(self) -> None:
         """
         First determine the column boundaries from the top border, then
         process rows.  Each row may consist of multiple lines; accumulate
@@ -459,7 +463,7 @@ class SimpleTableParser(TableParser):
             i += 1
         return cells
 
-    def parse_row(self, lines, start, spanline=None):
+    def parse_row(self, lines, start, spanline=None) -> None:
         """
         Given the text `lines` of a row, parse it and append to `self.table`.
 
@@ -529,7 +533,7 @@ class SimpleTableParser(TableParser):
                 self.table[first_body_row:])
 
 
-def update_dict_of_lists(master, newdata):
+def update_dict_of_lists(master, newdata) -> None:
     """
     Extend the list values of `master` with those from `newdata`.
 

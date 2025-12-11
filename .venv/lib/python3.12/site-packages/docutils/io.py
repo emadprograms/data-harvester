@@ -1,4 +1,4 @@
-# $Id: io.py 9427 2023-07-07 06:50:09Z milde $
+# $Id: io.py 10146 2025-05-27 06:14:22Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -6,6 +6,8 @@
 I/O classes provide a uniform API for low-level input and output.  Subclasses
 exist for a variety of input/output mechanisms.
 """
+
+from __future__ import annotations
 
 __docformat__ = 'reStructuredText'
 
@@ -18,6 +20,12 @@ import warnings
 
 from docutils import TransformSpec
 
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from typing import Any, BinaryIO, ClassVar, Final, Literal, TextIO
+
+    from docutils import nodes
+    from docutils.nodes import StrPath
 
 # Guess the locale's preferred encoding.
 # If no valid guess can be made, _locale_encoding is set to `None`:
@@ -29,10 +37,11 @@ try:
     # Return locale encoding also in UTF-8 mode
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        _locale_encoding = (locale.getlocale()[1]
-                            or locale.getdefaultlocale()[1])
-        _locale_encoding = _locale_encoding.lower()
-except:  # noqa  any other problems determining the locale -> use None
+        _locale_encoding: str | None = (locale.getlocale()[1]
+                                        or locale.getdefaultlocale()[1]
+                                        ).lower()
+except:  # NoQA: E722 (catchall)
+    # Any problem determining the locale: use None
     _locale_encoding = None
 try:
     codecs.lookup(_locale_encoding)
@@ -44,7 +53,7 @@ class InputError(OSError): pass
 class OutputError(OSError): pass
 
 
-def check_encoding(stream, encoding):
+def check_encoding(stream: TextIO, encoding: str) -> bool | None:
     """Test, whether the encoding of `stream` matches `encoding`.
 
     Returns
@@ -60,7 +69,7 @@ def check_encoding(stream, encoding):
         return None
 
 
-def error_string(err):
+def error_string(err: BaseException) -> str:
     """Return string representation of Exception `err`.
     """
     return f'{err.__class__.__name__}: {err}'
@@ -73,17 +82,22 @@ class Input(TransformSpec):
     Docutils input objects must provide a `read()` method that
     returns the source, typically as `str` instance.
 
-    Inheriting `TransformSpec` allows input objects to add
-    "transforms" and "unknown_reference_resolvers" to the "Transformer".
-    (Optional for custom input objects since Docutils 0.19.)
+    Inheriting `TransformSpec` allows input objects to add "transforms" to
+    the "Transformer".  (Since Docutils 0.19, input objects are no longer
+    required to be `TransformSpec` instances.)
     """
 
-    component_type = 'input'
+    component_type: Final = 'input'
 
-    default_source_path = None
+    default_source_path: ClassVar[str | None] = None
 
-    def __init__(self, source=None, source_path=None, encoding=None,
-                 error_handler='strict'):
+    def __init__(
+        self,
+        source: str | TextIO | nodes.document | None = None,
+        source_path: StrPath | None = None,
+        encoding: str | Literal['unicode'] | None = 'utf-8',
+        error_handler: str | None = 'strict',
+    ) -> None:
         self.encoding = encoding
         """Text encoding for the input source."""
 
@@ -102,15 +116,15 @@ class Input(TransformSpec):
         self.successful_encoding = None
         """The encoding that successfully decoded the source data."""
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return '%s: source=%r, source_path=%r' % (self.__class__, self.source,
                                                   self.source_path)
 
-    def read(self):
+    def read(self) -> str:
         """Return input as `str`. Define in subclasses."""
         raise NotImplementedError
 
-    def decode(self, data):
+    def decode(self, data: str | bytes) -> str:
         """
         Decode `data` if required.
 
@@ -138,7 +152,9 @@ class Input(TransformSpec):
             # explicitly given.
             encoding_candidates = [self.encoding]
         else:
-            data_encoding = self.determine_encoding_from_data(data)
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', category=DeprecationWarning)
+                data_encoding = self.determine_encoding_from_data(data)
             if data_encoding:
                 # `data` declares its encoding with  "magic comment" or BOM,
                 encoding_candidates = [data_encoding]
@@ -148,9 +164,16 @@ class Input(TransformSpec):
                 # data that *IS* UTF-8:
                 encoding_candidates = ['utf-8']
                 # If UTF-8 fails, fall back to the locale's preferred encoding:
-                fallback = locale.getpreferredencoding(do_setlocale=False)
+                if sys.version_info[:2] >= (3, 11):
+                    fallback = locale.getencoding()
+                else:
+                    fallback = locale.getpreferredencoding(do_setlocale=False)
                 if fallback and fallback.lower() != 'utf-8':
                     encoding_candidates.append(fallback)
+        if not self.encoding and encoding_candidates[0] != 'utf-8':
+            warnings.warn('Input encoding auto-detection will be removed and '
+                          'the encoding values None and "" become invalid '
+                          'in Docutils 1.0.', DeprecationWarning, stacklevel=2)
         for enc in encoding_candidates:
             try:
                 decoded = str(data, enc, self.error_handler)
@@ -164,24 +187,35 @@ class Input(TransformSpec):
             f'{", ".join(repr(enc) for enc in encoding_candidates)}.\n'
             f'({error_string(error)})')
 
-    coding_slug = re.compile(br"coding[:=]\s*([-\w.]+)")
+    coding_slug: ClassVar[re.Pattern[bytes]] = re.compile(
+        br'coding[:=]\s*([-\w.]+)'
+    )
     """Encoding declaration pattern."""
 
-    byte_order_marks = ((codecs.BOM_UTF32_BE, 'utf-32'),
-                        (codecs.BOM_UTF32_LE, 'utf-32'),
-                        (codecs.BOM_UTF8, 'utf-8-sig'),
-                        (codecs.BOM_UTF16_BE, 'utf-16'),
-                        (codecs.BOM_UTF16_LE, 'utf-16'),
-                        )
+    byte_order_marks: ClassVar[tuple[tuple[bytes, str], ...]] = (
+        (codecs.BOM_UTF32_BE, 'utf-32'),
+        (codecs.BOM_UTF32_LE, 'utf-32'),
+        (codecs.BOM_UTF8, 'utf-8-sig'),
+        (codecs.BOM_UTF16_BE, 'utf-16'),
+        (codecs.BOM_UTF16_LE, 'utf-16'),
+    )
     """Sequence of (start_bytes, encoding) tuples for encoding detection.
     The first bytes of input data are checked against the start_bytes strings.
-    A match indicates the given encoding."""
+    A match indicates the given encoding.
 
-    def determine_encoding_from_data(self, data):
+    Internal. Will be removed in Docutils 1.0.
+    """
+
+    def determine_encoding_from_data(self, data: bytes) -> str | None:
         """
         Try to determine the encoding of `data` by looking *in* `data`.
         Check for a byte order mark (BOM) or an encoding declaration.
+
+        Deprecated. Will be removed in Docutils 1.0.
         """
+        warnings.warn('docutils.io.Input.determine_encoding_from_data() '
+                      'will be removed in Docutils 1.0.',
+                      DeprecationWarning, stacklevel=2)
         # check for a byte order mark:
         for start_bytes, encoding in self.byte_order_marks:
             if data.startswith(start_bytes):
@@ -193,7 +227,7 @@ class Input(TransformSpec):
                 return match.group(1).decode('ascii')
         return None
 
-    def isatty(self):
+    def isatty(self) -> bool:
         """Return True, if the input source is connected to a TTY device."""
         try:
             return self.source.isatty()
@@ -208,41 +242,46 @@ class Output(TransformSpec):
     Docutils output objects must provide a `write()` method that
     expects and handles one argument (the output).
 
-    Inheriting `TransformSpec` allows output objects to add
-    "transforms" and "unknown_reference_resolvers" to the "Transformer".
-    (Optional for custom output objects since Docutils 0.19.)
+    Inheriting `TransformSpec` allows output objects to add "transforms" to
+    the "Transformer".  (Since Docutils 0.19, output objects are no longer
+    required to be `TransformSpec` instances.)
     """
 
-    component_type = 'output'
+    component_type: Final = 'output'
 
-    default_destination_path = None
+    default_destination_path: ClassVar[str | None] = None
 
-    def __init__(self, destination=None, destination_path=None,
-                 encoding=None, error_handler='strict'):
-        self.encoding = encoding
+    def __init__(
+        self,
+        destination: TextIO | str | bytes | None = None,
+        destination_path: StrPath | None = None,
+        encoding: str | None = None,
+        error_handler: str | None = 'strict',
+    ) -> None:
+        self.encoding: str | None = encoding
         """Text encoding for the output destination."""
 
-        self.error_handler = error_handler or 'strict'
+        self.error_handler: str = error_handler or 'strict'
         """Text encoding error handler."""
 
-        self.destination = destination
+        self.destination: TextIO | str | bytes | None = destination
         """The destination for output data."""
 
-        self.destination_path = destination_path
+        self.destination_path: StrPath | None = destination_path
         """A text reference to the destination."""
 
         if not destination_path:
             self.destination_path = self.default_destination_path
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return ('%s: destination=%r, destination_path=%r'
                 % (self.__class__, self.destination, self.destination_path))
 
-    def write(self, data):
+    def write(self, data: str | bytes) -> str | bytes | None:
         """Write `data`. Define in subclasses."""
         raise NotImplementedError
 
-    def encode(self, data):
+    def encode(self, data: str | bytes) -> str | bytes:
         """
         Encode and return `data`.
 
@@ -266,13 +305,16 @@ class Output(TransformSpec):
 class ErrorOutput:
     """
     Wrapper class for file-like error streams with
-    failsafe de- and encoding of `str`, `bytes`, `unicode` and
-    `Exception` instances.
+    failsafe de- and encoding of `str`, `bytes`, and `Exception` instances.
     """
 
-    def __init__(self, destination=None, encoding=None,
-                 encoding_errors='backslashreplace',
-                 decoding_errors='replace'):
+    def __init__(
+        self,
+        destination: TextIO | BinaryIO | str | Literal[False] | None = None,
+        encoding: str | None = None,
+        encoding_errors: str = 'backslashreplace',
+        decoding_errors: str = 'replace',
+    ) -> None:
         """
         :Parameters:
             - `destination`: a file-like object,
@@ -290,20 +332,24 @@ class ErrorOutput:
         elif isinstance(destination, str):
             destination = open(destination, 'w')
 
-        self.destination = destination
+        self.destination: TextIO | BinaryIO | Literal[False] = destination
         """Where warning output is sent."""
 
-        self.encoding = (encoding or getattr(destination, 'encoding', None)
-                         or _locale_encoding or 'ascii')
+        self.encoding: str = (
+            encoding
+            or getattr(destination, 'encoding', None)
+            or _locale_encoding
+            or 'ascii'
+        )
         """The output character encoding."""
 
-        self.encoding_errors = encoding_errors
+        self.encoding_errors: str = encoding_errors
         """Encoding error handler."""
 
-        self.decoding_errors = decoding_errors
+        self.decoding_errors: str = decoding_errors
         """Decoding error handler."""
 
-    def write(self, data):
+    def write(self, data: str | bytes | Exception) -> None:
         """
         Write `data` to self.destination. Ignore, if self.destination is False.
 
@@ -313,23 +359,29 @@ class ErrorOutput:
             return
         if isinstance(data, Exception):
             data = str(data)
+        # The destination is either opened in text or binary mode.
+        # If data has the wrong type, try to convert it.
         try:
             self.destination.write(data)
         except UnicodeEncodeError:
-            self.destination.write(data.encode(self.encoding,
-                                               self.encoding_errors))
+            # Encoding data from string to bytes failed with the
+            # destination's encoding and error handler.
+            # Try again with our own encoding and error handler.
+            binary = data.encode(self.encoding, self.encoding_errors)
+            self.destination.write(binary)
         except TypeError:
             if isinstance(data, str):  # destination may expect bytes
-                self.destination.write(data.encode(self.encoding,
-                                                   self.encoding_errors))
+                binary = data.encode(self.encoding, self.encoding_errors)
+                self.destination.write(binary)
             elif self.destination in (sys.stderr, sys.stdout):
                 # write bytes to raw stream
                 self.destination.buffer.write(data)
             else:
-                self.destination.write(str(data, self.encoding,
-                                           self.decoding_errors))
+                # destination in text mode, write str
+                string = data.decode(self.encoding, self.decoding_errors)
+                self.destination.write(string)
 
-    def close(self):
+    def close(self) -> None:
         """
         Close the error-output stream.
 
@@ -343,7 +395,7 @@ class ErrorOutput:
         except AttributeError:
             pass
 
-    def isatty(self):
+    def isatty(self) -> bool:
         """Return True, if the destination is connected to a TTY device."""
         try:
             return self.destination.isatty()
@@ -356,9 +408,15 @@ class FileInput(Input):
     """
     Input for single, simple file-like objects.
     """
-    def __init__(self, source=None, source_path=None,
-                 encoding=None, error_handler='strict',
-                 autoclose=True, mode='r'):
+    def __init__(
+        self,
+        source: TextIO | None = None,
+        source_path: StrPath | None = None,
+        encoding: str | Literal['unicode'] | None = 'utf-8',
+        error_handler: str | None = 'strict',
+        autoclose: bool = True,
+        mode: Literal['r', 'rb', 'br'] = 'r'
+    ) -> None:
         """
         :Parameters:
             - `source`: either a file-like object (which is read directly), or
@@ -371,7 +429,7 @@ class FileInput(Input):
             - `mode`: how the file is to be opened (see standard function
               `open`). The default is read only ('r').
         """
-        Input.__init__(self, source, source_path, encoding, error_handler)
+        super().__init__(source, source_path, encoding, error_handler)
         self.autoclose = autoclose
         self._stderr = ErrorOutput()
 
@@ -396,7 +454,7 @@ class FileInput(Input):
             except AttributeError:
                 pass
 
-    def read(self):
+    def read(self) -> str:
         """
         Read and decode a single file, return as `str`.
         """
@@ -415,13 +473,13 @@ class FileInput(Input):
                 self.close()
         return data
 
-    def readlines(self):
+    def readlines(self) -> list[str]:
         """
         Return lines of a single file as list of strings.
         """
         return self.read().splitlines(True)
 
-    def close(self):
+    def close(self) -> None:
         if self.source is not sys.stdin:
             self.source.close()
 
@@ -430,17 +488,23 @@ class FileOutput(Output):
 
     """Output for single, simple file-like objects."""
 
-    default_destination_path = '<file>'
+    default_destination_path: Final = '<file>'
 
-    mode = 'w'
+    mode: Literal['w', 'a', 'x', 'wb', 'ab', 'xb', 'bw', 'ba', 'bx'] = 'w'
     """The mode argument for `open()`."""
     # 'wb' for binary (e.g. OpenOffice) files (see also `BinaryFileOutput`).
     # (Do not use binary mode ('wb') for text files, as this prevents the
     # conversion of newlines to the system specific default.)
 
-    def __init__(self, destination=None, destination_path=None,
-                 encoding=None, error_handler='strict', autoclose=True,
-                 handle_io_errors=None, mode=None):
+    def __init__(self,
+                 destination: TextIO | None = None,
+                 destination_path: StrPath | None = None,
+                 encoding: str | None = None,
+                 error_handler: str | None = 'strict',
+                 autoclose: bool = True,
+                 handle_io_errors: None = None,
+                 mode=None,
+                 ) -> None:
         """
         :Parameters:
             - `destination`: either a file-like object (which is written
@@ -457,8 +521,8 @@ class FileOutput(Output):
               `open`). The default is 'w', providing universal newline
               support for text files.
         """
-        Output.__init__(self, destination, destination_path,
-                        encoding, error_handler)
+        super().__init__(
+            destination, destination_path, encoding, error_handler)
         self.opened = True
         self.autoclose = autoclose
         if handle_io_errors is not None:
@@ -485,7 +549,7 @@ class FileOutput(Output):
             except AttributeError:
                 pass
 
-    def open(self):
+    def open(self) -> None:
         # Specify encoding
         if 'b' not in self.mode:
             kwargs = {'encoding': self.encoding,
@@ -499,7 +563,7 @@ class FileOutput(Output):
                               self.destination_path)
         self.opened = True
 
-    def write(self, data):
+    def write(self, data: str | bytes) -> str | bytes:
         """Write `data` to a single file, also return it.
 
         `data` can be a `str` or `bytes` instance.
@@ -545,7 +609,7 @@ class FileOutput(Output):
                 self.close()
         return data
 
-    def close(self):
+    def close(self) -> None:
         if self.destination not in (sys.stdout, sys.stderr):
             self.destination.close()
             self.opened = False
@@ -554,18 +618,28 @@ class FileOutput(Output):
 class BinaryFileOutput(FileOutput):
     """
     A version of docutils.io.FileOutput which writes to a binary file.
+
+    Deprecated. Use `FileOutput` (works with `bytes` since Docutils 0.20).
+    Will be removed in Docutils 0.24.
     """
-    # Used by core.publish_cmdline_to_binary() which in turn is used by
-    # tools/rst2odt.py but not by core.rst2odt().
+    # Used by core.publish_cmdline_to_binary() which is also deprecated.
     mode = 'wb'
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        warnings.warn('"BinaryFileOutput" is obsoleted by "FileOutput"'
+                      ' and will be removed in Docutils 0.24.',
+                      DeprecationWarning, stacklevel=2)
+        super().__init__(*args, **kwargs)
 
 
 class StringInput(Input):
     """Input from a `str` or `bytes` instance."""
 
-    default_source_path = '<string>'
+    source: str | bytes
 
-    def read(self):
+    default_source_path: Final = '<string>'
+
+    def read(self) -> str:
         """Return the source as `str` instance.
 
         Decode, if required (see `Input.decode`).
@@ -579,9 +653,11 @@ class StringOutput(Output):
     Provisional.
     """
 
-    default_destination_path = '<string>'
+    destination: str | bytes
 
-    def write(self, data):
+    default_destination_path: Final = '<string>'
+
+    def write(self, data: str | bytes) -> str | bytes:
         """Store `data` in `self.destination`, and return it.
 
         If `self.encoding` is set to the pseudo encoding name "unicode",
@@ -604,9 +680,11 @@ class NullInput(Input):
 
     """Degenerate input: read nothing."""
 
-    default_source_path = 'null input'
+    source: None
 
-    def read(self):
+    default_source_path: Final = 'null input'
+
+    def read(self) -> str:
         """Return an empty string."""
         return ''
 
@@ -615,11 +693,12 @@ class NullOutput(Output):
 
     """Degenerate output: write nothing."""
 
-    default_destination_path = 'null output'
+    destination: None
 
-    def write(self, data):
+    default_destination_path: Final = 'null output'
+
+    def write(self, data: str | bytes) -> None:
         """Do nothing, return None."""
-        pass
 
 
 class DocTreeInput(Input):
@@ -630,8 +709,10 @@ class DocTreeInput(Input):
     The document tree must be passed in the ``source`` parameter.
     """
 
-    default_source_path = 'doctree input'
+    source: nodes.document
 
-    def read(self):
+    default_source_path: Final = 'doctree input'
+
+    def read(self) -> nodes.document:
         """Return the document tree."""
         return self.source

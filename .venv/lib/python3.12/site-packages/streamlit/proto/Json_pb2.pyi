@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -50,4 +56,4 @@ class Json(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["_max_expand_depth", b"_max_expand_depth", "body", b"body", "expanded", b"expanded", "max_expand_depth", b"max_expand_depth"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["_max_expand_depth", b"_max_expand_depth"]) -> typing.Literal["max_expand_depth"] | None: ...
 
-global___Json = Json
+Global___Json: typing_extensions.TypeAlias = Json

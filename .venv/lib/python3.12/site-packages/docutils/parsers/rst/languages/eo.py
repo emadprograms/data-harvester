@@ -1,4 +1,4 @@
-# $Id: eo.py 9452 2023-09-27 00:11:54Z milde $
+# $Id: eo.py 9782 2024-07-29 12:37:02Z milde $
 # Author: Marcelo Huerta San Martin <richieadler@users.sourceforge.net>
 # Copyright: This module has been placed in the public domain.
 
@@ -29,7 +29,6 @@ directives = {
     'helpeto': 'tip',
     'averto': 'warning',
     'sciigo': 'admonition',
-    'admono': 'admonition',  # sic! kept for backwards compatibiltity
     'flankteksto': 'sidebar',
     'temo': 'topic',
     'linea-bloko': 'line-block',

@@ -1,4 +1,4 @@
-# $Id: images.py 9500 2023-12-14 22:38:49Z milde $
+# $Id: images.py 10102 2025-04-23 15:54:44Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -24,7 +24,7 @@ from docutils import nodes
 from docutils.nodes import fully_normalize_name, whitespace_normalize_name
 from docutils.parsers.rst import Directive
 from docutils.parsers.rst import directives, states
-from docutils.parsers.rst.roles import set_classes
+from docutils.parsers.rst.roles import normalize_options
 
 
 class Image(Directive):
@@ -81,7 +81,7 @@ class Image(Directive):
         if 'target' in self.options:
             block = states.escape2null(
                 self.options['target']).splitlines()
-            block = [line for line in block]
+            block = list(block)
             target_type, data = self.state.parse_target(
                 block, self.block_text, self.lineno)
             if target_type == 'refuri':
@@ -95,8 +95,8 @@ class Image(Directive):
             else:                           # malformed target
                 messages.append(data)       # data is a system message
             del self.options['target']
-        set_classes(self.options)
-        image_node = nodes.image(self.block_text, **self.options)
+        options = normalize_options(self.options)
+        image_node = nodes.image(self.block_text, **options)
         (image_node.source,
          image_node.line) = self.state_machine.get_source_and_line(self.lineno)
         self.add_name(image_node)
@@ -119,14 +119,17 @@ class Figure(Image):
             return directives.length_or_percentage_or_unitless(argument, 'px')
 
     option_spec = Image.option_spec.copy()
+
     option_spec['figwidth'] = figwidth_value
     option_spec['figclass'] = directives.class_option
+    option_spec['figname'] = directives.unchanged
     option_spec['align'] = align
     has_content = True
 
     def run(self):
         figwidth = self.options.pop('figwidth', None)
         figclasses = self.options.pop('figclass', None)
+        figname = self.options.pop('figname', None)
         align = self.options.pop('align', None)
         (image_node,) = Image.run(self)
         if isinstance(image_node, nodes.system_message):
@@ -149,25 +152,35 @@ class Figure(Image):
             figure_node['width'] = figwidth
         if figclasses:
             figure_node['classes'] += figclasses
+        if figname:
+            figure_node['names'].append(nodes.fully_normalize_name(figname))
+            self.state.document.note_explicit_target(figure_node, figure_node)
         if align:
             figure_node['align'] = align
         if self.content:
+            # optional caption (single paragraph or empty comment)
+            # + optional legend (arbitrary body elements).
             node = nodes.Element()          # anonymous container for parsing
             self.state.nested_parse(self.content, self.content_offset, node)
-            first_node = node[0]
-            if isinstance(first_node, nodes.paragraph):
-                caption = nodes.caption(first_node.rawsource, '',
-                                        *first_node.children)
-                caption.source = first_node.source
-                caption.line = first_node.line
-                figure_node += caption
-            elif not (isinstance(first_node, nodes.comment)
-                      and len(first_node) == 0):
+            for i, child in enumerate(node):
+                # skip temporary nodes that will be removed by transforms
+                if isinstance(child, (nodes.target, nodes.pending)):
+                    figure_node += child
+                    continue
+                if isinstance(child, nodes.paragraph):
+                    caption = nodes.caption(child.rawsource, '',
+                                            *child.children)
+                    caption.source = child.source
+                    caption.line = child.line
+                    figure_node += caption
+                    break
+                if isinstance(child, nodes.comment) and len(child) == 0:
+                    break
                 error = self.reporter.error(
-                      'Figure caption must be a paragraph or empty comment.',
-                      nodes.literal_block(self.block_text, self.block_text),
-                      line=self.lineno)
+                    'Figure caption must be a paragraph or empty comment.',
+                    nodes.literal_block(self.block_text, self.block_text),
+                    line=self.lineno)
                 return [figure_node, error]
-            if len(node) > 1:
-                figure_node += nodes.legend('', *node[1:])
+            if len(node) > i+1:
+                figure_node += nodes.legend('', *node[i+1:])
         return [figure_node]

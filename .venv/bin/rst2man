@@ -1,4 +1,4 @@
-#!/Users/tradestation/Documents/GitHub/data-harvester/.venv/bin/python3.12
+#!/Users/emadarshadalam/Documents/GitHub/data-harvester/.venv/bin/python3.12
 import sys
 from docutils.core import rst2man
 if __name__ == '__main__':

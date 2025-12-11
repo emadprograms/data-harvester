@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -38,6 +44,7 @@ class Button(google.protobuf.message.Message):
     DISABLED_FIELD_NUMBER: builtins.int
     USE_CONTAINER_WIDTH_FIELD_NUMBER: builtins.int
     ICON_FIELD_NUMBER: builtins.int
+    SHORTCUT_FIELD_NUMBER: builtins.int
     id: builtins.str
     label: builtins.str
     default: builtins.bool
@@ -53,6 +60,7 @@ class Button(google.protobuf.message.Message):
     use_container_width: builtins.bool
     """DEPRECATED: Use widthConfig on Element.proto instead."""
     icon: builtins.str
+    shortcut: builtins.str
     def __init__(
         self,
         *,
@@ -66,7 +74,8 @@ class Button(google.protobuf.message.Message):
         disabled: builtins.bool = ...,
         use_container_width: builtins.bool = ...,
         icon: builtins.str = ...,
+        shortcut: builtins.str = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["default", b"default", "disabled", b"disabled", "form_id", b"form_id", "help", b"help", "icon", b"icon", "id", b"id", "is_form_submitter", b"is_form_submitter", "label", b"label", "type", b"type", "use_container_width", b"use_container_width"]) -> None: ...
+    def ClearField(self, field_name: typing.Literal["default", b"default", "disabled", b"disabled", "form_id", b"form_id", "help", b"help", "icon", b"icon", "id", b"id", "is_form_submitter", b"is_form_submitter", "label", b"label", "shortcut", b"shortcut", "type", b"type", "use_container_width", b"use_container_width"]) -> None: ...
 
-global___Button = Button
+Global___Button: typing_extensions.TypeAlias = Button

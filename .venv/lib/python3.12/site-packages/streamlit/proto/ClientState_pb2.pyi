@@ -23,7 +23,13 @@ import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.WidgetStates_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -68,7 +74,7 @@ class ContextInfo(google.protobuf.message.Message):
     @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["_url", b"_url"]) -> typing.Literal["url"] | None: ...
 
-global___ContextInfo = ContextInfo
+Global___ContextInfo: typing_extensions.TypeAlias = ContextInfo
 
 @typing.final
 class ClientState(google.protobuf.message.Message):
@@ -96,7 +102,7 @@ class ClientState(google.protobuf.message.Message):
         """
 
     @property
-    def context_info(self) -> global___ContextInfo: ...
+    def context_info(self) -> Global___ContextInfo: ...
     def __init__(
         self,
         *,
@@ -107,9 +113,9 @@ class ClientState(google.protobuf.message.Message):
         fragment_id: builtins.str = ...,
         is_auto_rerun: builtins.bool = ...,
         cached_message_hashes: collections.abc.Iterable[builtins.str] | None = ...,
-        context_info: global___ContextInfo | None = ...,
+        context_info: Global___ContextInfo | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["context_info", b"context_info", "widget_states", b"widget_states"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["cached_message_hashes", b"cached_message_hashes", "context_info", b"context_info", "fragment_id", b"fragment_id", "is_auto_rerun", b"is_auto_rerun", "page_name", b"page_name", "page_script_hash", b"page_script_hash", "query_string", b"query_string", "widget_states", b"widget_states"]) -> None: ...
 
-global___ClientState = ClientState
+Global___ClientState: typing_extensions.TypeAlias = ClientState

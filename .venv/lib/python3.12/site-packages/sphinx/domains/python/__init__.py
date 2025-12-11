@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence, Set
     from typing import Any, ClassVar
 
-    from docutils.nodes import Element, Node, TextElement
+    from docutils.nodes import Element, Node
 
     from sphinx.addnodes import desc_signature, pending_xref
     from sphinx.application import Sphinx
@@ -52,17 +52,9 @@ from sphinx.domains.python._object import (  # NoQA: F401
     py_sig_re,
 )
 
-logger = logging.getLogger(__name__)
+_TYPING_ALL = frozenset(typing.__all__)
 
-pairindextypes = {
-    'module': 'module',
-    'keyword': 'keyword',
-    'operator': 'operator',
-    'object': 'object',
-    'exception': 'exception',
-    'statement': 'statement',
-    'builtin': 'built-in function',
-}
+logger = logging.getLogger(__name__)
 
 
 class ObjectEntry(NamedTuple):
@@ -108,7 +100,7 @@ class PyFunction(PyObject):
             modname = self.options.get('module', self.env.ref_context.get('py:module'))
             node_id = signode['ids'][0]
 
-            name, cls = name_cls
+            name, _cls = name_cls
             if modname:
                 text = _('%s() (in module %s)') % (name, modname)
                 self.indexnode['entries'].append(('single', text, node_id, '', None))
@@ -175,7 +167,7 @@ class PyVariable(PyObject):
         return fullname, prefix
 
     def get_index_text(self, modname: str, name_cls: tuple[str, str]) -> str:
-        name, cls = name_cls
+        name, _cls = name_cls
         if modname:
             return _('%s (in module %s)') % (name, modname)
         else:
@@ -268,7 +260,7 @@ class PyMethod(PyObject):
         return prefix
 
     def get_index_text(self, modname: str, name_cls: tuple[str, str]) -> str:
-        name, cls = name_cls
+        name, _cls = name_cls
         try:
             clsname, methname = name.rsplit('.', 1)
             if modname and self.config.add_module_names:
@@ -364,7 +356,7 @@ class PyAttribute(PyObject):
         return fullname, prefix
 
     def get_index_text(self, modname: str, name_cls: tuple[str, str]) -> str:
-        name, cls = name_cls
+        name, _cls = name_cls
         try:
             clsname, attrname = name.rsplit('.', 1)
             if modname and self.config.add_module_names:
@@ -424,7 +416,7 @@ class PyProperty(PyObject):
         return prefix
 
     def get_index_text(self, modname: str, name_cls: tuple[str, str]) -> str:
-        name, cls = name_cls
+        name, _cls = name_cls
         try:
             clsname, attrname = name.rsplit('.', 1)
             if modname and self.config.add_module_names:
@@ -464,7 +456,7 @@ class PyTypeAlias(PyObject):
         return fullname, prefix
 
     def get_index_text(self, modname: str, name_cls: tuple[str, str]) -> str:
-        name, cls = name_cls
+        name, _cls = name_cls
         try:
             clsname, attrname = name.rsplit('.', 1)
             if modname and self.config.add_module_names:
@@ -594,23 +586,17 @@ class PyXRefRole(XRefRole):
 
 
 class _PyDecoXRefRole(PyXRefRole):
-    def __init__(
+    def process_link(
         self,
-        fix_parens: bool = False,
-        lowercase: bool = False,
-        nodeclass: type[Element] | None = None,
-        innernodeclass: type[TextElement] | None = None,
-        warn_dangling: bool = False,
-    ) -> None:
-        super().__init__(
-            fix_parens=True,
-            lowercase=lowercase,
-            nodeclass=nodeclass,
-            innernodeclass=innernodeclass,
-            warn_dangling=warn_dangling,
+        env: BuildEnvironment,
+        refnode: Element,
+        has_explicit_title: bool,
+        title: str,
+        target: str,
+    ) -> tuple[str, str]:
+        title, target = super().process_link(
+            env, refnode, has_explicit_title, title, target
         )
-
-    def update_title_and_target(self, title: str, target: str) -> tuple[str, str]:
         return f'@{title}', target
 
 
@@ -675,7 +661,7 @@ class PythonModuleIndex(Index):
 
             entries = content.setdefault(modname[0].lower(), [])
 
-            package = modname.split('.', maxsplit=1)[0]
+            package = modname.partition('.')[0]
             if package != modname:
                 # it's a submodule
                 if prev_modname == package:
@@ -736,7 +722,7 @@ class PythonDomain(Domain):
 
     name = 'py'
     label = 'Python'
-    object_types: dict[str, ObjType] = {
+    object_types = {
         'function': ObjType(_('function'), 'func', 'obj'),
         'data': ObjType(_('data'), 'data', 'obj'),
         'class': ObjType(_('class'), 'class', 'exc', 'obj'),
@@ -746,7 +732,7 @@ class PythonDomain(Domain):
         'staticmethod': ObjType(_('static method'), 'meth', 'obj'),
         'attribute': ObjType(_('attribute'), 'attr', 'obj'),
         'property': ObjType(_('property'), 'attr', '_prop', 'obj'),
-        'type': ObjType(_('type alias'), 'type', 'obj'),
+        'type': ObjType(_('type alias'), 'type', 'class', 'obj'),
         'module': ObjType(_('module'), 'mod', 'obj'),
     }
 
@@ -779,7 +765,7 @@ class PythonDomain(Domain):
         'mod': PyXRefRole(),
         'obj': PyXRefRole(),
     }
-    initial_data: dict[str, dict[str, tuple[Any]]] = {
+    initial_data: ClassVar[dict[str, dict[str, tuple[Any]]]] = {
         'objects': {},  # fullname -> docname, objtype
         'modules': {},  # modname -> docname, synopsis, platform, deprecated
     }
@@ -822,7 +808,9 @@ class PythonDomain(Domain):
                     other.docname,
                     location=location,
                 )
-        self.objects[name] = ObjectEntry(self.env.docname, node_id, objtype, aliased)
+        self.objects[name] = ObjectEntry(
+            self.env.current_document.docname, node_id, objtype, aliased
+        )
 
     @property
     def modules(self) -> dict[str, ModuleEntry]:
@@ -836,7 +824,7 @@ class PythonDomain(Domain):
         .. versionadded:: 2.1
         """
         self.modules[name] = ModuleEntry(
-            docname=self.env.docname,
+            docname=self.env.current_document.docname,
             node_id=node_id,
             synopsis=synopsis,
             platform=platform,
@@ -954,6 +942,14 @@ class PythonDomain(Domain):
         searchmode = 1 if node.hasattr('refspecific') else 0
         matches = self.find_obj(env, modname, clsname, target, type, searchmode)
 
+        if not matches and type == 'class':
+            # fallback to data/attr (for type aliases)
+            # type aliases are documented as data/attr but referenced as class
+            matches = self.find_obj(env, modname, clsname, target, 'data', searchmode)
+            if not matches:
+                matches = self.find_obj(
+                    env, modname, clsname, target, 'attr', searchmode
+                )
         if not matches and type == 'attr':
             # fallback to meth (for property; Sphinx 2.4.x)
             # this ensures that `:attr:` role continues to refer to the old property entry
@@ -1082,13 +1078,6 @@ def builtin_resolver(
     app: Sphinx, env: BuildEnvironment, node: pending_xref, contnode: Element
 ) -> Element | None:
     """Do not emit nitpicky warnings for built-in types."""
-
-    def istyping(s: str) -> bool:
-        if s.startswith('typing.'):
-            s = s.split('.', 1)[1]
-
-        return s in typing.__all__
-
     if node.get('refdomain') != 'py':
         return None
     elif node.get('reftype') in {'class', 'obj'} and node.get('reftarget') == 'None':
@@ -1098,11 +1087,15 @@ def builtin_resolver(
         if inspect.isclass(getattr(builtins, reftarget, None)):
             # built-in class
             return contnode
-        if istyping(reftarget):
+        if _is_typing(reftarget):
             # typing class
             return contnode
 
     return None
+
+
+def _is_typing(s: str, /) -> bool:
+    return s.removeprefix('typing.') in _TYPING_ALL
 
 
 def setup(app: Sphinx) -> ExtensionMetadata:

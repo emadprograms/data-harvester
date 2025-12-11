@@ -69,7 +69,7 @@ class NewSession(google.protobuf.message.Message):
     main_script_hash: builtins.str
     """Hash of the main script running (ie streamlit run main_script.py)"""
     @property
-    def initialize(self) -> global___Initialize:
+    def initialize(self) -> Global___Initialize:
         """Initialization data. This data does *not* change from rerun to rerun,
         but we send it every time so that we don't have to track whether the
         client has already received it. The client is responsible for
@@ -77,13 +77,13 @@ class NewSession(google.protobuf.message.Message):
         """
 
     @property
-    def config(self) -> global___Config:
+    def config(self) -> Global___Config:
         """Config options that are (mostly) defined in the .streamlit/config.toml
         file.
         """
 
     @property
-    def custom_theme(self) -> global___CustomThemeConfig:
+    def custom_theme(self) -> Global___CustomThemeConfig:
         """Theme configuration options defined in the .streamlit/config.toml file.
         See the "theme" config section.
         """
@@ -101,12 +101,12 @@ class NewSession(google.protobuf.message.Message):
     def __init__(
         self,
         *,
-        initialize: global___Initialize | None = ...,
+        initialize: Global___Initialize | None = ...,
         script_run_id: builtins.str = ...,
         name: builtins.str = ...,
         main_script_path: builtins.str = ...,
-        config: global___Config | None = ...,
-        custom_theme: global___CustomThemeConfig | None = ...,
+        config: Global___Config | None = ...,
+        custom_theme: Global___CustomThemeConfig | None = ...,
         app_pages: collections.abc.Iterable[streamlit.proto.AppPage_pb2.AppPage] | None = ...,
         page_script_hash: builtins.str = ...,
         fragment_ids_this_run: collections.abc.Iterable[builtins.str] | None = ...,
@@ -115,7 +115,7 @@ class NewSession(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["config", b"config", "custom_theme", b"custom_theme", "initialize", b"initialize"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["app_pages", b"app_pages", "config", b"config", "custom_theme", b"custom_theme", "fragment_ids_this_run", b"fragment_ids_this_run", "initialize", b"initialize", "main_script_hash", b"main_script_hash", "main_script_path", b"main_script_path", "name", b"name", "page_script_hash", b"page_script_hash", "script_run_id", b"script_run_id"]) -> None: ...
 
-global___NewSession = NewSession
+Global___NewSession: typing_extensions.TypeAlias = NewSession
 
 @typing.final
 class Initialize(google.protobuf.message.Message):
@@ -144,9 +144,9 @@ class Initialize(google.protobuf.message.Message):
     is_hello: builtins.bool
     """True if the command used to start this app was `streamlit hello`."""
     @property
-    def user_info(self) -> global___UserInfo: ...
+    def user_info(self) -> Global___UserInfo: ...
     @property
-    def environment_info(self) -> global___EnvironmentInfo: ...
+    def environment_info(self) -> Global___EnvironmentInfo: ...
     @property
     def session_status(self) -> streamlit.proto.SessionStatus_pb2.SessionStatus:
         """The session status at the time the connection was established"""
@@ -154,8 +154,8 @@ class Initialize(google.protobuf.message.Message):
     def __init__(
         self,
         *,
-        user_info: global___UserInfo | None = ...,
-        environment_info: global___EnvironmentInfo | None = ...,
+        user_info: Global___UserInfo | None = ...,
+        environment_info: Global___EnvironmentInfo | None = ...,
         session_status: streamlit.proto.SessionStatus_pb2.SessionStatus | None = ...,
         command_line: builtins.str = ...,
         session_id: builtins.str = ...,
@@ -164,7 +164,7 @@ class Initialize(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["environment_info", b"environment_info", "session_status", b"session_status", "user_info", b"user_info"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["command_line", b"command_line", "environment_info", b"environment_info", "is_hello", b"is_hello", "session_id", b"session_id", "session_status", b"session_status", "user_info", b"user_info"]) -> None: ...
 
-global___Initialize = Initialize
+Global___Initialize: typing_extensions.TypeAlias = Initialize
 
 @typing.final
 class Config(google.protobuf.message.Message):
@@ -212,7 +212,7 @@ class Config(google.protobuf.message.Message):
     """See config option "ui.hideTopBar"."""
     hide_sidebar_nav: builtins.bool
     """See config option "client.showSidebarNavigation"."""
-    toolbar_mode: global___Config.ToolbarMode.ValueType
+    toolbar_mode: Global___Config.ToolbarMode.ValueType
     def __init__(
         self,
         *,
@@ -222,11 +222,11 @@ class Config(google.protobuf.message.Message):
         allow_run_on_save: builtins.bool = ...,
         hide_top_bar: builtins.bool = ...,
         hide_sidebar_nav: builtins.bool = ...,
-        toolbar_mode: global___Config.ToolbarMode.ValueType = ...,
+        toolbar_mode: Global___Config.ToolbarMode.ValueType = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["allow_run_on_save", b"allow_run_on_save", "gather_usage_stats", b"gather_usage_stats", "hide_sidebar_nav", b"hide_sidebar_nav", "hide_top_bar", b"hide_top_bar", "mapbox_token", b"mapbox_token", "max_cached_message_age", b"max_cached_message_age", "toolbar_mode", b"toolbar_mode"]) -> None: ...
 
-global___Config = Config
+Global___Config: typing_extensions.TypeAlias = Config
 
 @typing.final
 class CustomThemeConfig(google.protobuf.message.Message):
@@ -332,9 +332,9 @@ class CustomThemeConfig(google.protobuf.message.Message):
     secondary_background_color: builtins.str
     background_color: builtins.str
     text_color: builtins.str
-    font: global___CustomThemeConfig.FontFamily.ValueType
+    font: Global___CustomThemeConfig.FontFamily.ValueType
     """DEPRECATED: Use body_font instead:"""
-    base: global___CustomThemeConfig.BaseTheme.ValueType
+    base: Global___CustomThemeConfig.BaseTheme.ValueType
     widget_background_color: builtins.str
     """DEPRECATED: This color is not applied anymore:"""
     widget_border_color: builtins.str
@@ -384,15 +384,15 @@ class CustomThemeConfig(google.protobuf.message.Message):
     violet_text_color: builtins.str
     gray_text_color: builtins.str
     @property
-    def radii(self) -> global___Radii:
+    def radii(self) -> Global___Radii:
         """DEPRECATED: Please use the base_radius theme config instead:"""
 
     @property
-    def font_faces(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___FontFace]: ...
+    def font_faces(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___FontFace]: ...
     @property
-    def font_sources(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___FontSource]: ...
+    def font_sources(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___FontSource]: ...
     @property
-    def font_sizes(self) -> global___FontSizes:
+    def font_sizes(self) -> Global___FontSizes:
         """DEPRECATED: Please use the base_font_size theme config instead:"""
 
     @property
@@ -404,13 +404,13 @@ class CustomThemeConfig(google.protobuf.message.Message):
     @property
     def chart_sequential_colors(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]: ...
     @property
-    def sidebar(self) -> global___CustomThemeConfig:
+    def sidebar(self) -> Global___CustomThemeConfig:
         """Theme sections:"""
 
     @property
-    def light(self) -> global___CustomThemeConfig: ...
+    def light(self) -> Global___CustomThemeConfig: ...
     @property
-    def dark(self) -> global___CustomThemeConfig: ...
+    def dark(self) -> Global___CustomThemeConfig: ...
     def __init__(
         self,
         *,
@@ -418,17 +418,17 @@ class CustomThemeConfig(google.protobuf.message.Message):
         secondary_background_color: builtins.str = ...,
         background_color: builtins.str = ...,
         text_color: builtins.str = ...,
-        font: global___CustomThemeConfig.FontFamily.ValueType = ...,
-        base: global___CustomThemeConfig.BaseTheme.ValueType = ...,
+        font: Global___CustomThemeConfig.FontFamily.ValueType = ...,
+        base: Global___CustomThemeConfig.BaseTheme.ValueType = ...,
         widget_background_color: builtins.str = ...,
         widget_border_color: builtins.str = ...,
-        radii: global___Radii | None = ...,
+        radii: Global___Radii | None = ...,
         heading_font: builtins.str = ...,
         body_font: builtins.str = ...,
         code_font: builtins.str = ...,
-        font_faces: collections.abc.Iterable[global___FontFace] | None = ...,
-        font_sources: collections.abc.Iterable[global___FontSource] | None = ...,
-        font_sizes: global___FontSizes | None = ...,
+        font_faces: collections.abc.Iterable[Global___FontFace] | None = ...,
+        font_sources: collections.abc.Iterable[Global___FontSource] | None = ...,
+        font_sizes: Global___FontSizes | None = ...,
         skeleton_background_color: builtins.str = ...,
         base_radius: builtins.str | None = ...,
         button_radius: builtins.str | None = ...,
@@ -470,9 +470,9 @@ class CustomThemeConfig(google.protobuf.message.Message):
         green_text_color: builtins.str | None = ...,
         violet_text_color: builtins.str | None = ...,
         gray_text_color: builtins.str | None = ...,
-        sidebar: global___CustomThemeConfig | None = ...,
-        light: global___CustomThemeConfig | None = ...,
-        dark: global___CustomThemeConfig | None = ...,
+        sidebar: Global___CustomThemeConfig | None = ...,
+        light: Global___CustomThemeConfig | None = ...,
+        dark: Global___CustomThemeConfig | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["_base_font_size", b"_base_font_size", "_base_font_weight", b"_base_font_weight", "_base_radius", b"_base_radius", "_blue_background_color", b"_blue_background_color", "_blue_color", b"_blue_color", "_blue_text_color", b"_blue_text_color", "_border_color", b"_border_color", "_button_radius", b"_button_radius", "_code_background_color", b"_code_background_color", "_code_font_size", b"_code_font_size", "_code_font_weight", b"_code_font_weight", "_code_text_color", b"_code_text_color", "_dark", b"_dark", "_dataframe_border_color", b"_dataframe_border_color", "_dataframe_header_background_color", b"_dataframe_header_background_color", "_gray_background_color", b"_gray_background_color", "_gray_color", b"_gray_color", "_gray_text_color", b"_gray_text_color", "_green_background_color", b"_green_background_color", "_green_color", b"_green_color", "_green_text_color", b"_green_text_color", "_light", b"_light", "_link_color", b"_link_color", "_link_underline", b"_link_underline", "_orange_background_color", b"_orange_background_color", "_orange_color", b"_orange_color", "_orange_text_color", b"_orange_text_color", "_red_background_color", b"_red_background_color", "_red_color", b"_red_color", "_red_text_color", b"_red_text_color", "_show_sidebar_border", b"_show_sidebar_border", "_show_widget_border", b"_show_widget_border", "_sidebar", b"_sidebar", "_violet_background_color", b"_violet_background_color", "_violet_color", b"_violet_color", "_violet_text_color", b"_violet_text_color", "_yellow_background_color", b"_yellow_background_color", "_yellow_color", b"_yellow_color", "_yellow_text_color", b"_yellow_text_color", "base_font_size", b"base_font_size", "base_font_weight", b"base_font_weight", "base_radius", b"base_radius", "blue_background_color", b"blue_background_color", "blue_color", b"blue_color", "blue_text_color", b"blue_text_color", "border_color", b"border_color", "button_radius", b"button_radius", "code_background_color", b"code_background_color", "code_font_size", b"code_font_size", "code_font_weight", b"code_font_weight", "code_text_color", b"code_text_color", "dark", b"dark", "dataframe_border_color", b"dataframe_border_color", "dataframe_header_background_color", b"dataframe_header_background_color", "font_sizes", b"font_sizes", "gray_background_color", b"gray_background_color", "gray_color", b"gray_color", "gray_text_color", b"gray_text_color", "green_background_color", b"green_background_color", "green_color", b"green_color", "green_text_color", b"green_text_color", "light", b"light", "link_color", b"link_color", "link_underline", b"link_underline", "orange_background_color", b"orange_background_color", "orange_color", b"orange_color", "orange_text_color", b"orange_text_color", "radii", b"radii", "red_background_color", b"red_background_color", "red_color", b"red_color", "red_text_color", b"red_text_color", "show_sidebar_border", b"show_sidebar_border", "show_widget_border", b"show_widget_border", "sidebar", b"sidebar", "violet_background_color", b"violet_background_color", "violet_color", b"violet_color", "violet_text_color", b"violet_text_color", "yellow_background_color", b"yellow_background_color", "yellow_color", b"yellow_color", "yellow_text_color", b"yellow_text_color"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["_base_font_size", b"_base_font_size", "_base_font_weight", b"_base_font_weight", "_base_radius", b"_base_radius", "_blue_background_color", b"_blue_background_color", "_blue_color", b"_blue_color", "_blue_text_color", b"_blue_text_color", "_border_color", b"_border_color", "_button_radius", b"_button_radius", "_code_background_color", b"_code_background_color", "_code_font_size", b"_code_font_size", "_code_font_weight", b"_code_font_weight", "_code_text_color", b"_code_text_color", "_dark", b"_dark", "_dataframe_border_color", b"_dataframe_border_color", "_dataframe_header_background_color", b"_dataframe_header_background_color", "_gray_background_color", b"_gray_background_color", "_gray_color", b"_gray_color", "_gray_text_color", b"_gray_text_color", "_green_background_color", b"_green_background_color", "_green_color", b"_green_color", "_green_text_color", b"_green_text_color", "_light", b"_light", "_link_color", b"_link_color", "_link_underline", b"_link_underline", "_orange_background_color", b"_orange_background_color", "_orange_color", b"_orange_color", "_orange_text_color", b"_orange_text_color", "_red_background_color", b"_red_background_color", "_red_color", b"_red_color", "_red_text_color", b"_red_text_color", "_show_sidebar_border", b"_show_sidebar_border", "_show_widget_border", b"_show_widget_border", "_sidebar", b"_sidebar", "_violet_background_color", b"_violet_background_color", "_violet_color", b"_violet_color", "_violet_text_color", b"_violet_text_color", "_yellow_background_color", b"_yellow_background_color", "_yellow_color", b"_yellow_color", "_yellow_text_color", b"_yellow_text_color", "background_color", b"background_color", "base", b"base", "base_font_size", b"base_font_size", "base_font_weight", b"base_font_weight", "base_radius", b"base_radius", "blue_background_color", b"blue_background_color", "blue_color", b"blue_color", "blue_text_color", b"blue_text_color", "body_font", b"body_font", "border_color", b"border_color", "button_radius", b"button_radius", "chart_categorical_colors", b"chart_categorical_colors", "chart_sequential_colors", b"chart_sequential_colors", "code_background_color", b"code_background_color", "code_font", b"code_font", "code_font_size", b"code_font_size", "code_font_weight", b"code_font_weight", "code_text_color", b"code_text_color", "dark", b"dark", "dataframe_border_color", b"dataframe_border_color", "dataframe_header_background_color", b"dataframe_header_background_color", "font", b"font", "font_faces", b"font_faces", "font_sizes", b"font_sizes", "font_sources", b"font_sources", "gray_background_color", b"gray_background_color", "gray_color", b"gray_color", "gray_text_color", b"gray_text_color", "green_background_color", b"green_background_color", "green_color", b"green_color", "green_text_color", b"green_text_color", "heading_font", b"heading_font", "heading_font_sizes", b"heading_font_sizes", "heading_font_weights", b"heading_font_weights", "light", b"light", "link_color", b"link_color", "link_underline", b"link_underline", "orange_background_color", b"orange_background_color", "orange_color", b"orange_color", "orange_text_color", b"orange_text_color", "primary_color", b"primary_color", "radii", b"radii", "red_background_color", b"red_background_color", "red_color", b"red_color", "red_text_color", b"red_text_color", "secondary_background_color", b"secondary_background_color", "show_sidebar_border", b"show_sidebar_border", "show_widget_border", b"show_widget_border", "sidebar", b"sidebar", "skeleton_background_color", b"skeleton_background_color", "text_color", b"text_color", "violet_background_color", b"violet_background_color", "violet_color", b"violet_color", "violet_text_color", b"violet_text_color", "widget_background_color", b"widget_background_color", "widget_border_color", b"widget_border_color", "yellow_background_color", b"yellow_background_color", "yellow_color", b"yellow_color", "yellow_text_color", b"yellow_text_color"]) -> None: ...
@@ -555,7 +555,7 @@ class CustomThemeConfig(google.protobuf.message.Message):
     @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["_yellow_text_color", b"_yellow_text_color"]) -> typing.Literal["yellow_text_color"] | None: ...
 
-global___CustomThemeConfig = CustomThemeConfig
+Global___CustomThemeConfig: typing_extensions.TypeAlias = CustomThemeConfig
 
 @typing.final
 class FontFace(google.protobuf.message.Message):
@@ -590,7 +590,7 @@ class FontFace(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["family", b"family", "style", b"style", "unicode_range", b"unicode_range", "url", b"url", "weight", b"weight", "weight_range", b"weight_range"]) -> None: ...
 
-global___FontFace = FontFace
+Global___FontFace: typing_extensions.TypeAlias = FontFace
 
 @typing.final
 class FontSource(google.protobuf.message.Message):
@@ -611,7 +611,7 @@ class FontSource(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["config_name", b"config_name", "source_url", b"source_url"]) -> None: ...
 
-global___FontSource = FontSource
+Global___FontSource: typing_extensions.TypeAlias = FontSource
 
 @typing.final
 class Radii(google.protobuf.message.Message):
@@ -632,7 +632,7 @@ class Radii(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["base_widget_radius", b"base_widget_radius", "checkbox_radius", b"checkbox_radius"]) -> None: ...
 
-global___Radii = Radii
+Global___Radii: typing_extensions.TypeAlias = Radii
 
 @typing.final
 class FontSizes(google.protobuf.message.Message):
@@ -656,7 +656,7 @@ class FontSizes(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["base_font_size", b"base_font_size", "small_font_size", b"small_font_size", "tiny_font_size", b"tiny_font_size"]) -> None: ...
 
-global___FontSizes = FontSizes
+Global___FontSizes: typing_extensions.TypeAlias = FontSizes
 
 @typing.final
 class UserInfo(google.protobuf.message.Message):
@@ -681,7 +681,7 @@ class UserInfo(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["installation_id", b"installation_id", "installation_id_v3", b"installation_id_v3", "installation_id_v4", b"installation_id_v4"]) -> None: ...
 
-global___UserInfo = UserInfo
+Global___UserInfo: typing_extensions.TypeAlias = UserInfo
 
 @typing.final
 class EnvironmentInfo(google.protobuf.message.Message):
@@ -724,4 +724,4 @@ class EnvironmentInfo(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["has_display", b"has_display", "python_version", b"python_version", "server_os", b"server_os", "streamlit_version", b"streamlit_version"]) -> None: ...
 
-global___EnvironmentInfo = EnvironmentInfo
+Global___EnvironmentInfo: typing_extensions.TypeAlias = EnvironmentInfo

@@ -24,7 +24,13 @@ import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.DataFrame_pb2
 import streamlit.proto.NamedDataSet_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -68,4 +74,4 @@ class VegaLiteChart(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["data", b"data"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["data", b"data", "datasets", b"datasets", "spec", b"spec", "use_container_width", b"use_container_width"]) -> None: ...
 
-global___VegaLiteChart = VegaLiteChart
+Global___VegaLiteChart: typing_extensions.TypeAlias = VegaLiteChart

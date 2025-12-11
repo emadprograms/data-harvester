@@ -9,20 +9,24 @@
 #
 # .. _2-Clause BSD license: https://opensource.org/licenses/BSD-2-Clause
 #
-# Revision: $Revision: 9302 $
-# Date: $Date: 2022-12-02 18:14:05 +0100 (Fr, 02. Dez 2022) $
+# Revision: $Revision: 10136 $
+# Date: $Date: 2025-05-20 17:48:27 +0200 (Di, 20. Mai 2025) $
 """
 A parser for CommonMark Markdown text using `recommonmark`__.
 
 __ https://pypi.org/project/recommonmark/
 
-.. important:: This module is provisional
+.. important:: This module is deprecated.
 
    * The "recommonmark" package is unmaintained and deprecated.
-     This wrapper module will be removed in a future Docutils version.
+     This wrapper module will be removed in Docutils 1.0.
 
    * The API is not settled and may change with any minor Docutils version.
 """
+
+from __future__ import annotations
+
+__docformat__ = 'reStructuredText'
 
 from docutils import Component
 from docutils import nodes
@@ -35,7 +39,8 @@ except ImportError:
     import sys
     import types
 
-    class pending_xref(nodes.Inline, nodes.Element): ... # NoQA
+    class pending_xref(nodes.Inline, nodes.Element):
+        ...
 
     sys.modules['sphinx'] = sphinx = types.ModuleType('sphinx')
     sphinx.addnodes = addnodes = types.SimpleNamespace()
@@ -75,7 +80,9 @@ class Parser(CommonMarkParser):
         return Component.get_transforms(self)  # + [AutoStructify]
 
     def parse(self, inputstring, document):
-        """Use the upstream parser and clean up afterwards.
+        """Wrapper of upstream method.
+
+        Ensure "line-length-limt". Report errors with `document.reporter`.
         """
         # check for exorbitantly long lines
         for i, line in enumerate(inputstring.split('\n')):
@@ -95,8 +102,13 @@ class Parser(CommonMarkParser):
                                             'returned the error:\n%s'%err)
             document.append(error)
 
-        # Post-Processing
-        # ---------------
+    # Post-Processing
+    # ---------------
+
+    def finish_parse(self) -> None:
+        """Finalize parse details.  Call at end of `self.parse()`."""
+
+        document = self.document
 
         # merge adjoining Text nodes:
         for node in document.findall(nodes.TextElement):
@@ -109,6 +121,11 @@ class Parser(CommonMarkParser):
                     children[i].parent = node
                 else:
                     i += 1
+
+        # remove empty Text nodes:
+        for node in document.findall(nodes.Text):
+            if not len(node):
+                node.parent.remove(node)
 
         # add "code" class argument to literal elements (inline and block)
         for node in document.findall(is_literal):
@@ -123,8 +140,17 @@ class Parser(CommonMarkParser):
         # replace raw nodes if raw is not allowed
         if not document.settings.raw_enabled:
             for node in document.findall(nodes.raw):
-                warning = document.reporter.warning('Raw content disabled.')
-                node.parent.replace(node, warning)
+                message = document.reporter.warning('Raw content disabled.')
+                if isinstance(node.parent, nodes.TextElement):
+                    msgid = document.set_id(message)
+                    problematic = nodes.problematic('', node.astext(),
+                                                    refid=msgid)
+                    node.parent.replace(node, problematic)
+                    prbid = document.set_id(problematic)
+                    message.add_backref(prbid)
+                    document.append(message)
+                else:
+                    node.parent.replace(node, message)
 
         # drop pending_xref (Sphinx cross reference extension)
         for node in document.findall(addnodes.pending_xref):
@@ -133,15 +159,16 @@ class Parser(CommonMarkParser):
                 reference['name'] = nodes.fully_normalize_name(
                                                     reference.astext())
             node.parent.replace(node, reference)
+        # now we are ready to call the upstream function:
+        super().finish_parse()
 
-    def visit_document(self, node):
+    def visit_document(self, node) -> None:
         """Dummy function to prevent spurious warnings.
 
         cf. https://github.com/readthedocs/recommonmark/issues/177
         """
-        pass
 
     # Overwrite parent method with version that
     # doesn't pass deprecated `rawsource` argument to nodes.Text:
-    def visit_text(self, mdnode):
+    def visit_text(self, mdnode) -> None:
         self.current_node.append(nodes.Text(mdnode.literal))

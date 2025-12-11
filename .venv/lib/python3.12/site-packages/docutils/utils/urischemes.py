@@ -1,4 +1,4 @@
-# $Id: urischemes.py 9315 2023-01-15 19:27:55Z milde $
+# $Id: urischemes.py 9875 2024-08-09 06:38:17Z aa-turner $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -11,7 +11,7 @@ and an older list at https://www.w3.org/Addressing/schemes.html.
 
 # Many values are blank and should be filled in with useful descriptions.
 
-schemes = {
+schemes: dict[str, str] = {
       'about': 'provides information on Navigator',
       'acap': 'Application Configuration Access Protocol; RFC 2244',
       'addbook': "To add vCard entries to Communicator's Address Book",

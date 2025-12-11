@@ -22,7 +22,13 @@ import collections.abc
 import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -50,7 +56,7 @@ class Image(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["caption", b"caption", "markup", b"markup", "url", b"url"]) -> None: ...
 
-global___Image = Image
+Global___Image: typing_extensions.TypeAlias = Image
 
 @typing.final
 class ImageList(google.protobuf.message.Message):
@@ -63,13 +69,13 @@ class ImageList(google.protobuf.message.Message):
     width: builtins.int
     """DEPRECATED use widthConfig on Element.proto"""
     @property
-    def imgs(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Image]: ...
+    def imgs(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___Image]: ...
     def __init__(
         self,
         *,
-        imgs: collections.abc.Iterable[global___Image] | None = ...,
+        imgs: collections.abc.Iterable[Global___Image] | None = ...,
         width: builtins.int = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["imgs", b"imgs", "width", b"width"]) -> None: ...
 
-global___ImageList = ImageList
+Global___ImageList: typing_extensions.TypeAlias = ImageList

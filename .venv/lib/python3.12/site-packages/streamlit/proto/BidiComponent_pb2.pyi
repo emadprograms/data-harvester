@@ -23,7 +23,13 @@ import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.ArrowData_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -67,7 +73,7 @@ class MixedData(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["arrow_blobs", b"arrow_blobs", "json", b"json"]) -> None: ...
 
-global___MixedData = MixedData
+Global___MixedData: typing_extensions.TypeAlias = MixedData
 
 @typing.final
 class BidiComponent(google.protobuf.message.Message):
@@ -115,7 +121,7 @@ class BidiComponent(google.protobuf.message.Message):
         """Data-only Apache Arrow buffer for dataframe-like payloads."""
 
     @property
-    def mixed(self) -> global___MixedData:
+    def mixed(self) -> Global___MixedData:
         """Mixed data with JSON structure + embedded Arrow references"""
 
     def __init__(
@@ -133,7 +139,7 @@ class BidiComponent(google.protobuf.message.Message):
         json: builtins.str = ...,
         arrow_data: streamlit.proto.ArrowData_pb2.ArrowData | None = ...,
         bytes: builtins.bytes = ...,
-        mixed: global___MixedData | None = ...,
+        mixed: Global___MixedData | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["_css_content", b"_css_content", "_css_source_path", b"_css_source_path", "_html_content", b"_html_content", "_js_content", b"_js_content", "_js_source_path", b"_js_source_path", "arrow_data", b"arrow_data", "bytes", b"bytes", "css_content", b"css_content", "css_source_path", b"css_source_path", "data", b"data", "html_content", b"html_content", "js_content", b"js_content", "js_source_path", b"js_source_path", "json", b"json", "mixed", b"mixed"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["_css_content", b"_css_content", "_css_source_path", b"_css_source_path", "_html_content", b"_html_content", "_js_content", b"_js_content", "_js_source_path", b"_js_source_path", "arrow_data", b"arrow_data", "bytes", b"bytes", "component_name", b"component_name", "css_content", b"css_content", "css_source_path", b"css_source_path", "data", b"data", "form_id", b"form_id", "html_content", b"html_content", "id", b"id", "isolate_styles", b"isolate_styles", "js_content", b"js_content", "js_source_path", b"js_source_path", "json", b"json", "mixed", b"mixed"]) -> None: ...
@@ -150,4 +156,4 @@ class BidiComponent(google.protobuf.message.Message):
     @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["data", b"data"]) -> typing.Literal["json", "arrow_data", "bytes", "mixed"] | None: ...
 
-global___BidiComponent = BidiComponent
+Global___BidiComponent: typing_extensions.TypeAlias = BidiComponent

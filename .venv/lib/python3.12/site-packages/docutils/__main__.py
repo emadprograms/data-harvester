@@ -9,14 +9,18 @@
 #
 # .. _2-Clause BSD license: https://opensource.org/licenses/BSD-2-Clause
 #
-# Revision: $Revision: 9107 $
-# Date: $Date: 2022-07-06 15:59:57 +0200 (Mi, 06. Jul 2022) $
+# Revision: $Revision: 10136 $
+# Date: $Date: 2025-05-20 17:48:27 +0200 (Di, 20. Mai 2025) $
 
 """Generic command line interface for the `docutils` package.
 
 See also
 https://docs.python.org/3/library/__main__.html#main-py-in-python-packages
 """
+
+from __future__ import annotations
+
+__docformat__ = 'reStructuredText'
 
 import argparse
 import locale
@@ -53,10 +57,13 @@ class CliSettingsSpec(docutils.SettingsSpec):
                                    'applications')
 
 
-def main():
+def main() -> None:
     """Generic command line interface for the Docutils Publisher.
     """
-    locale.setlocale(locale.LC_ALL, '')
+    try:
+        locale.setlocale(locale.LC_ALL, '')
+    except locale.Error as e:
+        sys.stderr.write(f'WARNING: Cannot set the default locale: {e}.\n')
 
     description = ('Convert documents into useful formats.  '
                    + default_description)
@@ -75,9 +82,9 @@ def main():
     CliSettingsSpec.settings_default_overrides = args.__dict__
 
     try:
-        publish_cmdline(reader_name=args.reader,
-                        parser_name=args.parser,
-                        writer_name=args.writer,
+        publish_cmdline(reader=args.reader,
+                        parser=args.parser,
+                        writer=args.writer,
                         settings_spec=CliSettingsSpec,
                         description=description,
                         argv=remainder)

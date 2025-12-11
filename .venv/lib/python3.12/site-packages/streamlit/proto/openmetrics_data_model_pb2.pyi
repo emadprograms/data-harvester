@@ -65,7 +65,7 @@ GAUGE_HISTOGRAM: MetricType.ValueType  # 6
 """Gauge histogram must use histogram value MetricPoint values."""
 SUMMARY: MetricType.ValueType  # 7
 """Summary quantiles must use summary value MetricPoint values."""
-global___MetricType = MetricType
+Global___MetricType: typing_extensions.TypeAlias = MetricType
 
 @typing.final
 class MetricSet(google.protobuf.message.Message):
@@ -75,17 +75,17 @@ class MetricSet(google.protobuf.message.Message):
 
     METRIC_FAMILIES_FIELD_NUMBER: builtins.int
     @property
-    def metric_families(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___MetricFamily]:
+    def metric_families(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___MetricFamily]:
         """Each MetricFamily has one or more MetricPoints for a single Metric."""
 
     def __init__(
         self,
         *,
-        metric_families: collections.abc.Iterable[global___MetricFamily] | None = ...,
+        metric_families: collections.abc.Iterable[Global___MetricFamily] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["metric_families", b"metric_families"]) -> None: ...
 
-global___MetricSet = MetricSet
+Global___MetricSet: typing_extensions.TypeAlias = MetricSet
 
 @typing.final
 class MetricFamily(google.protobuf.message.Message):
@@ -102,28 +102,28 @@ class MetricFamily(google.protobuf.message.Message):
     METRICS_FIELD_NUMBER: builtins.int
     name: builtins.str
     """Required."""
-    type: global___MetricType.ValueType
+    type: Global___MetricType.ValueType
     """Optional."""
     unit: builtins.str
     """Optional."""
     help: builtins.str
     """Optional."""
     @property
-    def metrics(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Metric]:
+    def metrics(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___Metric]:
         """Optional."""
 
     def __init__(
         self,
         *,
         name: builtins.str = ...,
-        type: global___MetricType.ValueType = ...,
+        type: Global___MetricType.ValueType = ...,
         unit: builtins.str = ...,
         help: builtins.str = ...,
-        metrics: collections.abc.Iterable[global___Metric] | None = ...,
+        metrics: collections.abc.Iterable[Global___Metric] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["help", b"help", "metrics", b"metrics", "name", b"name", "type", b"type", "unit", b"unit"]) -> None: ...
 
-global___MetricFamily = MetricFamily
+Global___MetricFamily: typing_extensions.TypeAlias = MetricFamily
 
 @typing.final
 class Metric(google.protobuf.message.Message):
@@ -134,22 +134,22 @@ class Metric(google.protobuf.message.Message):
     LABELS_FIELD_NUMBER: builtins.int
     METRIC_POINTS_FIELD_NUMBER: builtins.int
     @property
-    def labels(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Label]:
+    def labels(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___Label]:
         """Optional."""
 
     @property
-    def metric_points(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___MetricPoint]:
+    def metric_points(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___MetricPoint]:
         """Optional."""
 
     def __init__(
         self,
         *,
-        labels: collections.abc.Iterable[global___Label] | None = ...,
-        metric_points: collections.abc.Iterable[global___MetricPoint] | None = ...,
+        labels: collections.abc.Iterable[Global___Label] | None = ...,
+        metric_points: collections.abc.Iterable[Global___MetricPoint] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["labels", b"labels", "metric_points", b"metric_points"]) -> None: ...
 
-global___Metric = Metric
+Global___Metric: typing_extensions.TypeAlias = Metric
 
 @typing.final
 class Label(google.protobuf.message.Message):
@@ -173,7 +173,7 @@ class Label(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["name", b"name", "value", b"value"]) -> None: ...
 
-global___Label = Label
+Global___Label: typing_extensions.TypeAlias = Label
 
 @typing.final
 class MetricPoint(google.protobuf.message.Message):
@@ -190,19 +190,19 @@ class MetricPoint(google.protobuf.message.Message):
     SUMMARY_VALUE_FIELD_NUMBER: builtins.int
     TIMESTAMP_FIELD_NUMBER: builtins.int
     @property
-    def unknown_value(self) -> global___UnknownValue: ...
+    def unknown_value(self) -> Global___UnknownValue: ...
     @property
-    def gauge_value(self) -> global___GaugeValue: ...
+    def gauge_value(self) -> Global___GaugeValue: ...
     @property
-    def counter_value(self) -> global___CounterValue: ...
+    def counter_value(self) -> Global___CounterValue: ...
     @property
-    def histogram_value(self) -> global___HistogramValue: ...
+    def histogram_value(self) -> Global___HistogramValue: ...
     @property
-    def state_set_value(self) -> global___StateSetValue: ...
+    def state_set_value(self) -> Global___StateSetValue: ...
     @property
-    def info_value(self) -> global___InfoValue: ...
+    def info_value(self) -> Global___InfoValue: ...
     @property
-    def summary_value(self) -> global___SummaryValue: ...
+    def summary_value(self) -> Global___SummaryValue: ...
     @property
     def timestamp(self) -> google.protobuf.timestamp_pb2.Timestamp:
         """Optional."""
@@ -210,20 +210,20 @@ class MetricPoint(google.protobuf.message.Message):
     def __init__(
         self,
         *,
-        unknown_value: global___UnknownValue | None = ...,
-        gauge_value: global___GaugeValue | None = ...,
-        counter_value: global___CounterValue | None = ...,
-        histogram_value: global___HistogramValue | None = ...,
-        state_set_value: global___StateSetValue | None = ...,
-        info_value: global___InfoValue | None = ...,
-        summary_value: global___SummaryValue | None = ...,
+        unknown_value: Global___UnknownValue | None = ...,
+        gauge_value: Global___GaugeValue | None = ...,
+        counter_value: Global___CounterValue | None = ...,
+        histogram_value: Global___HistogramValue | None = ...,
+        state_set_value: Global___StateSetValue | None = ...,
+        info_value: Global___InfoValue | None = ...,
+        summary_value: Global___SummaryValue | None = ...,
         timestamp: google.protobuf.timestamp_pb2.Timestamp | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["counter_value", b"counter_value", "gauge_value", b"gauge_value", "histogram_value", b"histogram_value", "info_value", b"info_value", "state_set_value", b"state_set_value", "summary_value", b"summary_value", "timestamp", b"timestamp", "unknown_value", b"unknown_value", "value", b"value"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["counter_value", b"counter_value", "gauge_value", b"gauge_value", "histogram_value", b"histogram_value", "info_value", b"info_value", "state_set_value", b"state_set_value", "summary_value", b"summary_value", "timestamp", b"timestamp", "unknown_value", b"unknown_value", "value", b"value"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["value", b"value"]) -> typing.Literal["unknown_value", "gauge_value", "counter_value", "histogram_value", "state_set_value", "info_value", "summary_value"] | None: ...
 
-global___MetricPoint = MetricPoint
+Global___MetricPoint: typing_extensions.TypeAlias = MetricPoint
 
 @typing.final
 class UnknownValue(google.protobuf.message.Message):
@@ -245,7 +245,7 @@ class UnknownValue(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["double_value", b"double_value", "int_value", b"int_value", "value", b"value"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["value", b"value"]) -> typing.Literal["double_value", "int_value"] | None: ...
 
-global___UnknownValue = UnknownValue
+Global___UnknownValue: typing_extensions.TypeAlias = UnknownValue
 
 @typing.final
 class GaugeValue(google.protobuf.message.Message):
@@ -267,7 +267,7 @@ class GaugeValue(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["double_value", b"double_value", "int_value", b"int_value", "value", b"value"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["value", b"value"]) -> typing.Literal["double_value", "int_value"] | None: ...
 
-global___GaugeValue = GaugeValue
+Global___GaugeValue: typing_extensions.TypeAlias = GaugeValue
 
 @typing.final
 class CounterValue(google.protobuf.message.Message):
@@ -288,7 +288,7 @@ class CounterValue(google.protobuf.message.Message):
         """
 
     @property
-    def exemplar(self) -> global___Exemplar:
+    def exemplar(self) -> Global___Exemplar:
         """Optional."""
 
     def __init__(
@@ -297,13 +297,13 @@ class CounterValue(google.protobuf.message.Message):
         double_value: builtins.float = ...,
         int_value: builtins.int = ...,
         created: google.protobuf.timestamp_pb2.Timestamp | None = ...,
-        exemplar: global___Exemplar | None = ...,
+        exemplar: Global___Exemplar | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["created", b"created", "double_value", b"double_value", "exemplar", b"exemplar", "int_value", b"int_value", "total", b"total"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["created", b"created", "double_value", b"double_value", "exemplar", b"exemplar", "int_value", b"int_value", "total", b"total"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["total", b"total"]) -> typing.Literal["double_value", "int_value"] | None: ...
 
-global___CounterValue = CounterValue
+Global___CounterValue: typing_extensions.TypeAlias = CounterValue
 
 @typing.final
 class HistogramValue(google.protobuf.message.Message):
@@ -327,7 +327,7 @@ class HistogramValue(google.protobuf.message.Message):
         upper_bound: builtins.float
         """Optional."""
         @property
-        def exemplar(self) -> global___Exemplar:
+        def exemplar(self) -> Global___Exemplar:
             """Optional."""
 
         def __init__(
@@ -335,7 +335,7 @@ class HistogramValue(google.protobuf.message.Message):
             *,
             count: builtins.int = ...,
             upper_bound: builtins.float = ...,
-            exemplar: global___Exemplar | None = ...,
+            exemplar: Global___Exemplar | None = ...,
         ) -> None: ...
         def HasField(self, field_name: typing.Literal["exemplar", b"exemplar"]) -> builtins.bool: ...
         def ClearField(self, field_name: typing.Literal["count", b"count", "exemplar", b"exemplar", "upper_bound", b"upper_bound"]) -> None: ...
@@ -356,7 +356,7 @@ class HistogramValue(google.protobuf.message.Message):
         """
 
     @property
-    def buckets(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___HistogramValue.Bucket]:
+    def buckets(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___HistogramValue.Bucket]:
         """Optional."""
 
     def __init__(
@@ -366,13 +366,13 @@ class HistogramValue(google.protobuf.message.Message):
         int_value: builtins.int = ...,
         count: builtins.int = ...,
         created: google.protobuf.timestamp_pb2.Timestamp | None = ...,
-        buckets: collections.abc.Iterable[global___HistogramValue.Bucket] | None = ...,
+        buckets: collections.abc.Iterable[Global___HistogramValue.Bucket] | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["created", b"created", "double_value", b"double_value", "int_value", b"int_value", "sum", b"sum"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["buckets", b"buckets", "count", b"count", "created", b"created", "double_value", b"double_value", "int_value", b"int_value", "sum", b"sum"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["sum", b"sum"]) -> typing.Literal["double_value", "int_value"] | None: ...
 
-global___HistogramValue = HistogramValue
+Global___HistogramValue: typing_extensions.TypeAlias = HistogramValue
 
 @typing.final
 class Exemplar(google.protobuf.message.Message):
@@ -388,7 +388,7 @@ class Exemplar(google.protobuf.message.Message):
         """Optional."""
 
     @property
-    def label(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Label]:
+    def label(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___Label]:
         """Labels are additional information about the exemplar value (e.g. trace id).
         Optional.
         """
@@ -398,12 +398,12 @@ class Exemplar(google.protobuf.message.Message):
         *,
         value: builtins.float = ...,
         timestamp: google.protobuf.timestamp_pb2.Timestamp | None = ...,
-        label: collections.abc.Iterable[global___Label] | None = ...,
+        label: collections.abc.Iterable[Global___Label] | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["timestamp", b"timestamp"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["label", b"label", "timestamp", b"timestamp", "value", b"value"]) -> None: ...
 
-global___Exemplar = Exemplar
+Global___Exemplar: typing_extensions.TypeAlias = Exemplar
 
 @typing.final
 class StateSetValue(google.protobuf.message.Message):
@@ -431,17 +431,17 @@ class StateSetValue(google.protobuf.message.Message):
 
     STATES_FIELD_NUMBER: builtins.int
     @property
-    def states(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___StateSetValue.State]:
+    def states(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___StateSetValue.State]:
         """Optional."""
 
     def __init__(
         self,
         *,
-        states: collections.abc.Iterable[global___StateSetValue.State] | None = ...,
+        states: collections.abc.Iterable[Global___StateSetValue.State] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["states", b"states"]) -> None: ...
 
-global___StateSetValue = StateSetValue
+Global___StateSetValue: typing_extensions.TypeAlias = StateSetValue
 
 @typing.final
 class InfoValue(google.protobuf.message.Message):
@@ -451,17 +451,17 @@ class InfoValue(google.protobuf.message.Message):
 
     INFO_FIELD_NUMBER: builtins.int
     @property
-    def info(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Label]:
+    def info(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___Label]:
         """Optional."""
 
     def __init__(
         self,
         *,
-        info: collections.abc.Iterable[global___Label] | None = ...,
+        info: collections.abc.Iterable[Global___Label] | None = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["info", b"info"]) -> None: ...
 
-global___InfoValue = InfoValue
+Global___InfoValue: typing_extensions.TypeAlias = InfoValue
 
 @typing.final
 class SummaryValue(google.protobuf.message.Message):
@@ -503,7 +503,7 @@ class SummaryValue(google.protobuf.message.Message):
         """
 
     @property
-    def quantile(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___SummaryValue.Quantile]:
+    def quantile(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___SummaryValue.Quantile]:
         """Optional."""
 
     def __init__(
@@ -513,10 +513,10 @@ class SummaryValue(google.protobuf.message.Message):
         int_value: builtins.int = ...,
         count: builtins.int = ...,
         created: google.protobuf.timestamp_pb2.Timestamp | None = ...,
-        quantile: collections.abc.Iterable[global___SummaryValue.Quantile] | None = ...,
+        quantile: collections.abc.Iterable[Global___SummaryValue.Quantile] | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["created", b"created", "double_value", b"double_value", "int_value", b"int_value", "sum", b"sum"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["count", b"count", "created", b"created", "double_value", b"double_value", "int_value", b"int_value", "quantile", b"quantile", "sum", b"sum"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["sum", b"sum"]) -> typing.Literal["double_value", "int_value"] | None: ...
 
-global___SummaryValue = SummaryValue
+Global___SummaryValue: typing_extensions.TypeAlias = SummaryValue

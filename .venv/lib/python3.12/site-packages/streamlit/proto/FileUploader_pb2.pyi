@@ -23,7 +23,13 @@ import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
 import streamlit.proto.LabelVisibilityMessage_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -79,4 +85,4 @@ class FileUploader(google.protobuf.message.Message):
     def HasField(self, field_name: typing.Literal["label_visibility", b"label_visibility"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["accept_directory", b"accept_directory", "disabled", b"disabled", "form_id", b"form_id", "help", b"help", "id", b"id", "label", b"label", "label_visibility", b"label_visibility", "max_upload_size_mb", b"max_upload_size_mb", "multiple_files", b"multiple_files", "type", b"type"]) -> None: ...
 
-global___FileUploader = FileUploader
+Global___FileUploader: typing_extensions.TypeAlias = FileUploader

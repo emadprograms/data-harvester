@@ -54,18 +54,18 @@ class Skeleton(google.protobuf.message.Message):
 
     STYLE_FIELD_NUMBER: builtins.int
     HEIGHT_FIELD_NUMBER: builtins.int
-    style: global___Skeleton.SkeletonStyle.ValueType
+    style: Global___Skeleton.SkeletonStyle.ValueType
     """Skeleton visual style"""
     height: builtins.int
     """Height in pixels"""
     def __init__(
         self,
         *,
-        style: global___Skeleton.SkeletonStyle.ValueType = ...,
+        style: Global___Skeleton.SkeletonStyle.ValueType = ...,
         height: builtins.int | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["_height", b"_height", "height", b"height"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["_height", b"_height", "height", b"height", "style", b"style"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["_height", b"_height"]) -> typing.Literal["height"] | None: ...
 
-global___Skeleton = Skeleton
+Global___Skeleton: typing_extensions.TypeAlias = Skeleton

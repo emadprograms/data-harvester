@@ -136,10 +136,10 @@ class Block(google.protobuf.message.Message):
         ALIGN_FIELD_NUMBER: builtins.int
         border: builtins.bool
         scale: builtins.float
-        direction: global___Block.FlexContainer.Direction.ValueType
+        direction: Global___Block.FlexContainer.Direction.ValueType
         wrap: builtins.bool
-        justify: global___Block.FlexContainer.Justify.ValueType
-        align: global___Block.FlexContainer.Align.ValueType
+        justify: Global___Block.FlexContainer.Justify.ValueType
+        align: Global___Block.FlexContainer.Align.ValueType
         @property
         def gap_config(self) -> streamlit.proto.GapSize_pb2.GapConfig: ...
         def __init__(
@@ -148,10 +148,10 @@ class Block(google.protobuf.message.Message):
             border: builtins.bool = ...,
             gap_config: streamlit.proto.GapSize_pb2.GapConfig | None = ...,
             scale: builtins.float = ...,
-            direction: global___Block.FlexContainer.Direction.ValueType = ...,
+            direction: Global___Block.FlexContainer.Direction.ValueType = ...,
             wrap: builtins.bool = ...,
-            justify: global___Block.FlexContainer.Justify.ValueType = ...,
-            align: global___Block.FlexContainer.Align.ValueType = ...,
+            justify: Global___Block.FlexContainer.Justify.ValueType = ...,
+            align: Global___Block.FlexContainer.Align.ValueType = ...,
         ) -> None: ...
         def HasField(self, field_name: typing.Literal["gap_config", b"gap_config"]) -> builtins.bool: ...
         def ClearField(self, field_name: typing.Literal["align", b"align", "border", b"border", "direction", b"direction", "gap_config", b"gap_config", "justify", b"justify", "scale", b"scale", "wrap", b"wrap"]) -> None: ...
@@ -183,7 +183,7 @@ class Block(google.protobuf.message.Message):
         weight: builtins.float
         gap: builtins.str
         """Deprecated. Use gap_size"""
-        vertical_alignment: global___Block.Column.VerticalAlignment.ValueType
+        vertical_alignment: Global___Block.Column.VerticalAlignment.ValueType
         show_border: builtins.bool
         @property
         def gap_config(self) -> streamlit.proto.GapSize_pb2.GapConfig: ...
@@ -192,7 +192,7 @@ class Block(google.protobuf.message.Message):
             *,
             weight: builtins.float = ...,
             gap: builtins.str = ...,
-            vertical_alignment: global___Block.Column.VerticalAlignment.ValueType = ...,
+            vertical_alignment: Global___Block.Column.VerticalAlignment.ValueType = ...,
             show_border: builtins.bool = ...,
             gap_config: streamlit.proto.GapSize_pb2.GapConfig | None = ...,
         ) -> None: ...
@@ -247,7 +247,7 @@ class Block(google.protobuf.message.Message):
         ID_FIELD_NUMBER: builtins.int
         title: builtins.str
         dismissible: builtins.bool
-        width: global___Block.Dialog.DialogWidth.ValueType
+        width: Global___Block.Dialog.DialogWidth.ValueType
         is_open: builtins.bool
         id: builtins.str
         """If id is set, dismissal of the dialog will trigger a rerun."""
@@ -256,7 +256,7 @@ class Block(google.protobuf.message.Message):
             *,
             title: builtins.str = ...,
             dismissible: builtins.bool = ...,
-            width: global___Block.Dialog.DialogWidth.ValueType = ...,
+            width: Global___Block.Dialog.DialogWidth.ValueType = ...,
             is_open: builtins.bool | None = ...,
             id: builtins.str = ...,
         ) -> None: ...
@@ -365,13 +365,13 @@ class Block(google.protobuf.message.Message):
         AVATAR_TYPE_FIELD_NUMBER: builtins.int
         name: builtins.str
         avatar: builtins.str
-        avatar_type: global___Block.ChatMessage.AvatarType.ValueType
+        avatar_type: Global___Block.ChatMessage.AvatarType.ValueType
         def __init__(
             self,
             *,
             name: builtins.str = ...,
             avatar: builtins.str = ...,
-            avatar_type: global___Block.ChatMessage.AvatarType.ValueType = ...,
+            avatar_type: Global___Block.ChatMessage.AvatarType.ValueType = ...,
         ) -> None: ...
         def ClearField(self, field_name: typing.Literal["avatar", b"avatar", "avatar_type", b"avatar_type", "name", b"name"]) -> None: ...
 
@@ -393,27 +393,27 @@ class Block(google.protobuf.message.Message):
     allow_empty: builtins.bool
     id: builtins.str
     @property
-    def vertical(self) -> global___Block.Vertical: ...
+    def vertical(self) -> Global___Block.Vertical: ...
     @property
-    def horizontal(self) -> global___Block.Horizontal: ...
+    def horizontal(self) -> Global___Block.Horizontal: ...
     @property
-    def column(self) -> global___Block.Column: ...
+    def column(self) -> Global___Block.Column: ...
     @property
-    def expandable(self) -> global___Block.Expandable: ...
+    def expandable(self) -> Global___Block.Expandable: ...
     @property
-    def form(self) -> global___Block.Form: ...
+    def form(self) -> Global___Block.Form: ...
     @property
-    def tab_container(self) -> global___Block.TabContainer: ...
+    def tab_container(self) -> Global___Block.TabContainer: ...
     @property
-    def tab(self) -> global___Block.Tab: ...
+    def tab(self) -> Global___Block.Tab: ...
     @property
-    def chat_message(self) -> global___Block.ChatMessage: ...
+    def chat_message(self) -> Global___Block.ChatMessage: ...
     @property
-    def popover(self) -> global___Block.Popover: ...
+    def popover(self) -> Global___Block.Popover: ...
     @property
-    def dialog(self) -> global___Block.Dialog: ...
+    def dialog(self) -> Global___Block.Dialog: ...
     @property
-    def flex_container(self) -> global___Block.FlexContainer: ...
+    def flex_container(self) -> Global___Block.FlexContainer: ...
     @property
     def height_config(self) -> streamlit.proto.HeightConfig_pb2.HeightConfig: ...
     @property
@@ -421,17 +421,17 @@ class Block(google.protobuf.message.Message):
     def __init__(
         self,
         *,
-        vertical: global___Block.Vertical | None = ...,
-        horizontal: global___Block.Horizontal | None = ...,
-        column: global___Block.Column | None = ...,
-        expandable: global___Block.Expandable | None = ...,
-        form: global___Block.Form | None = ...,
-        tab_container: global___Block.TabContainer | None = ...,
-        tab: global___Block.Tab | None = ...,
-        chat_message: global___Block.ChatMessage | None = ...,
-        popover: global___Block.Popover | None = ...,
-        dialog: global___Block.Dialog | None = ...,
-        flex_container: global___Block.FlexContainer | None = ...,
+        vertical: Global___Block.Vertical | None = ...,
+        horizontal: Global___Block.Horizontal | None = ...,
+        column: Global___Block.Column | None = ...,
+        expandable: Global___Block.Expandable | None = ...,
+        form: Global___Block.Form | None = ...,
+        tab_container: Global___Block.TabContainer | None = ...,
+        tab: Global___Block.Tab | None = ...,
+        chat_message: Global___Block.ChatMessage | None = ...,
+        popover: Global___Block.Popover | None = ...,
+        dialog: Global___Block.Dialog | None = ...,
+        flex_container: Global___Block.FlexContainer | None = ...,
         allow_empty: builtins.bool = ...,
         id: builtins.str | None = ...,
         height_config: streamlit.proto.HeightConfig_pb2.HeightConfig | None = ...,
@@ -448,4 +448,4 @@ class Block(google.protobuf.message.Message):
     @typing.overload
     def WhichOneof(self, oneof_group: typing.Literal["type", b"type"]) -> typing.Literal["vertical", "horizontal", "column", "expandable", "form", "tab_container", "tab", "chat_message", "popover", "dialog", "flex_container"] | None: ...
 
-global___Block = Block
+Global___Block: typing_extensions.TypeAlias = Block

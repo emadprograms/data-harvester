@@ -20,7 +20,13 @@ limitations under the License.
 import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -48,4 +54,4 @@ class Logo(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["icon_image", b"icon_image", "image", b"image", "link", b"link", "size", b"size"]) -> None: ...
 
-global___Logo = Logo
+Global___Logo: typing_extensions.TypeAlias = Logo

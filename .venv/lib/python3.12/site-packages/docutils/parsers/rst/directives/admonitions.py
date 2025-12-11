@@ -1,4 +1,4 @@
-# $Id: admonitions.py 9475 2023-11-13 22:30:00Z milde $
+# $Id: admonitions.py 9881 2024-08-10 08:12:14Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -11,7 +11,7 @@ __docformat__ = 'reStructuredText'
 
 from docutils.parsers.rst import Directive
 from docutils.parsers.rst import directives
-from docutils.parsers.rst.roles import set_classes
+from docutils.parsers.rst.roles import normalize_options
 from docutils import nodes
 
 
@@ -26,10 +26,10 @@ class BaseAdmonition(Directive):
     """Subclasses must set this to the appropriate admonition node class."""
 
     def run(self):
-        set_classes(self.options)
+        options = normalize_options(self.options)
         self.assert_has_content()
         text = '\n'.join(self.content)
-        admonition_node = self.node_class(text, **self.options)
+        admonition_node = self.node_class(text, **options)
         self.add_name(admonition_node)
         admonition_node.source, admonition_node.line = \
             self.state_machine.get_source_and_line(self.lineno)
@@ -42,7 +42,7 @@ class BaseAdmonition(Directive):
                     self.state_machine.get_source_and_line(self.lineno))
             admonition_node += title
             admonition_node += messages
-            if 'classes' not in self.options:
+            if 'classes' not in options:
                 admonition_node['classes'] += ['admonition-'
                                                + nodes.make_id(title_text)]
         self.state.nested_parse(self.content, self.content_offset,
@@ -96,6 +96,6 @@ class Tip(BaseAdmonition):
     node_class = nodes.tip
 
 
-class Warning(BaseAdmonition):
+class Warning(BaseAdmonition):  # NoQA: A001 (builtin shadowing)
 
     node_class = nodes.warning

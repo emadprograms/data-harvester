@@ -21,7 +21,13 @@ import builtins
 import google.protobuf.descriptor
 import google.protobuf.message
 import streamlit.proto.WidthConfig_pb2
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -62,4 +68,4 @@ class Audio(google.protobuf.message.Message):
     def ClearField(self, field_name: typing.Literal["_width_config", b"_width_config", "autoplay", b"autoplay", "end_time", b"end_time", "id", b"id", "loop", b"loop", "start_time", b"start_time", "url", b"url", "width_config", b"width_config"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["_width_config", b"_width_config"]) -> typing.Literal["width_config"] | None: ...
 
-global___Audio = Audio
+Global___Audio: typing_extensions.TypeAlias = Audio

@@ -53,4 +53,4 @@ MAIN: RootContainer.ValueType  # 0
 SIDEBAR: RootContainer.ValueType  # 1
 EVENT: RootContainer.ValueType  # 2
 BOTTOM: RootContainer.ValueType  # 3
-global___RootContainer = RootContainer
+Global___RootContainer: typing_extensions.TypeAlias = RootContainer

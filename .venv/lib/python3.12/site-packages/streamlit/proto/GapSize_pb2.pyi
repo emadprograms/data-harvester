@@ -50,21 +50,21 @@ SMALL: GapSize.ValueType  # 1
 MEDIUM: GapSize.ValueType  # 2
 LARGE: GapSize.ValueType  # 3
 NONE: GapSize.ValueType  # 4
-global___GapSize = GapSize
+Global___GapSize: typing_extensions.TypeAlias = GapSize
 
 @typing.final
 class GapConfig(google.protobuf.message.Message):
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
     GAP_SIZE_FIELD_NUMBER: builtins.int
-    gap_size: global___GapSize.ValueType
+    gap_size: Global___GapSize.ValueType
     def __init__(
         self,
         *,
-        gap_size: global___GapSize.ValueType = ...,
+        gap_size: Global___GapSize.ValueType = ...,
     ) -> None: ...
     def HasField(self, field_name: typing.Literal["gap_size", b"gap_size", "gap_spec", b"gap_spec"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing.Literal["gap_size", b"gap_size", "gap_spec", b"gap_spec"]) -> None: ...
     def WhichOneof(self, oneof_group: typing.Literal["gap_spec", b"gap_spec"]) -> typing.Literal["gap_size"] | None: ...
 
-global___GapConfig = GapConfig
+Global___GapConfig: typing_extensions.TypeAlias = GapConfig

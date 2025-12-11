@@ -22,7 +22,13 @@ import collections.abc
 import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -48,7 +54,7 @@ class PageProfile(google.protobuf.message.Message):
     headless: builtins.bool
     is_fragment_run: builtins.bool
     @property
-    def commands(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Command]: ...
+    def commands(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___Command]: ...
     @property
     def config(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]: ...
     @property
@@ -56,7 +62,7 @@ class PageProfile(google.protobuf.message.Message):
     def __init__(
         self,
         *,
-        commands: collections.abc.Iterable[global___Command] | None = ...,
+        commands: collections.abc.Iterable[Global___Command] | None = ...,
         exec_time: builtins.int = ...,
         prep_time: builtins.int = ...,
         config: collections.abc.Iterable[builtins.str] | None = ...,
@@ -69,7 +75,7 @@ class PageProfile(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["attributions", b"attributions", "commands", b"commands", "config", b"config", "exec_time", b"exec_time", "headless", b"headless", "is_fragment_run", b"is_fragment_run", "os", b"os", "prep_time", b"prep_time", "timezone", b"timezone", "uncaught_exception", b"uncaught_exception"]) -> None: ...
 
-global___PageProfile = PageProfile
+Global___PageProfile: typing_extensions.TypeAlias = PageProfile
 
 @typing.final
 class Argument(google.protobuf.message.Message):
@@ -102,7 +108,7 @@ class Argument(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["k", b"k", "m", b"m", "p", b"p", "t", b"t"]) -> None: ...
 
-global___Argument = Argument
+Global___Argument: typing_extensions.TypeAlias = Argument
 
 @typing.final
 class Command(google.protobuf.message.Message):
@@ -114,14 +120,14 @@ class Command(google.protobuf.message.Message):
     name: builtins.str
     time: builtins.int
     @property
-    def args(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Argument]: ...
+    def args(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[Global___Argument]: ...
     def __init__(
         self,
         *,
         name: builtins.str = ...,
-        args: collections.abc.Iterable[global___Argument] | None = ...,
+        args: collections.abc.Iterable[Global___Argument] | None = ...,
         time: builtins.int = ...,
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["args", b"args", "name", b"name", "time", b"time"]) -> None: ...
 
-global___Command = Command
+Global___Command: typing_extensions.TypeAlias = Command

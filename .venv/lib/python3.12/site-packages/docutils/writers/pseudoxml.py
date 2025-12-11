@@ -1,4 +1,4 @@
-# $Id: pseudoxml.py 9043 2022-03-11 12:09:16Z milde $
+# $Id: pseudoxml.py 10136 2025-05-20 15:48:27Z milde $
 # Author: David Goodger <goodger@python.org>
 # Copyright: This module has been placed in the public domain.
 
@@ -6,8 +6,9 @@
 Simple internal document tree Writer, writes indented pseudo-XML.
 """
 
-__docformat__ = 'reStructuredText'
+from __future__ import annotations
 
+__docformat__ = 'reStructuredText'
 
 from docutils import writers, frontend
 
@@ -32,9 +33,9 @@ class Writer(writers.Writer):
     output = None
     """Final translated form of `document`."""
 
-    def translate(self):
+    def translate(self) -> None:
         self.output = self.document.pformat()
 
-    def supports(self, format):
+    def supports(self, format) -> bool:
         """This writer supports all format-specific elements."""
         return True
