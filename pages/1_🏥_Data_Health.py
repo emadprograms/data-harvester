@@ -1,10 +1,14 @@
 import streamlit as st
 from src.database.operations import get_symbol_map_from_db
 from src.ui.health import render_health_dashboard
+from src.ui.sidebar import render_sidebar
 
 st.set_page_config(page_title="Data Health | Harvester", page_icon="🏥", layout="wide")
 
 st.title("🏥 Data Health Dashboard")
+
+# Render Sidebar
+render_sidebar()
 
 # Initialize DB connection implicitly handled by operations if needed, 
 # but mostly we just need the symbol map here.
