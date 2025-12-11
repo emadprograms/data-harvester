@@ -8,6 +8,11 @@ from src.data.harvester import run_harvest_logic
 
 
 
+import logging
+
+# Suppress Streamlit's 'missing ScriptRunContext' warning
+logging.getLogger('streamlit').setLevel(logging.ERROR)
+
 class CLILogger:
     """Simple logger for CLI output."""
     def __init__(self):

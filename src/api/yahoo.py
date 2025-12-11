@@ -20,7 +20,8 @@ def fetch_yahoo_market_data(ticker: str, target_date_et, logger) -> pd.DataFrame
             end=end.strftime('%Y-%m-%d'), 
             interval="1m", 
             prepost=True,  
-            progress=False
+            progress=False,
+            auto_adjust=False
         )
         
         if df.empty:
