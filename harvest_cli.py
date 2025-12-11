@@ -10,10 +10,12 @@ from src.data.harvester import run_harvest_logic
 
 import logging
 
-# Suppress Streamlit's 'missing ScriptRunContext' warning aggressively
-logging.getLogger('streamlit').setLevel(logging.ERROR)
-logging.getLogger('streamlit.runtime.scriptrunner_utils.script_run_context').setLevel(logging.ERROR)
-logging.getLogger('streamlit.runtime.state.session_state_proxy').setLevel(logging.ERROR)
+class StreamlitWarningFilter(logging.Filter):
+    def filter(self, record):
+        return "ScriptRunContext" not in record.getMessage()
+
+logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").addFilter(StreamlitWarningFilter())
+logging.getLogger("streamlit").addFilter(StreamlitWarningFilter())
 
 class CLILogger:
     """Simple logger for CLI output."""
