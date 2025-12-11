@@ -3,7 +3,12 @@ from src.database.operations import get_symbol_map_from_db
 # FIXED: Use the correct UI module
 from src.ui.harvester_ui import render_harvester_ui
 
-st.set_page_config(page_title="Data Harvester", page_icon="🌾", layout="wide")
+st.set_page_config(
+    page_title="Data Harvester", 
+    page_icon="🌾", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 st.title("🌾 Data Harvester")
 

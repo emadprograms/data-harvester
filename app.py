@@ -3,7 +3,12 @@ from src.database.schema import init_db
 
 # Page Config
 # This serves as the "Home" page in the Multipage App structure.
-st.set_page_config(page_title="Market Data Harvester", layout="wide", page_icon="🦁")
+st.set_page_config(
+    page_title="Market Data Harvester", 
+    layout="wide", 
+    page_icon="🦁", 
+    initial_sidebar_state="expanded"
+)
 
 def main():
     # Initialize DB (Ensure tables exist)

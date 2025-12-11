@@ -2,7 +2,12 @@ import streamlit as st
 from src.database.operations import get_symbol_map_from_db
 from src.ui.inventory import render_inventory_ui
 
-st.set_page_config(page_title="Inventory Manager | Harvester", page_icon="📦", layout="wide")
+st.set_page_config(
+    page_title="Inventory Manager | Harvester", 
+    page_icon="📦", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 st.title("📦 Inventory Manager")
 
