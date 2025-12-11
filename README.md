@@ -4,10 +4,13 @@ A robust Streamlit application for harvesting, normalizing, and storing stock ma
 
 ## 🚀 Features
 
-*   **Hybrid Harvesting:**
+*   **Binance Lane (Crypto):**
+    *   Fetches 24h data from **Binance**.
+    *   **Smart Fallback:** If Binance fails (e.g. invalid symbol in region), it automatically falls back to **Yahoo Finance** (mapping `EURUSDT` -> `EURUSD=X` etc).
+*   **Stock Lane (Hybrid):**
     *   Fetches **Regular Session** (9:30 AM - 4:00 PM ET) data from **Yahoo Finance**.
     *   Fetches **Pre-Market** (4:00 AM - 9:30 AM ET) and **Post-Market** (4:00 PM - 8:00 PM ET) data from **Capital.com**.
-    *   **Smart Fallback:** If Yahoo Finance fails, it automatically falls back to Capital.com for the regular session.
+    *   **Smart Fallback:** If Yahoo Finance fails, it automatically falls back to Capital.com.
 *   **Inventory Manager:** easily add, edit, or remove stock tickers and map them to Capital.com "Epics".
 *   **Glass Box Dashboard:** Real-time, visual status matrix showing exactly what the harvester is doing (Source, Status, Row Counts).
 *   **Data Health Dashboard:** Visualize your data completeness with a heat-map calendar.
@@ -16,7 +19,7 @@ A robust Streamlit application for harvesting, normalizing, and storing stock ma
 ## 🛠️ Setup & Installation
 
 ### 1. Prerequisites
-*   Python 3.9+
+*   Python 3.12+ (Recommended)
 *   A **Turso** Database (libSQL)
 *   A **Capital.com** API Account (Live or Demo)
 
