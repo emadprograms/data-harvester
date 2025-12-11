@@ -12,5 +12,5 @@ def render_sidebar():
             db_map = get_symbol_map_from_db()
             count = len(db_map)
             st.info(f"Tracking **{count}** Symbols")
-        except Exception:
-            st.error("DB Error")
+        except Exception as e:
+            st.error(f"DB Error: {e}")
