@@ -17,12 +17,18 @@ class CLILogger:
         print(f"🔹 {message}")
 
 
+from src.config import US_EASTERN
+
+# ...
+
 if __name__ == "__main__":
     # Initialize database
     init_db()
     
     # Setup parameters
-    today = datetime.now().date()
+    # Use US/Eastern time to determine the "Trading Day"
+    # If this runs at 01:15 UTC (20:15 ET prev day), it correctly picks 'yesterday' relative to UTC-midnight
+    today = datetime.now(US_EASTERN).date()
     symbol_map = get_symbol_map_from_db()
     inventory_list = list(symbol_map.keys())
     
