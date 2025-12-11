@@ -53,6 +53,10 @@ def fetch_capital_data_range(epic: str, cst: str, xst: str, start_utc, end_utc, 
     if end_utc > now_utc:
         end_utc = now_utc
     
+    # Re-check: If start time is still after "now" (e.g. asking for Post Market data during Reg Session)
+    if start_utc >= end_utc:
+        return pd.DataFrame()
+    
     price_params = {
         "resolution": "MINUTE", "max": 1000, 
         'from': start_utc.strftime('%Y-%m-%dT%H:%M:%S'), 

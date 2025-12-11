@@ -5,7 +5,7 @@ from datetime import datetime
 from src.database.schema import init_db
 from src.database.operations import get_symbol_map_from_db, save_data_to_turso
 from src.data.harvester import run_harvest_logic
-from src.utils.logger import StreamlitLogger
+
 
 
 class CLILogger:
