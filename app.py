@@ -1,6 +1,5 @@
 import streamlit as st
 from src.database.schema import init_db
-from src.ui.sidebar import render_sidebar
 
 # Page Config
 # This serves as the "Home" page in the Multipage App structure.
@@ -9,9 +8,6 @@ st.set_page_config(page_title="Market Data Harvester", layout="wide", page_icon=
 def main():
     # Initialize DB (Ensure tables exist)
     init_db()
-    
-    # Render Shared Sidebar
-    render_sidebar()
     
     st.title("🦁 Market Data Harvester")
     st.markdown("""
