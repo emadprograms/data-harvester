@@ -34,14 +34,28 @@ class CLILogger:
 # -----------------------------------------------------------------------------
 # Main Execution
 # -----------------------------------------------------------------------------
+# ... imports ...
+from datetime import timedelta
+
+# ... existing logger code ...
+
 if __name__ == "__main__":
     try:
         # Initialize database
         init_db()
         
         # Setup parameters
-        # Use US/Eastern time to determine the "Trading Day"
-        today = datetime.now(US_EASTERN).date()
+        # Intelligent Date Selection for "Twice-Daily" Schedule
+        # Run 1 (Evening ~16:15 ET): Targets 'Today' (Captures Pre + Regular)
+        # Run 2 (Morning ~03:45 ET): Targets 'Yesterday' (Captures Post)
+        now_et = datetime.now(US_EASTERN)
+        if now_et.hour < 10:
+            today = (now_et - timedelta(days=1)).date()
+            print(f"🌅 Morning Run detected ({now_et.strftime('%H:%M')} ET). Harvesting YESTERDAY: {today}")
+        else:
+            today = now_et.date()
+            print(f"🌇 Evening Run detected ({now_et.strftime('%H:%M')} ET). Harvesting TODAY: {today}")
+
         symbol_map = get_symbol_map_from_db()
         inventory_list = list(symbol_map.keys())
         

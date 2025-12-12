@@ -2,8 +2,10 @@ name: Daily Harvest
 
 on:
   schedule:
-    # Run at 01:15 UTC every Tue-Sat (After US Post-Market Close 20:00 ET previous day)
-    - cron: '15 1 * * 2-6'
+    # Run 1: 21:15 UTC (~16:15 ET) -> Harvest "Today" (Pre + Regular, right after close)
+    # Run 2: 08:30 UTC (~03:30 ET) -> Harvest "Yesterday" (Post, before next Pre-Market)
+    - cron: '15 21 * * 1-5' # Mon-Fri (Market Open Days)
+    - cron: '30 8 * * 2-6'  # Tue-Sat (Morning after trading days)
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
