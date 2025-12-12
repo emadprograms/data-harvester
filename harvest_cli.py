@@ -4,7 +4,7 @@ CLI/automation worker script for scheduled data harvesting.
 import os
 import sys
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from src.database.schema import init_db
 from src.database.operations import get_symbol_map_from_db, save_data_to_turso
 from src.data.harvester import run_harvest_logic
@@ -34,11 +34,6 @@ class CLILogger:
 # -----------------------------------------------------------------------------
 # Main Execution
 # -----------------------------------------------------------------------------
-# ... imports ...
-from datetime import timedelta
-
-# ... existing logger code ...
-
 if __name__ == "__main__":
     try:
         # Initialize database
