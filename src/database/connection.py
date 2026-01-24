@@ -10,17 +10,16 @@ import os
 def get_db_connection():
     """Establishes a synchronous connection to the Turso database."""
     try:
-        # Priority: Streamlit Secrets (Local) -> Env Vars (GitHub/Worker)
-        if "turso" in st.secrets:
-            url = st.secrets["turso"]["db_url"]
-            token = st.secrets["turso"]["auth_token"]
-        else:
-            url = os.environ.get("TURSO_DB_URL")
-            token = os.environ.get("TURSO_AUTH_TOKEN")
+
+        from src.infisical_manager import InfisicalManager
+        mgr = InfisicalManager()
+        
+        url = mgr.get_secret("turso_emadprograms_analystworkbench_DB_URL")
+        token = mgr.get_secret("turso_emadprograms_analystworkbench_AUTH_TOKEN")
         
         if not url or not token:
             if st.runtime.exists():
-                st.error("Missing Turso credentials. Check secrets.toml or Environment Variables.")
+                st.error("Missing Turso credentials. Check Infisical Access.")
             return None
         
         # Force HTTPS for reliability

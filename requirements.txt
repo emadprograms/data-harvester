@@ -7,3 +7,5 @@ requests
 urllib3
 pytz
 lightweight-charts
+infisical-python>=2.0.0
+toml
