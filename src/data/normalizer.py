@@ -60,3 +60,36 @@ def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG'
     df_norm['session'] = session_label
     df_norm.columns = [c.lower() for c in df_norm.columns]
     return df_norm[SCHEMA_COLS]
+
+
+def normalize_massive_df(df, symbol, session_label="REG"):
+    """
+    Normalizes Massive (Polygon) data to the standard schema.
+    """
+    if df.empty:
+        return pd.DataFrame(columns=SCHEMA_COLS)
+
+    df = df.copy()
+    
+    # Rename columns to match Schema (lowercase)
+    df.rename(columns={
+        "Open": "open",
+        "High": "high",
+        "Low": "low", 
+        "Close": "close",
+        "Volume": "volume",
+        "SnapshotTime": "timestamp"
+    }, inplace=True)
+    
+    # Ensure UTC Datetime
+    if df['timestamp'].dt.tz is None:
+         df['timestamp'] = df['timestamp'].dt.tz_localize(UTC)
+    else:
+         df['timestamp'] = df['timestamp'].dt.tz_convert(UTC)
+
+    df['symbol'] = symbol
+    df['session'] = session_label
+    
+    # Reorder and Select
+    final_df = df[SCHEMA_COLS]
+    return final_df

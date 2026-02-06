@@ -12,30 +12,56 @@ from src.config import UTC, US_EASTERN
 
 # --- Basic CRUD for Symbol Mapping ---
 
+# --- Basic CRUD for Symbol Mapping ---
+
 def get_symbol_map_from_db():
-    """Fetches the complete symbol inventory."""
+    """Fetches the complete symbol inventory from the new table."""
     client = get_db_connection()
     if not client:
         return {}
     try:
-        res = client.execute("SELECT user_ticker, capital_epic, source_strategy FROM symbol_map ORDER BY user_ticker")
-        return {row[0]: {'epic': row[1], 'strategy': row[2]} for row in res.rows}
+        # Fetch from new table
+        res = client.execute("""
+            SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker, twelve_data_ticker, priority_1, priority_2, priority_3 
+            FROM market_symbols 
+            ORDER BY display_name
+        """)
+        
+        # Return a dictionary structured for the app
+        inventory = {}
+        for row in res.rows:
+            inventory[row[0]] = {
+                'yahoo_ticker': row[1],
+                'massive_ticker': row[2],
+                'binance_ticker': row[3],
+                'twelve_data_ticker': row[4],
+                'p1': row[5],
+                'p2': row[6],
+                'p3': row[7]
+            }
+        return inventory
     except Exception:
         return {}
 
-def upsert_symbol_mapping(ticker, epic, strategy):
+def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, td_ticker=None, p3=None):
     """Adds or updates a symbol's rules."""
     client = get_db_connection()
     if not client:
         return False
     try:
+        # Check if column exists, if not, migration handles it, but safe insert:
         client.execute(
-            """INSERT INTO symbol_map (user_ticker, capital_epic, source_strategy) 
-               VALUES (?, ?, ?) 
-               ON CONFLICT(user_ticker) DO UPDATE SET 
-                 capital_epic=excluded.capital_epic, 
-                 source_strategy=excluded.source_strategy""",
-            [ticker, epic, strategy]
+            """INSERT INTO market_symbols (display_name, yahoo_ticker, massive_ticker, binance_ticker, twelve_data_ticker, priority_1, priority_2, priority_3) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
+               ON CONFLICT(display_name) DO UPDATE SET 
+                 yahoo_ticker=excluded.yahoo_ticker, 
+                 massive_ticker=excluded.massive_ticker,
+                 binance_ticker=excluded.binance_ticker,
+                 twelve_data_ticker=excluded.twelve_data_ticker,
+                 priority_1=excluded.priority_1,
+                 priority_2=excluded.priority_2,
+                 priority_3=excluded.priority_3""",
+            [display_name, y_ticker, m_ticker, b_ticker, td_ticker, p1, p2, p3]
         )
         return True
     except Exception as e:
@@ -48,7 +74,7 @@ def delete_symbol_mapping(ticker):
     if not client:
         return False
     try:
-        client.execute("DELETE FROM symbol_map WHERE user_ticker = ?", [ticker])
+        client.execute("DELETE FROM market_symbols WHERE display_name = ?", [ticker])
         return True
     except Exception as e:
         st.error(f"Error deleting symbol: {e}")

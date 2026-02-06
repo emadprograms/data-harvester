@@ -34,21 +34,21 @@ def main():
     #### 🟡 Lane 2: Commodities (Futures)
     *   **Target:** Symbols ending in `=F` (e.g., `CL=F` for Oil, `GC=F` for Gold).
     *   **Primary Source:** **Yahoo Finance**. Fetches 24h futures data.
-    *   **Fallback:** Capital.com.
+    *   **Fallback:** Massive.
     
     #### 🔵 Lane 3: Stocks & Indices (Hybrid)
     *   **Target:** Everything else (e.g., `AAPL`, `NVDA`, `SPY`, `VIX`).
     *   **Strategy:** "Frankenstein" Candle Stitching.
-        *   **Pre-Market (04:00 - 09:30 ET):** Fetched from **Capital.com** (CFDs often trade 24/5).
+        *   **Pre-Market (04:00 - 09:30 ET):** Fetched from **Massive** (formerly Polygon).
         *   **Regular Session (09:30 - 16:00 ET):** Fetched from **Yahoo Finance** (Official exchange data).
-        *   **Post-Market (16:00 - 20:00 ET):** Fetched from **Capital.com**.
+        *   **Post-Market (16:00 - 20:00 ET):** Fetched from **Massive**.
         
     ---
     
     ### 🧩 App Components
     
     *   **🌾 Data Harvester:** The engine room. Select tickers and click "Start" to fetch data for a specific date. The "Glass Box" UI shows you exactly which source is being used for each session.
-    *   **📦 Inventory Manager:** Your control center. Add new symbols here. You MUST map every ticker to a **Capital.com Epic** (Fallback ID) so the system knows what to search for if the primary source fails.
+    *   **📦 Inventory Manager:** Your control center. Add new symbols here. You MUST map every ticker to a **Massive Ticker** (Fallback ID) so the system knows what to search for if the primary source fails.
     *   **🏥 Data Health:** A calendar heat-map showing data completeness. Green days = 1440 mins (24h) or 960 mins (16h Stock). Red days = Missing data.
     *   **🔎 DB Inspector:** A raw data viewer to peek inside the database tables.
     

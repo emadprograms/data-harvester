@@ -8,59 +8,51 @@ import time
 from src.database.operations import upsert_symbol_mapping, delete_symbol_mapping
 
 
-def get_route_description(ticker):
-    """
-    Returns a user-friendly description of the Harvester Lane based on the ticker symbol.
-    """
-    if not ticker:
-        return "Waiting for input..."
-    
-    t = ticker.upper().strip()
-    
-    # Lane 1: Binance
-    if t.endswith("USDT"):
-        return "🟢 **Lane 1 (Binance):** Will fetch 24h Crypto/Forex data from Binance. (Fallback: Capital)"
-    
-    # Lane 2: Yahoo Futures
-    if t.endswith("=F"):
-        return "🟡 **Lane 2 (Futures):** Will fetch 24h Futures data from Yahoo. (Fallback: Capital)"
-    
-    # Lane 3: Standard Stocks/Indices (Includes VIX)
-    return "🔵 **Lane 3 (Stocks/Indices):** Will fetch Pre/Reg/Post data from Yahoo. (Fallback: Capital)"
+
+
 
 
 def render_inventory_ui(db_map, inventory_list):
     """Renders the inventory manager UI section."""
     st.subheader("📦 Inventory Manager")
     
+    # Options
+    SOURCE_OPTIONS = ["YAHOO", "MASSIVE", "BINANCE", "TWELVE_DATA"]
+    
     # --- SECTION 1: ADD NEW SYMBOL ---
     with st.container(border=True):
         st.write("### ➕ Add New Symbol")
-        c1, c2 = st.columns(2)
-        with c1:
-            new_ticker = st.text_input("Ticker", placeholder="e.g. BTCUSDT, AAPL, CL=F").upper().strip()
-        with c2:
-            # Added explicit Label and Help Tooltip
-            new_epic = st.text_input(
-                "Capital.com Epic (Fallback ID)", 
-                placeholder="e.g. BTCUSD, AAPL, US500", 
-                help="⚠️ REQUIRED FOR SAFETY NET: If Yahoo/Binance fails, the system uses THIS specific symbol to fetch data from Capital.com."
-            ).upper().strip()
         
-        # Dynamic Route Display
-        if new_ticker:
-            route_msg = get_route_description(new_ticker)
-            st.info(route_msg)
+        display_name = st.text_input("Display Name (Unique ID)", placeholder="e.g. BTCUSDT, AAPL, Gold").upper().strip()
         
-        # Optional override
-        force_capital = st.checkbox("🚫 Skip Primary Source (Force Capital.com Only)", key="new_force_cap")
-        
-        if st.button("Save New Symbol", type="primary", disabled=not new_ticker):
-            code = "CAPITAL_ONLY" if force_capital else "HYBRID"
-            epic_val = new_epic if new_epic else new_ticker
+        with st.expander("🔌 Source Configuration", expanded=True):
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                y_ticker = st.text_input("Yahoo Ticker", value=display_name, help="e.g. BTC-USD, AAPL")
+            with c2:
+                m_ticker = st.text_input("Massive Ticker", value=display_name, help="e.g. AAPL")
+            with c3:
+                b_ticker = st.text_input("Binance Ticker", value=display_name if "USDT" in display_name else "", help="e.g. BTCUSDT")
+            with c4:
+                td_ticker = st.text_input("TwelveData Ticker", value=display_name, help="e.g. AAPL, WTI/USD")
+
+            st.caption("ℹ️ *Default values assume the source uses the same ticker name. Adjust if different.*")
             
-            if upsert_symbol_mapping(new_ticker, epic_val, code):
-                st.success(f"Saved {new_ticker}")
+        with st.expander("⚡ Priority Routing", expanded=True):
+            pc1, pc2, pc3 = st.columns(3)
+            with pc1:
+                p1 = st.selectbox("Priority 1 (Primary)", SOURCE_OPTIONS, index=0)
+            with pc2:
+                # Options: NONE, YAHOO, MASSIVE, BINANCE, TWELVE_DATA
+                # Index 1 = YAHOO
+                p2 = st.selectbox("Priority 2 (Fallback)", ["NONE"] + SOURCE_OPTIONS, index=1)
+            with pc3:
+                # Index 0 = NONE
+                p3 = st.selectbox("Priority 3 (Last Resort)", ["NONE"] + SOURCE_OPTIONS, index=0)
+        
+        if st.button("Save New Symbol", type="primary", disabled=not display_name):
+            if upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, td_ticker, p3):
+                st.success(f"Saved {display_name}")
                 time.sleep(0.5)
                 st.rerun()
 
@@ -70,96 +62,61 @@ def render_inventory_ui(db_map, inventory_list):
         if not inventory_list:
             st.info("No symbols in inventory yet.")
         else:
-            if 'edit_select' not in st.session_state:
-                st.session_state.edit_select = "" 
-            if 'edit_ticker_val' not in st.session_state:
-                st.session_state.edit_ticker_val = ""
-            if 'edit_epic_val' not in st.session_state:
-                st.session_state.edit_epic_val = ""
-            if 'edit_force_cap' not in st.session_state:
-                st.session_state.edit_force_cap = False
+            if 'edit_select' not in st.session_state: st.session_state.edit_select = "" 
+            
+            # Selection Dropdown
+            selected_ticker = st.selectbox("Select Symbol to Edit", [""] + inventory_list, key="edit_select")
+            
+            if selected_ticker and selected_ticker in db_map:
+                data = db_map[selected_ticker]
+                
+                st.write(f"**Editing: {selected_ticker}**")
+                
+                with st.expander("🔌 Source Configuration", expanded=True):
+                    ec1, ec2, ec3, ec4 = st.columns(4)
+                    with ec1:
+                        ny_ticker = st.text_input("Yahoo Ticker", value=data['yahoo_ticker'] or "", key="e_y")
+                    with ec2:
+                        nm_ticker = st.text_input("Massive Ticker", value=data['massive_ticker'] or "", key="e_m")
+                    with ec3:
+                        nb_ticker = st.text_input("Binance Ticker", value=data['binance_ticker'] or "", key="e_b")
+                    with ec4:
+                        ntd_ticker = st.text_input("TwelveData Ticker", value=data.get('twelve_data_ticker') or "", key="e_td")
+                
+                with st.expander("⚡ Priority Routing", expanded=True):
+                    epc1, epc2, epc3 = st.columns(3)
+                    with epc1:
+                        curr_p1 = data['p1'] if data['p1'] in SOURCE_OPTIONS else "YAHOO"
+                        np1 = st.selectbox("Priority 1", SOURCE_OPTIONS, index=SOURCE_OPTIONS.index(curr_p1), key="e_p1")
+                    with epc2:
+                        curr_p2 = data['p2'] if data['p2'] in ["NONE"] + SOURCE_OPTIONS else "NONE"
+                        np2 = st.selectbox("Priority 2", ["NONE"] + SOURCE_OPTIONS, index=(["NONE"] + SOURCE_OPTIONS).index(curr_p2), key="e_p2")
+                    with epc3:
+                        opts = ["NONE"] + SOURCE_OPTIONS
+                        curr_p3 = data.get('p3')
+                        if curr_p3 not in opts: curr_p3 = "NONE"
+                        np3 = st.selectbox("Priority 3", opts, index=opts.index(curr_p3), key="e_p3")
 
-            def handle_update():
-                original_ticker = st.session_state.edit_select
-                new_ticker_val = st.session_state.edit_ticker_val
-                new_epic_val = st.session_state.edit_epic_val
-                is_forced = st.session_state.edit_force_cap
-                
-                code = "CAPITAL_ONLY" if is_forced else "HYBRID"
-                
-                if original_ticker and new_ticker_val and original_ticker != new_ticker_val:
-                    st.info(f"Renaming {original_ticker} to {new_ticker_val}...")
-                    delete_symbol_mapping(original_ticker)
-                
-                if new_ticker_val:
-                    if upsert_symbol_mapping(new_ticker_val, new_epic_val, code):
-                        st.success(f"Updated {new_ticker_val}")
-                        # Reset state
-                        st.session_state.edit_select = ""
-                        st.session_state.edit_ticker_val = "" 
-                        st.session_state.edit_epic_val = "" 
-                        st.session_state.edit_force_cap = False
+                if st.button("Update Symbol", type="primary"):
+                    if upsert_symbol_mapping(selected_ticker, ny_ticker, nm_ticker, nb_ticker, np1, np2, ntd_ticker, np3):
+                        st.success(f"Updated {selected_ticker}")
                         time.sleep(0.5)
                         st.rerun()
-                    else:
-                        st.error("Failed to update symbol.")
-                else:
-                    st.error("Ticker field cannot be empty.")
-
-            # Selection Dropdown
-            c_edit1, c_edit_spacer = st.columns([1.5, 2.5])
-            with c_edit1:
-                st.selectbox("Select Ticker to Edit", options=[""] + inventory_list, key="edit_select")
-            
-            # Populate fields on selection
-            current_selection = st.session_state.edit_select
-            if current_selection != st.session_state.edit_ticker_val and current_selection != "":
-                if current_selection in db_map:
-                    selected_data = db_map[current_selection]
-                    st.session_state.edit_ticker_val = current_selection
-                    st.session_state.edit_epic_val = selected_data['epic']
-                    st.session_state.edit_force_cap = (selected_data['strategy'] == "CAPITAL_ONLY")
-            
-            # Edit Form
-            if current_selection:
-                c_f1, c_f2 = st.columns(2)
-                with c_f1:
-                    st.text_input("Ticker", key="edit_ticker_val")
-                with c_f2:
-                    # Added explicit Label and Help Tooltip
-                    st.text_input(
-                        "Capital.com Epic (Fallback ID)", 
-                        key="edit_epic_val",
-                        help="The specific symbol Capital.com uses. If Yahoo fails, we need THIS to fetch the data from Capital."
-                    )
-                
-                # Dynamic Route Display for Edit Mode
-                if st.session_state.edit_ticker_val:
-                    st.caption(get_route_description(st.session_state.edit_ticker_val))
-                
-                st.checkbox("🚫 Skip Primary Source (Force Capital.com Only)", key="edit_force_cap")
-                
-                st.write("")
-                st.button("Update Symbol", type="primary", on_click=handle_update)
 
     # --- SECTION 3: TABLE VIEW ---
     st.write("### 📋 Current Inventory")
     if db_map:
         table_data = []
         for k, v in db_map.items():
-            strat_raw = v['strategy']
-            if strat_raw == "CAPITAL_ONLY":
-                display_strat = "🚫 Capital Only"
-            else:
-                # Quick lookup for display
-                if k.endswith("USDT"): display_strat = "Binance ➔ Cap"
-                elif k.endswith("=F"): display_strat = "Yahoo Fut ➔ Cap"
-                else: display_strat = "Yahoo Stk ➔ Cap"
-                
             table_data.append({
-                "Ticker": k, 
-                "Fallback ID (Capital)": v['epic'], 
-                "Effective Route": display_strat
+                "Display Name": k, 
+                "P1": v['p1'],
+                "P2": v['p2'],
+                "P3": v.get('p3', 'NONE'),
+                "Yahoo": v['yahoo_ticker'],
+                "Massive": v['massive_ticker'],
+                "Binance": v['binance_ticker'],
+                "TwelveData": v.get('twelve_data_ticker')
             })
             
         st.dataframe(pd.DataFrame(table_data), use_container_width=True)
