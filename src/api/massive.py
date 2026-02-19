@@ -8,15 +8,19 @@ from src.infisical_manager import InfisicalManager
 from src.config import UTC, BAHRAIN_TZ
 from src.api.retry import get_retry_session
 
-import random
+import threading
 import time
-import streamlit as st
+
+# Key Rotation State (Module-level for CLI/Streamlit persistence)
+_MASSIVE_KEY_IDX = 0
+_KEY_LOCK = threading.Lock()
 
 def fetch_massive_data(ticker: str, start_utc: datetime, end_utc: datetime, logger) -> tuple[pd.DataFrame, str]:
     """
     Fetches 1-minute aggregates from Massive (Polygon.io).
     Returns: (DataFrame, error_message)
     """
+    global _MASSIVE_KEY_IDX
     mgr = InfisicalManager()
     keys = mgr.get_massive_api_keys()
     
@@ -25,16 +29,9 @@ def fetch_massive_data(ticker: str, start_utc: datetime, end_utc: datetime, logg
         logger.log(f"   ❌ {msg}")
         return pd.DataFrame(), msg
 
-    # Key Rotation State Management
-    # We want to use different keys across different calls to spread load.
-    if "massive_key_idx" not in st.session_state:
-        st.session_state.massive_key_idx = 0
-    
-    # Try keys in specific order starting from current index
-    # We will try up to len(keys) times.
-    
     total_keys = len(keys)
-    start_idx = st.session_state.massive_key_idx % total_keys
+    with _KEY_LOCK:
+        start_idx = _MASSIVE_KEY_IDX % total_keys
     
     # Prepare params
     timespan = "minute"
@@ -59,14 +56,14 @@ def fetch_massive_data(ticker: str, start_utc: datetime, end_utc: datetime, logg
         
         session = get_retry_session()
         try:
-            # Short timeout? No, keep 15s.
             response = session.get(url, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
             
             # --- SUCCESS ---
-            # Update session state to prefer next key next time (Load Balancing)
-            st.session_state.massive_key_idx = (current_idx + 1) % total_keys
+            # Update rotation to prefer next key next time
+            with _KEY_LOCK:
+                _MASSIVE_KEY_IDX = (current_idx + 1) % total_keys
             
             results = data.get("results", [])
             if not results:
@@ -98,7 +95,7 @@ def fetch_massive_data(ticker: str, start_utc: datetime, end_utc: datetime, logg
             else:
                 last_err = f"HTTP {status}"
                 logger.log(f"   ❌ Massive Error {ticker}: {last_err}")
-                return pd.DataFrame(), last_err
+                continue # Try next key instead of giving up
                 
         except Exception as e:
             last_err = f"Error: {str(e)[:20]}..."

@@ -4,13 +4,11 @@ STRATEGY:
 1. Save everything as UTC Strings (Unique, Clean).
 2. When viewing Health Matrix, convert back to US/Eastern to count 'Trading Days' correctly.
 """
-import streamlit as st
+
 import pandas as pd
 import time
 from src.database.connection import get_db_connection
 from src.config import UTC, US_EASTERN
-
-# --- Basic CRUD for Symbol Mapping ---
 
 # --- Basic CRUD for Symbol Mapping ---
 
@@ -22,7 +20,7 @@ def get_symbol_map_from_db():
     try:
         # Fetch from new table
         res = client.execute("""
-            SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker, twelve_data_ticker, priority_1, priority_2, priority_3 
+            SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker, priority_1, priority_2, priority_3 
             FROM market_symbols 
             ORDER BY display_name
         """)
@@ -34,16 +32,15 @@ def get_symbol_map_from_db():
                 'yahoo_ticker': row[1],
                 'massive_ticker': row[2],
                 'binance_ticker': row[3],
-                'twelve_data_ticker': row[4],
-                'p1': row[5],
-                'p2': row[6],
-                'p3': row[7]
+                'p1': row[4],
+                'p2': row[5],
+                'p3': row[6]
             }
         return inventory
     except Exception:
         return {}
 
-def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, td_ticker=None, p3=None):
+def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3=None):
     """Adds or updates a symbol's rules."""
     client = get_db_connection()
     if not client:
@@ -51,21 +48,20 @@ def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, td
     try:
         # Check if column exists, if not, migration handles it, but safe insert:
         client.execute(
-            """INSERT INTO market_symbols (display_name, yahoo_ticker, massive_ticker, binance_ticker, twelve_data_ticker, priority_1, priority_2, priority_3) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
+            """INSERT INTO market_symbols (display_name, yahoo_ticker, massive_ticker, binance_ticker, priority_1, priority_2, priority_3) 
+               VALUES (?, ?, ?, ?, ?, ?, ?) 
                ON CONFLICT(display_name) DO UPDATE SET 
                  yahoo_ticker=excluded.yahoo_ticker, 
                  massive_ticker=excluded.massive_ticker,
                  binance_ticker=excluded.binance_ticker,
-                 twelve_data_ticker=excluded.twelve_data_ticker,
                  priority_1=excluded.priority_1,
                  priority_2=excluded.priority_2,
                  priority_3=excluded.priority_3""",
-            [display_name, y_ticker, m_ticker, b_ticker, td_ticker, p1, p2, p3]
+            [display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3]
         )
         return True
     except Exception as e:
-        st.error(f"Error saving symbol: {e}")
+        print(f"❌ Error saving symbol: {e}")
         return False
 
 def delete_symbol_mapping(ticker):
@@ -77,7 +73,7 @@ def delete_symbol_mapping(ticker):
         client.execute("DELETE FROM market_symbols WHERE display_name = ?", [ticker])
         return True
     except Exception as e:
-        st.error(f"Error deleting symbol: {e}")
+        print(f"❌ Error deleting symbol: {e}")
         return False
 
 # --- MARKET DATA OPERATIONS ---
@@ -146,7 +142,7 @@ def save_data_to_turso(df: pd.DataFrame, logger=None):
         # Improved Error Logging to see exactly what failed
         err = f"Save Error: {e}"
         if logger: logger.log(f"   ❌ {err}")
-        elif st.runtime.exists(): st.error(err)
+        else: print(f"❌ {err}")
         print(err) # Print to console for extra visibility
         return False
 
@@ -212,5 +208,5 @@ def fetch_data_health_matrix(tickers: list, start_date, end_date, session_filter
         return pivot_df
 
     except Exception as e:
-        st.error(f"Error fetching health matrix: {e}")
+        print(f"❌ Error fetching health matrix: {e}")
         return pd.DataFrame()

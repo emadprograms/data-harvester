@@ -1,13 +1,11 @@
 """
-Utility logger for writing status messages to Streamlit containers.
+Utility logger for CLI output.
 """
 
-class StreamlitLogger:
-    """A simple logger that writes to a Streamlit container."""
-    def __init__(self, container):
-        self.container = container
+class CLILogger:
+    """A simple logger that prints to console."""
+    def __init__(self):
+        pass
     
     def log(self, message):
-        if self.container:
-            self.container.write(f"🔹 {message}")
-        print(message)
+        print(f"🔹 {message}")

@@ -1,0 +1,90 @@
+"""
+Tests for src/infisical_manager.py — Verify singleton, caching, and error handling.
+"""
+import unittest
+from unittest.mock import patch, MagicMock
+import os
+
+
+class TestInfisicalManager(unittest.TestCase):
+
+    def setUp(self):
+        """Reset singleton for clean tests."""
+        from src.infisical_manager import InfisicalManager
+        InfisicalManager._instance = None
+        InfisicalManager._massive_keys_cache = None
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("src.infisical_manager.os.path.exists", return_value=False)
+    def test_no_credentials_not_connected(self, mock_exists):
+        """No env vars and no secrets file → must not crash, is_connected=False."""
+        from src.infisical_manager import InfisicalManager
+        mgr = InfisicalManager()
+        self.assertFalse(mgr.is_connected)
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("src.infisical_manager.os.path.exists", return_value=False)
+    def test_get_secret_when_not_connected(self, mock_exists):
+        """get_secret when not connected must return None."""
+        from src.infisical_manager import InfisicalManager
+        mgr = InfisicalManager()
+        result = mgr.get_secret("some_key")
+        self.assertIsNone(result)
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("src.infisical_manager.os.path.exists", return_value=False)
+    def test_get_massive_keys_when_not_connected(self, mock_exists):
+        """get_massive_api_keys when not connected must return empty list."""
+        from src.infisical_manager import InfisicalManager
+        mgr = InfisicalManager()
+        keys = mgr.get_massive_api_keys()
+        self.assertEqual(keys, [])
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("src.infisical_manager.os.path.exists", return_value=False)
+    def test_singleton_pattern(self, mock_exists):
+        """Multiple instantiations must return the same object."""
+        from src.infisical_manager import InfisicalManager
+        mgr1 = InfisicalManager()
+        mgr2 = InfisicalManager()
+        self.assertIs(mgr1, mgr2)
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("src.infisical_manager.os.path.exists", return_value=False)
+    def test_secrets_cache(self, mock_exists):
+        """Secrets must be cached after first retrieval."""
+        from src.infisical_manager import InfisicalManager
+        mgr = InfisicalManager()
+        mgr.is_connected = True
+        mgr.client = MagicMock()
+        
+        mock_secret = MagicMock()
+        mock_secret.secret_value = "test_value"
+        mgr.client.getSecret.return_value = mock_secret
+        mgr.project_id = "test_project"
+        
+        # First call — should hit API
+        val1 = mgr.get_secret("my_key")
+        # Second call — should use cache
+        val2 = mgr.get_secret("my_key")
+        
+        self.assertEqual(val1, "test_value")
+        self.assertEqual(val2, "test_value")
+        # API should only be called once (cached on second call)
+        mgr.client.getSecret.assert_called_once()
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("src.infisical_manager.os.path.exists", return_value=False)
+    def test_massive_keys_class_level_cache(self, mock_exists):
+        """Massive keys must use class-level cache across instances."""
+        from src.infisical_manager import InfisicalManager
+        # Pre-populate the class cache
+        InfisicalManager._massive_keys_cache = ["key1", "key2"]
+        
+        mgr = InfisicalManager()
+        keys = mgr.get_massive_api_keys()
+        self.assertEqual(keys, ["key1", "key2"])
+
+
+if __name__ == '__main__':
+    unittest.main()

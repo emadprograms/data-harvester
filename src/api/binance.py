@@ -7,7 +7,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from src.config import SCHEMA_COLS, BINANCE_DOMAINS
 
-def fetch_binance_daily(ticker: str, target_date_obj) -> pd.DataFrame:
+def fetch_binance_daily(ticker: str, target_date_obj, logger=None) -> pd.DataFrame:
     """
     Fetches full 24h 1-minute klines from Binance for a specific symbol.
     The ticker must be in Binance format (e.g., 'BTCUSDT', 'EURUSDT').
@@ -46,18 +46,24 @@ def fetch_binance_daily(ticker: str, target_date_obj) -> pd.DataFrame:
                 
                 # Handle Geo-Blocking / IP Bans
                 if response.status_code in [403, 451]:
-                    print(f"⚠️ {domain} restricted ({response.status_code}). Switching domain...")
+                    msg = f"⚠️ {domain} restricted ({response.status_code}). Switching domain..."
+                    if logger: logger.log(f"   {msg}")
+                    else: print(msg)
                     break # Try next domain
                 
                 if response.status_code != 200:
-                    print(f"❌ Error {response.status_code} from {domain}: {response.text}")
+                    msg = f"❌ Error {response.status_code} from {domain}: {response.text}"
+                    if logger: logger.log(f"   {msg}")
+                    else: print(msg)
                     break
 
                 data = response.json()
                 
                 # Check for API errors (e.g., Invalid Symbol)
                 if isinstance(data, dict) and "code" in data:
-                    print(f"❌ Binance Error for {binance_symbol} on {domain}: {data.get('msg')}")
+                    msg = f"❌ Binance Error for {binance_symbol} on {domain}: {data.get('msg')}"
+                    if logger: logger.log(f"   {msg}")
+                    else: print(msg)
                     break
                     
                 if not data or not isinstance(data, list):
@@ -90,7 +96,9 @@ def fetch_binance_daily(ticker: str, target_date_obj) -> pd.DataFrame:
                 return df[SCHEMA_COLS]
 
         except Exception as e:
-            print(f"❌ Exception fetching Binance data for {binance_symbol} on {domain}: {e}")
+            msg = f"❌ Exception fetching Binance data for {binance_symbol} on {domain}: {e}"
+            if logger: logger.log(f"   {msg}")
+            else: print(msg)
             continue
 
     return pd.DataFrame()

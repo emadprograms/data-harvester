@@ -2,7 +2,7 @@
 Database schema initialization and table creation.
 Includes strict PRIMARY KEY constraints to prevent duplication.
 """
-import streamlit as st
+
 from src.database.connection import get_db_connection
 
 
@@ -33,8 +33,7 @@ def init_db():
                 yahoo_ticker TEXT,
                 massive_ticker TEXT,
                 binance_ticker TEXT,
-                twelve_data_ticker TEXT,
-                priority_1 TEXT, -- YAHOO, MASSIVE, BINANCE, TWELVE_DATA
+                priority_1 TEXT, -- YAHOO, MASSIVE, BINANCE
                 priority_2 TEXT,  -- MASSIVE, YAHOO, NONE
                 priority_3 TEXT
             )
@@ -80,8 +79,7 @@ def init_db():
                            VALUES (?, ?, ?, ?, ?, ?)""",
                         [user_ticker, y_ticker, m_ticker, b_ticker, p1, p2]
                     )
-                if st.runtime.exists():
-                    st.toast("Migrated inventory to new schema.", icon="📦")
+                print("📦 Migrated inventory to new schema.")
             else:
                 # Fresh Seed (only if BOTH are empty)
                 hybrid_tickers = [
@@ -125,5 +123,4 @@ def init_db():
         """)
                 
     except Exception as e:
-        if st.runtime.exists():
-            st.error(f"DB Init Error: {e}")
+        print(f"❌ DB Init Error: {e}")

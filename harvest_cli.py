@@ -13,15 +13,6 @@ from src.config import US_EASTERN
 # -----------------------------------------------------------------------------
 # Logging Setup
 # -----------------------------------------------------------------------------
-class StreamlitWarningFilter(logging.Filter):
-    """Drops Streamlit 'ScriptRunContext' and usage warnings."""
-    def filter(self, record):
-        msg = record.getMessage()
-        return "ScriptRunContext" not in msg and "view this Streamlit app on a browser" not in msg
-
-# Apply filter to noisy loggers
-logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").addFilter(StreamlitWarningFilter())
-logging.getLogger("streamlit").addFilter(StreamlitWarningFilter())
 
 class CLILogger:
     """Simple logger for CLI output."""
@@ -40,29 +31,35 @@ if __name__ == "__main__":
         init_db()
         
         # Setup parameters
-        # Intelligent Date Selection for "Twice-Daily" Schedule
-        # Run 1 (Evening ~16:15 ET): Targets 'Today' (Captures Pre + Regular)
-        # Run 2 (Morning ~03:45 ET): Targets 'Yesterday' (Captures Post)
+        # Schedule logic: Run at 6 AM Bahrain (10 PM ET / 11 PM ET)
+        # At this time, 'today' ET is the market session that just concluded.
         now_et = datetime.now(US_EASTERN)
-        if now_et.hour < 10:
-            today = (now_et - timedelta(days=1)).date()
-            print(f"🌅 Morning Run detected ({now_et.strftime('%H:%M')} ET). Harvesting YESTERDAY: {today}")
-        else:
-            today = now_et.date()
-            print(f"🌇 Evening Run detected ({now_et.strftime('%H:%M')} ET). Harvesting TODAY: {today}")
+        target_date = now_et.date()
+        
+        # Weekend Check: If it's Saturday/Sunday morning ET, we don't expect new data usually, 
+        # but the workflow is scheduled Tue-Sat Bahrain (Mon-Fri ET).
+        print(f"🌍 Running Harvest at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (Local)")
+        print(f"🗽 ET Time: {now_et.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"🎯 Target Market Date: {target_date}")
 
         symbol_map = get_symbol_map_from_db()
         inventory_list = list(symbol_map.keys())
         
         # Create CLI logger
         logger = CLILogger()
-        
+
+        if not inventory_list:
+            logger.log("⚠️ Symbol inventory is empty. Nothing to harvest.")
+            # FORCE EXIT:
+            sys.stdout.flush() 
+            os._exit(0)
+            
         # Harvest full day for all symbols
-        logger.log(f"Starting harvest for {len(inventory_list)} symbols on {today}")
+        logger.log(f"Starting harvest for {len(inventory_list)} symbols on {target_date}")
         
         final_df, report_df = run_harvest_logic(
             tickers_to_harvest=inventory_list,
-            target_date=today,
+            target_date=target_date,
             db_map=symbol_map,
             logger=logger,
             harvest_mode="🚀 Full Day"
@@ -87,9 +84,8 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Unexpected error: {e}")
     finally:
-        # FORCE EXIT:
-        # Streamlit libraries (imported via src.api.capital etc) spin up background threads 
-        # that can hang the script indefinitely. os._exit(0) kills them instantly.
+        # The Infisical client spins up background threads (aiohttp) that can
+        # hang the script indefinitely. os._exit(0) kills them instantly.
         print("\n👋 Harvest complete. Exiting...")
         sys.stdout.flush() # Ensure all output is printed
         os._exit(0)

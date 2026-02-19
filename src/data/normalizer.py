@@ -5,22 +5,6 @@ import pandas as pd
 from src.config import SCHEMA_COLS, US_EASTERN, UTC
 
 
-def normalize_capital_df(df: pd.DataFrame, symbol: str, session_label: str) -> pd.DataFrame:
-    """Normalizes Capital.com data to target schema."""
-    if df.empty:
-        return pd.DataFrame(columns=SCHEMA_COLS)
-    df_norm = df.copy()
-    df_norm.rename(columns={
-        'SnapshotTime': 'timestamp', 
-        'Open': 'open', 
-        'High': 'high', 
-        'Low': 'low', 
-        'Close': 'close', 
-        'Volume': 'volume'
-    }, inplace=True)
-    df_norm['symbol'] = symbol
-    df_norm['session'] = session_label
-    return df_norm[SCHEMA_COLS]
 
 
 def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG') -> pd.DataFrame:
