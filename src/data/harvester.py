@@ -164,7 +164,9 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         return pd.DataFrame(), pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
     
     try:
-        final_df = pd.concat(all_data, ignore_index=True)
+        # Reset index on each DF to prevent "Reindexing only valid with uniquely valued Index objects"
+        cleaned = [df.reset_index(drop=True) for df in all_data]
+        final_df = pd.concat(cleaned, ignore_index=True)
         report_df = pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
         return final_df, report_df
     except Exception as e:

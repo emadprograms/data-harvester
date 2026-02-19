@@ -56,10 +56,16 @@ class InfisicalManager:
                 ))
                 self.is_connected = True
                 self._initialized = True
-                # logger.log("✅ Infisical Connected") # Noisy in parallel
+                print("✅ Infisical Connected")
             except Exception as e:
-                # logger.log(f"   ❌ Infisical Connection Failed: {e}")
-                pass
+                print(f"❌ Infisical Connection Failed: {e}")
+        else:
+            missing = []
+            if not client_id: missing.append("INFISICAL_CLIENT_ID")
+            if not client_secret: missing.append("INFISICAL_CLIENT_SECRET")
+            if not self.project_id: missing.append("INFISICAL_PROJECT_ID")
+            print(f"❌ Infisical Credentials not found. Missing: {', '.join(missing)}")
+            print(f"   Set them as environment variables or in .streamlit/secrets.toml")
 
     def get_secret(self, secret_name):
         if not self.is_connected: 
