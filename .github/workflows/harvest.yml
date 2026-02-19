@@ -25,6 +25,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
+    - name: Run Test Suite
+      run: |
+        PYTHONPATH=. python3 -m pytest tests/ -v
+
     - name: Run Harvest CLI
       env:
         INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
