@@ -36,3 +36,11 @@ jobs:
         INFISICAL_PROJECT_ID: ${{ secrets.INFISICAL_PROJECT_ID }}
       run: |
         python harvest_cli.py
+
+    - name: Upload Local Database Artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: harvest-database
+        path: local_market_data.db
+        retention-days: 90

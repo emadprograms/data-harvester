@@ -84,7 +84,10 @@ if __name__ == "__main__":
             print(summary_str)
             
             # Send to Discord
-            if send_discord_harvest_report(report_df, target_date, len(final_df)):
+            # 6. Discord Notification
+            local_db_path = "local_market_data.db"
+            total_rows = len(final_df)
+            if send_discord_harvest_report(report_df, target_date, total_rows, file_path=local_db_path):
                 logger.log("📨 Discord notification sent.")
             else:
                 # Only log if a webhook was provided but it failed
