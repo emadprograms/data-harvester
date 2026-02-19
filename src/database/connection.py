@@ -5,7 +5,7 @@ from libsql_client import create_client_sync
 import os
 
 def get_db_connection():
-    """Establishes a synchronous connection to the Turso database."""
+    """Establishes a synchronous connection to the remote Turso database."""
     try:
         from src.infisical_manager import InfisicalManager
         mgr = InfisicalManager()
@@ -22,5 +22,15 @@ def get_db_connection():
         config = {"url": http_url, "auth_token": token}
         return create_client_sync(**config)
     except Exception as e:
-        print(f"❌ DB Connection Error: {e}")
+        print(f"❌ Turso Connection Error: {e}")
+        return None
+
+def get_local_db_connection():
+    """Establishes a synchronous connection to the local SQLite database."""
+    try:
+        local_db_path = "file:local_market_data.db"
+        config = {"url": local_db_path}
+        return create_client_sync(**config)
+    except Exception as e:
+        print(f"❌ Local DB Connection Error: {e}")
         return None

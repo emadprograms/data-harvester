@@ -1,12 +1,12 @@
+import os
 import pandas as pd
-import time
 from datetime import datetime, time as dt_time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.config import US_EASTERN, UTC
-from src.api.massive import fetch_massive_data
+from src.api.capital import fetch_capital_data
 from src.api.yahoo import fetch_yahoo_market_data
 from src.api.binance import fetch_binance_daily
-from src.data.normalizer import normalize_massive_df, normalize_yahoo_df
+from src.data.normalizer import normalize_yahoo_df
 
 def fetch_from_source(source_name, specific_ticker, target_date, logger):
     """
@@ -25,17 +25,21 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger):
                 return norm, "✅ Yahoo"
             return pd.DataFrame(), "❌ Yahoo Empty"
             
-        # --- MASSIVE ---
-        elif source_name == "MASSIVE":
+        # --- CAPITAL ---
+        elif source_name == "CAPITAL":
             start_utc = US_EASTERN.localize(datetime.combine(target_date, dt_time(0, 0))).astimezone(UTC)
-            end_utc = US_EASTERN.localize(datetime.combine(target_date, dt_time(23, 59))).astimezone(UTC)
+            # Use next day 00:00 as exclusive end boundary (captures full 24h)
+            from datetime import timedelta
+            next_day = target_date + timedelta(days=1)
+            end_utc = US_EASTERN.localize(datetime.combine(next_day, dt_time(0, 0))).astimezone(UTC)
             
-            raw, err_msg = fetch_massive_data(specific_ticker, start_utc, end_utc, logger)
+            raw, err_msg = fetch_capital_data(specific_ticker, start_utc, end_utc, logger)
             if not raw.empty:
-                norm = normalize_massive_df(raw, specific_ticker)
-                return norm, "✅ Massive"
+                # Capital implementation already normalizes to SCHEMA_COLS
+                raw['symbol'] = specific_ticker # Ensure symbol is set correctly
+                return raw, "✅ Capital"
             
-            return pd.DataFrame(), f"❌ {err_msg}" if err_msg else "❌ Massive Empty"
+            return pd.DataFrame(), f"❌ {err_msg}" if err_msg else "❌ Capital Empty"
             
         # --- BINANCE ---
         elif source_name == "BINANCE":
@@ -54,7 +58,10 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger):
 def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None):
     """
     Parallel Harvester:
-    Uses ThreadPoolExecutor to process symbols concurrently using all 9 Massive keys.
+    Spliced Hybrid Logic: 
+    - PRE-Market: Capital.com
+    - REG-Market: Yahoo Finance (for Volume)
+    - POST-Market: Capital.com
     """
     def update_ui(ticker, col, val):
         if progress_callback:
@@ -66,69 +73,105 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
     total_tickers = len(tickers_to_harvest)
     completed_count = 0
 
-
     def harvest_single_ticker(ticker):
         nonlocal completed_count
-        update_ui(ticker, "Status", "🔄 Processing...")
+        update_ui(ticker, "Status", "🔄 Splicing Hybrid...")
         
         if ticker not in db_map:
             return ticker, pd.DataFrame(), "⚠️ Not in Inventory", "NONE", 0, 0, 0
 
         rules = db_map[ticker]
-        pipeline = []
-        p1, p2, p3 = rules.get('p1'), rules.get('p2'), rules.get('p3')
-        
-        if p1 and p1 != "NONE": pipeline.append(p1)
-        if p2 and p2 != "NONE": pipeline.append(p2)
-        if p3 and p3 != "NONE": pipeline.append(p3)
-        if "YAHOO" not in pipeline: pipeline.append("YAHOO")
-
         t_y = rules.get('yahoo_ticker') or ticker
-        t_m = rules.get('massive_ticker') or ticker
+        t_c = rules.get('capital_epic') or ticker
         t_b = rules.get('binance_ticker') or ticker
+        p1 = rules.get('p1')
 
-        def get_tick(src):
-            if src == "YAHOO": return t_y
-            elif src == "MASSIVE": return t_m
-            elif src == "BINANCE": return t_b
-            return ticker
-
-        df_final = pd.DataFrame()
-        used_source = "NONE"
-        status_msg = "Pending"
-
-        for source in pipeline:
-            src_ticker = get_tick(source)
-            df_temp, msg = fetch_from_source(source, src_ticker, target_date, logger)
-            if not df_temp.empty:
-                df_final = df_temp
-                used_source = source
-                status_msg = msg
-                break
-            status_msg = msg
-
-        if df_final.empty:
-            return ticker, pd.DataFrame(), status_msg, "FAILED", 0, 0, 0
-
-        # Processing & Normalization
-        df_final['symbol'] = ticker
-        if df_final['timestamp'].dt.tz is None:
-            df_final['timestamp'] = df_final['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
-        else:
-            df_final['timestamp'] = df_final['timestamp'].dt.tz_convert(US_EASTERN)
+        # --- SPECIAL CASE: BINANCE (Crypto) ---
+        if p1 == "BINANCE":
+            df, msg = fetch_from_source("BINANCE", t_b, target_date, logger)
+            if df.empty: return ticker, pd.DataFrame(), msg, "FAILED", 0, 0, 0
             
-        mask_pre = df_final['timestamp'].dt.time < t_930am
-        mask_reg = (df_final['timestamp'].dt.time >= t_930am) & (df_final['timestamp'].dt.time < t_4pm)
-        mask_post = df_final['timestamp'].dt.time >= t_4pm
+            df['timestamp'] = df['timestamp'].dt.tz_convert(US_EASTERN)
+            df['symbol'] = ticker # Map back to display name
+            c_pre = df[df['timestamp'].dt.time < t_930am].copy(); c_pre['session'] = 'PRE'
+            c_reg = df[(df['timestamp'].dt.time >= t_930am) & (df['timestamp'].dt.time < t_4pm)].copy(); c_reg['session'] = 'REG'
+            c_post = df[df['timestamp'].dt.time >= t_4pm].copy(); c_post['session'] = 'POST'
+            final = pd.concat([c_pre, c_reg, c_post]).sort_values('timestamp')
+            return ticker, final, "✅ Binance Hub", "BINANCE", len(c_pre), len(c_reg), len(c_post)
 
-        c_pre = df_final[mask_pre].copy(); c_pre['session'] = 'PRE'
-        c_reg = df_final[mask_reg].copy(); c_reg['session'] = 'REG'
-        c_post = df_final[mask_post].copy(); c_post['session'] = 'POST'
+        # --- SPLICED HYBRID (Stocks/ETFs/Futures) ---
+        p2 = rules.get('p2')
         
-        counts = (len(c_pre), len(c_reg), len(c_post))
+        # 1. Determine Sources & Fetch
+        df_cap = pd.DataFrame(); msg_cap = "Skipped"
+        df_yho = pd.DataFrame(); msg_yho = "Skipped"
+
+        should_fetch_capital = (p1 == "CAPITAL") or (p2 == "CAPITAL")
+        should_fetch_yahoo = (p1 == "YAHOO") or (p2 == "YAHOO")
+
+        if should_fetch_capital:
+            df_cap, msg_cap = fetch_from_source("CAPITAL", t_c, target_date, logger)
+        
+        # --- STRICT CAPITAL LOGIC ---
+        # If P1 is Capital and we got data -> SKIP Yahoo (Pure Capital)
+        if p1 == "CAPITAL" and not df_cap.empty:
+            should_fetch_yahoo = False
+            msg_yho = "Skipped (Capital Success)"
+
+        if should_fetch_yahoo:
+            df_yho, msg_yho = fetch_from_source("YAHOO", t_y, target_date, logger)
+
+        if df_cap.empty and df_yho.empty:
+            return ticker, pd.DataFrame(), f"❌ Both Failed ({msg_cap}/{msg_yho})", "FAILED", 0, 0, 0
+
+        # Localize/Convert to ET for splicing
+        for d in [df_cap, df_yho]:
+            if not d.empty:
+                if d['timestamp'].dt.tz is None:
+                    d['timestamp'] = d['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
+                else:
+                    d['timestamp'] = d['timestamp'].dt.tz_convert(US_EASTERN)
+
+        # 2. Slice and Dice
+        c_pre = pd.DataFrame(); c_reg = pd.DataFrame(); c_post = pd.DataFrame()
+
+        # PRE from Capital (Best) -> Fallback to Yahoo
+        if not df_cap.empty:
+            c_pre = df_cap[df_cap['timestamp'].dt.time < t_930am].copy()
+        if c_pre.empty and not df_yho.empty:
+            c_pre = df_yho[df_yho['timestamp'].dt.time < t_930am].copy()
+        
+        # REG from Yahoo (Best Volume) -> Fallback to Capital
+        # BUT if P1=CAPITAL (ETFs), use Capital Reg too (since we skipped Yahoo)
+        if not df_yho.empty:
+            c_reg = df_yho[(df_yho['timestamp'].dt.time >= t_930am) & (df_yho['timestamp'].dt.time < t_4pm)].copy()
+        if c_reg.empty and not df_cap.empty:
+            c_reg = df_cap[(df_cap['timestamp'].dt.time >= t_930am) & (df_cap['timestamp'].dt.time < t_4pm)].copy()
+
+        # POST from Capital (Best) -> Fallback to Yahoo
+        if not df_cap.empty:
+            c_post = df_cap[df_cap['timestamp'].dt.time >= t_4pm].copy()
+        if c_post.empty and not df_yho.empty:
+            c_post = df_yho[df_yho['timestamp'].dt.time >= t_4pm].copy()
+
+        # Assign session labels
+        if not c_pre.empty: c_pre['session'] = 'PRE' 
+        if not c_reg.empty: c_reg['session'] = 'REG'
+        if not c_post.empty: c_post['session'] = 'POST'
+        
+        # Common cleanup
         final_stack = pd.concat([c_pre, c_reg, c_post]).sort_values('timestamp')
+        final_stack['symbol'] = ticker # Map back to display name
         
-        return ticker, final_stack, "✅ Complete", used_source, counts[0], counts[1], counts[2]
+        source_label = "HYBRID"
+        if df_cap.empty: source_label = "YAHOO-ONLY"
+        if df_yho.empty: source_label = "CAPITAL-ONLY"
+
+        status_label = "✅ Spliced"
+        if source_label == "CAPITAL-ONLY": status_label = "✅ Capital"
+        if source_label == "YAHOO-ONLY": status_label = "✅ Yahoo"
+
+        return ticker, final_stack, status_label, source_label, len(c_pre), len(c_reg), len(c_post)
 
     # Execute in Parallel
     # 9 workers for 9 keys
@@ -163,12 +206,41 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         logger.log("⚠️ No data was collected for any ticker in this run.")
         return pd.DataFrame(), pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
     
+    final_df = pd.DataFrame()
+    report_df = pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
+
     try:
         # Reset index on each DF to prevent "Reindexing only valid with uniquely valued Index objects"
         cleaned = [df.reset_index(drop=True) for df in all_data]
-        final_df = pd.concat(cleaned, ignore_index=True)
-        report_df = pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
-        return final_df, report_df
+        if cleaned:
+            final_df = pd.concat(cleaned, ignore_index=True)
     except Exception as e:
         logger.log(f"❌ Error during final data merging: {e}")
-        return pd.DataFrame(), pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
+
+    # --- PERSISTENT LOGGING ---
+    try:
+        log_dir = "logs"
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+            
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = os.path.join(log_dir, f"harvest_{timestamp_str}.log")
+        
+        with open(log_file, "w") as f:
+            f.write(f"HARVEST RUN REPORT\n")
+            f.write(f"==================\n")
+            f.write(f"Run Time: {datetime.now()}\n")
+            f.write(f"Target Date: {target_date}\n\n")
+            
+            if not report_df.empty:
+                f.write(report_df.to_string())
+            else:
+                f.write("No report details available.")
+                
+            f.write(f"\n\nTotal Rows Harvested: {len(final_df)}\n")
+            
+        logger.log(f"📄 Full story logged to: {log_file}")
+    except Exception as log_err:
+        logger.log(f"⚠️ Failed to write log file: {log_err}")
+
+    return final_df, report_df

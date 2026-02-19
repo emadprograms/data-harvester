@@ -15,7 +15,7 @@ Architecture Highlights:
 ├── .github/workflows/         # Automation Layer
 │   └── harvest.yml            # GitHub Actions Configuration
 ├── src/
-│   ├── api/                   # PROVIDER LAYER (Massive, Yahoo, Binance)
+│   ├── api/                   # PROVIDER LAYER (Capital.com, Yahoo, Binance)
 │   ├── data/                  # LOGIC LAYER (Harvester, Normalizer)
 │   └── database/              # STORAGE LAYER (LibSQL/Turso)
 ├── README.md                  # Project Documentation
@@ -36,13 +36,13 @@ graph LR
 ## 4. Key Components
 
 ### A. Harvester Controller (`src/data/harvester.py`)
-The orchestrator that manages the worker pool. It ensures symbols are processed concurrently while respecting the rotation of the 9 Massive API keys.
+The orchestrator that manages the worker pool. It ensures symbols are processed concurrently while respecting provider-specific rate limits and fallback logic.
 
 ### B. Secret Management (`src/infisical_manager.py`)
-A singleton manager that handles secure retrieval and caching of API credentials via Infisical.
+A singleton manager that handles secure retrieval and caching of API credentials via Infisical. Supports local `.env` loading for development.
 
 ### C. Storage Layer (`src/database/`)
 A pure SQL-based interaction layer using `libsql-client`. All timestamps are stored as UTC for cross-timezone consistency.
 
 ---
-*Updated for Data Harvester v3.0 (Pure CLI Focus)*
+*Updated for Data Harvester v3.1 (Capital.com Transition)*

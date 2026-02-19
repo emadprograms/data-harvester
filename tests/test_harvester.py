@@ -1,5 +1,5 @@
 """
-Tests for src/data/harvester.py — Verify fallback pipeline, session slicing, edge cases.
+Tests for src/data/harvester.py — Verify spliced hybrid logic, fallback, session slicing, edge cases.
 Uses mocking to avoid real API calls.
 """
 import unittest
@@ -39,30 +39,30 @@ class TestFetchFromSource(unittest.TestCase):
         df, msg = fetch_from_source("", "AAPL", date(2025, 1, 15), logger)
         self.assertTrue(df.empty)
 
-    @patch("src.data.harvester.fetch_massive_data")
-    def test_massive_source_success(self, mock_massive):
-        """MASSIVE source must call fetch_massive_data and normalize."""
+    @patch("src.data.harvester.fetch_capital_data")
+    def test_capital_source_success(self, mock_capital):
+        """CAPITAL source must call fetch_capital_data and return data."""
         mock_df = pd.DataFrame({
-            "SnapshotTime": pd.to_datetime(["2025-01-15 14:30:00"]).tz_localize("UTC"),
-            "Open": [150.0], "High": [151.0], "Low": [149.0], 
-            "Close": [150.5], "Volume": [1000]
+            "timestamp": pd.to_datetime(["2025-01-15 08:00:00"]).tz_localize("UTC"),
+            "open": [150.0], "high": [151.0], "low": [149.0],
+            "close": [150.5], "volume": [0.0]
         })
-        mock_massive.return_value = (mock_df, "")
+        mock_capital.return_value = (mock_df, "")
         
         logger = MockLogger()
-        df, msg = fetch_from_source("MASSIVE", "AAPL", date(2025, 1, 15), logger)
+        df, msg = fetch_from_source("CAPITAL", "AAPL", date(2025, 1, 15), logger)
         self.assertFalse(df.empty)
-        self.assertIn("Massive", msg)
+        self.assertIn("Capital", msg)
 
-    @patch("src.data.harvester.fetch_massive_data")
-    def test_massive_source_failure(self, mock_massive):
-        """MASSIVE source failure must return empty DF with error message."""
-        mock_massive.return_value = (pd.DataFrame(), "Rate Limit (429)")
+    @patch("src.data.harvester.fetch_capital_data")
+    def test_capital_source_failure(self, mock_capital):
+        """CAPITAL source failure must return empty DF with error message."""
+        mock_capital.return_value = (pd.DataFrame(), "Session Failed")
         
         logger = MockLogger()
-        df, msg = fetch_from_source("MASSIVE", "AAPL", date(2025, 1, 15), logger)
+        df, msg = fetch_from_source("CAPITAL", "AAPL", date(2025, 1, 15), logger)
         self.assertTrue(df.empty)
-        self.assertIn("429", msg)
+        self.assertIn("Session Failed", msg)
 
     @patch("src.data.harvester.fetch_yahoo_market_data")
     def test_yahoo_source_success(self, mock_yahoo):
@@ -95,7 +95,6 @@ class TestFetchFromSource(unittest.TestCase):
     @patch("src.data.harvester.fetch_binance_daily")
     def test_binance_source_success(self, mock_binance):
         """BINANCE source must call fetch_binance_daily."""
-        from src.config import SCHEMA_COLS
         mock_binance.return_value = pd.DataFrame({
             "timestamp": pd.to_datetime(["2025-01-15 00:00:00"]).tz_localize("UTC"),
             "symbol": ["BTCUSDT"], "open": [40000.0], "high": [41000.0],
@@ -108,13 +107,13 @@ class TestFetchFromSource(unittest.TestCase):
         self.assertFalse(df.empty)
         self.assertIn("Binance", msg)
 
-    @patch("src.data.harvester.fetch_massive_data")
-    def test_source_exception_caught(self, mock_massive):
+    @patch("src.data.harvester.fetch_capital_data")
+    def test_source_exception_caught(self, mock_capital):
         """Any exception during fetch must be caught and logged."""
-        mock_massive.side_effect = Exception("Network timeout")
+        mock_capital.side_effect = Exception("Network timeout")
         
         logger = MockLogger()
-        df, msg = fetch_from_source("MASSIVE", "AAPL", date(2025, 1, 15), logger)
+        df, msg = fetch_from_source("CAPITAL", "AAPL", date(2025, 1, 15), logger)
         self.assertTrue(df.empty)
         self.assertIn("Error", msg)
         self.assertTrue(any("Error" in m for m in logger.messages))
@@ -122,59 +121,145 @@ class TestFetchFromSource(unittest.TestCase):
 
 class TestHarvestPipeline(unittest.TestCase):
 
-    def _make_mock_map(self):
+    def _make_stock_map(self):
+        """Standard stock map using the new Capital+Yahoo hybrid model."""
         return {
             "AAPL": {
-                "yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None,
-                "p1": "MASSIVE", "p2": "YAHOO", "p3": None
-            },
+                "yahoo_ticker": "AAPL", "capital_epic": "AAPL", "binance_ticker": None,
+                "p1": "YAHOO", "p2": "CAPITAL", "p3": None
+            }
+        }
+
+    def _make_crypto_map(self):
+        """Crypto map using Binance."""
+        return {
             "BTC/USD": {
-                "yahoo_ticker": "BTC-USD", "massive_ticker": "X:BTCUSD", "binance_ticker": "BTCUSDT",
-                "p1": "BINANCE", "p2": "MASSIVE", "p3": "YAHOO"
+                "yahoo_ticker": "BTC-USD", "capital_epic": None, "binance_ticker": "BTCUSDT",
+                "p1": "BINANCE", "p2": "YAHOO", "p3": None
             }
         }
 
     @patch("src.data.harvester.fetch_from_source")
-    def test_fallback_works(self, mock_fetch):
-        """When P1 fails, harvester must fall back to P2."""
+    def test_spliced_hybrid_both_sources(self, mock_fetch):
+        """When both Capital and Yahoo return data, harvester must splice PRE/POST from Capital and REG from Yahoo."""
+        import pytz
+        et = pytz.timezone("US/Eastern")
+        
+        # Capital returns full day data (with volume=0)
+        cap_ts = pd.to_datetime([
+            "2025-01-15 08:00:00",  # 03:00 ET → PRE
+            "2025-01-15 15:00:00",  # 10:00 ET → REG
+            "2025-01-15 21:30:00",  # 16:30 ET → POST
+        ]).tz_localize("UTC")
+        cap_df = pd.DataFrame({
+            "timestamp": cap_ts, "symbol": ["AAPL"] * 3,
+            "open": [149.0, 150.0, 150.5], "high": [149.5, 151.0, 151.0],
+            "low": [148.5, 149.5, 150.0], "close": [149.2, 150.5, 150.8],
+            "volume": [0.0, 0.0, 0.0], "session": ["REG"] * 3
+        })
+        
+        # Yahoo returns full day data (with volume!)
+        yho_ts = pd.to_datetime([
+            "2025-01-15 08:00:00",  # 03:00 ET → PRE
+            "2025-01-15 15:00:00",  # 10:00 ET → REG
+            "2025-01-15 21:30:00",  # 16:30 ET → POST
+        ]).tz_localize("UTC")
+        yho_df = pd.DataFrame({
+            "timestamp": yho_ts, "symbol": ["AAPL"] * 3,
+            "open": [149.0, 150.0, 150.5], "high": [149.5, 151.0, 151.0],
+            "low": [148.5, 149.5, 150.0], "close": [149.2, 150.5, 150.8],
+            "volume": [500.0, 10000.0, 300.0], "session": ["REG"] * 3
+        })
+        
         def side_effect(source, ticker, target_date, logger):
-            if source == "MASSIVE":
-                return pd.DataFrame(), "❌ Error"
+            if source == "CAPITAL":
+                return cap_df, "✅ Capital"
             elif source == "YAHOO":
-                ts = pd.to_datetime(["2025-01-15 14:30:00"]).tz_localize("UTC")
-                return pd.DataFrame({
-                    "timestamp": ts, "symbol": ["AAPL"],
-                    "open": [150.0], "high": [151.0], "low": [149.0],
-                    "close": [150.5], "volume": [1000], "session": ["REG"]
-                }), "✅ Yahoo"
-            return pd.DataFrame(), "Unknown"
+                return yho_df, "✅ Yahoo"
+            return pd.DataFrame(), "❌ Error"
         
         mock_fetch.side_effect = side_effect
         logger = MockLogger()
-        db_map = {"AAPL": {
-            "yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None,
-            "p1": "MASSIVE", "p2": "YAHOO", "p3": None
-        }}
         
-        final_df, report = run_harvest_logic(["AAPL"], date(2025, 1, 15), db_map, logger)
+        final_df, report = run_harvest_logic(
+            ["AAPL"], date(2025, 1, 15), self._make_stock_map(), logger
+        )
+        
         self.assertFalse(final_df.empty)
-        # Report should show YAHOO was used
-        self.assertTrue(any("YAHOO" in str(row) for _, row in report.iterrows()))
+        sessions = final_df['session'].unique()
+        self.assertIn("PRE", sessions)
+        self.assertIn("REG", sessions)
+        self.assertIn("POST", sessions)
 
     @patch("src.data.harvester.fetch_from_source")
-    def test_all_sources_fail(self, mock_fetch):
-        """When ALL sources fail, ticker must appear as FAILED in report."""
+    def test_capital_down_yahoo_only_fallback(self, mock_fetch):
+        """When Capital fails, Yahoo data must be used for ALL sessions."""
+        yho_ts = pd.to_datetime([
+            "2025-01-15 15:00:00",  # 10:00 ET → REG
+        ]).tz_localize("UTC")
+        yho_df = pd.DataFrame({
+            "timestamp": yho_ts, "symbol": ["AAPL"],
+            "open": [150.0], "high": [151.0], "low": [149.0],
+            "close": [150.5], "volume": [10000.0], "session": ["REG"]
+        })
+        
+        def side_effect(source, ticker, target_date, logger):
+            if source == "CAPITAL":
+                return pd.DataFrame(), "❌ Capital Empty"
+            elif source == "YAHOO":
+                return yho_df, "✅ Yahoo"
+            return pd.DataFrame(), "❌ Error"
+        
+        mock_fetch.side_effect = side_effect
+        logger = MockLogger()
+        
+        final_df, report = run_harvest_logic(
+            ["AAPL"], date(2025, 1, 15), self._make_stock_map(), logger
+        )
+        
+        self.assertFalse(final_df.empty)
+        # Should still work with YAHOO-ONLY label
+        self.assertTrue(any("YAHOO-ONLY" in str(row) for _, row in report.iterrows()))
+
+    @patch("src.data.harvester.fetch_from_source")
+    def test_both_sources_fail(self, mock_fetch):
+        """When both Capital and Yahoo fail, ticker must appear as FAILED."""
         mock_fetch.return_value = (pd.DataFrame(), "❌ Error")
         
         logger = MockLogger()
-        db_map = {"AAPL": {
-            "yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None,
-            "p1": "MASSIVE", "p2": "YAHOO", "p3": None
-        }}
-        
-        final_df, report = run_harvest_logic(["AAPL"], date(2025, 1, 15), db_map, logger)
+        final_df, report = run_harvest_logic(
+            ["AAPL"], date(2025, 1, 15), self._make_stock_map(), logger
+        )
         self.assertTrue(final_df.empty)
         self.assertTrue(any("FAILED" in str(row) for _, row in report.iterrows()))
+
+    @patch("src.data.harvester.fetch_from_source")
+    def test_binance_crypto_path(self, mock_fetch):
+        """Crypto symbols with p1=BINANCE must use the Binance path directly."""
+        binance_ts = pd.to_datetime([
+            "2025-01-15 00:00:00",
+            "2025-01-15 12:00:00",
+        ]).tz_localize("UTC")
+        binance_df = pd.DataFrame({
+            "timestamp": binance_ts, "symbol": ["BTC/USD"] * 2,
+            "open": [40000.0, 41000.0], "high": [41000.0, 42000.0],
+            "low": [39000.0, 40000.0], "close": [40500.0, 41500.0],
+            "volume": [100.0, 200.0], "session": ["REG"] * 2
+        })
+        
+        def side_effect(source, ticker, target_date, logger):
+            if source == "BINANCE":
+                return binance_df, "✅ Binance"
+            return pd.DataFrame(), "❌ Error"
+        
+        mock_fetch.side_effect = side_effect
+        logger = MockLogger()
+        
+        final_df, report = run_harvest_logic(
+            ["BTC/USD"], date(2025, 1, 15), self._make_crypto_map(), logger
+        )
+        self.assertFalse(final_df.empty)
+        self.assertTrue(any("BINANCE" in str(row) for _, row in report.iterrows()))
 
     @patch("src.data.harvester.fetch_from_source")
     def test_ticker_not_in_inventory(self, mock_fetch):
@@ -182,57 +267,6 @@ class TestHarvestPipeline(unittest.TestCase):
         logger = MockLogger()
         final_df, report = run_harvest_logic(["UNKNOWN"], date(2025, 1, 15), {}, logger)
         self.assertTrue(final_df.empty)
-
-    @patch("src.data.harvester.fetch_from_source")
-    def test_yahoo_always_appended_as_fallback(self, mock_fetch):
-        """If YAHOO is not in the pipeline, it must be auto-appended."""
-        call_order = []
-        def side_effect(source, ticker, target_date, logger):
-            call_order.append(source)
-            return pd.DataFrame(), "❌ Error"
-        
-        mock_fetch.side_effect = side_effect
-        logger = MockLogger()
-        db_map = {"AAPL": {
-            "yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None,
-            "p1": "MASSIVE", "p2": None, "p3": None
-        }}
-        
-        run_harvest_logic(["AAPL"], date(2025, 1, 15), db_map, logger)
-        self.assertIn("YAHOO", call_order, 
-                       "YAHOO must be auto-appended to the fallback pipeline")
-
-    @patch("src.data.harvester.fetch_from_source")
-    def test_session_slicing(self, mock_fetch):
-        """Harvester must correctly slice data into PRE/REG/POST sessions."""
-        import pytz
-        et = pytz.timezone("US/Eastern")
-        timestamps = pd.to_datetime([
-            "2025-01-15 08:00:00",  # 03:00 ET → PRE
-            "2025-01-15 15:00:00",  # 10:00 ET → REG
-            "2025-01-15 21:30:00",  # 16:30 ET → POST
-        ]).tz_localize("UTC")
-        
-        mock_df = pd.DataFrame({
-            "timestamp": timestamps,
-            "symbol": ["AAPL"] * 3,
-            "open": [150.0] * 3, "high": [151.0] * 3,
-            "low": [149.0] * 3, "close": [150.5] * 3,
-            "volume": [1000] * 3, "session": ["REG"] * 3
-        })
-        mock_fetch.return_value = (mock_df, "✅ Massive")
-        
-        logger = MockLogger()
-        db_map = {"AAPL": {
-            "yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None,
-            "p1": "MASSIVE", "p2": None, "p3": None
-        }}
-        
-        final_df, report = run_harvest_logic(["AAPL"], date(2025, 1, 15), db_map, logger)
-        sessions = final_df['session'].unique()
-        self.assertIn("PRE", sessions)
-        self.assertIn("REG", sessions)
-        self.assertIn("POST", sessions)
 
     @patch("src.data.harvester.fetch_from_source")
     def test_empty_harvest_returns_gracefully(self, mock_fetch):

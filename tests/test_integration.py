@@ -18,23 +18,40 @@ class MockLogger:
 class TestFullPipeline(unittest.TestCase):
     """Tests the full harvest pipeline end-to-end with mocked externals."""
 
-    @patch("src.data.harvester.fetch_binance_daily")
+    @patch("src.data.harvester.fetch_capital_data")
     @patch("src.data.harvester.fetch_yahoo_market_data")
-    @patch("src.data.harvester.fetch_massive_data")
-    def test_full_harvest_mixed_symbols(self, mock_massive, mock_yahoo, mock_binance):
+    @patch("src.data.harvester.fetch_binance_daily")
+    def test_full_harvest_mixed_symbols(self, mock_binance, mock_yahoo, mock_capital):
         """Full harvest with stock + crypto must handle both paths."""
         from src.data.harvester import run_harvest_logic
         
-        # Mock Massive → success for AAPL
-        massive_df = pd.DataFrame({
-            "SnapshotTime": pd.to_datetime(["2025-01-15 14:30:00", "2025-01-15 14:31:00"]).tz_localize("UTC"),
-            "Open": [150.0, 150.5], "High": [151.0, 151.5],
-            "Low": [149.0, 149.5], "Close": [150.5, 151.0], "Volume": [1000, 2000]
+        # Mock Capital → success for AAPL (PRE/POST data, volume=0)
+        capital_df = pd.DataFrame({
+            "timestamp": pd.to_datetime([
+                "2025-01-15 08:00:00",   # PRE (03:00 ET)
+                "2025-01-15 14:30:00",   # REG (09:30 ET)
+                "2025-01-15 21:30:00",   # POST (16:30 ET)
+            ]).tz_localize("UTC"),
+            "open": [149.0, 150.0, 150.5],
+            "high": [149.5, 151.0, 151.0],
+            "low": [148.5, 149.5, 150.0],
+            "close": [149.2, 150.5, 150.8],
+            "volume": [0.0, 0.0, 0.0]
         })
-        mock_massive.return_value = (massive_df, "")
+        mock_capital.return_value = (capital_df, "")
+        
+        # Mock Yahoo → success for AAPL (REG data with volume)
+        idx = pd.DatetimeIndex(
+            pd.date_range("2025-01-15 09:30", periods=2, freq="1min", tz="US/Eastern"),
+            name="Datetime"
+        )
+        mock_yahoo.return_value = pd.DataFrame({
+            "Open": [150.0, 150.5], "High": [151.0, 151.5],
+            "Low": [149.0, 149.5], "Close": [150.5, 151.0],
+            "Volume": [10000, 20000]
+        }, index=idx)
         
         # Mock Binance → success for BTC/USD
-        from src.config import SCHEMA_COLS
         binance_df = pd.DataFrame({
             "timestamp": pd.to_datetime(["2025-01-15 00:00:00", "2025-01-15 00:01:00"]).tz_localize("UTC"),
             "symbol": ["BTC/USD", "BTC/USD"],
@@ -47,12 +64,12 @@ class TestFullPipeline(unittest.TestCase):
         logger = MockLogger()
         db_map = {
             "AAPL": {
-                "yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None,
-                "p1": "MASSIVE", "p2": "YAHOO", "p3": None
+                "yahoo_ticker": "AAPL", "capital_epic": "AAPL", "binance_ticker": None,
+                "p1": "YAHOO", "p2": "CAPITAL", "p3": None
             },
             "BTC/USD": {
-                "yahoo_ticker": "BTC-USD", "massive_ticker": "X:BTCUSD", "binance_ticker": "BTCUSDT",
-                "p1": "BINANCE", "p2": "MASSIVE", "p3": "YAHOO"
+                "yahoo_ticker": "BTC-USD", "capital_epic": None, "binance_ticker": "BTCUSDT",
+                "p1": "BINANCE", "p2": "YAHOO", "p3": None
             }
         }
         
@@ -89,7 +106,6 @@ class TestFullPipeline(unittest.TestCase):
         
         # Verify the SQL was called
         mock_client.execute.assert_called()
-        # Get the actual call args
         call_args = mock_client.execute.call_args
         sql = call_args[0][0]
         self.assertIn("INSERT OR REPLACE", sql)
@@ -98,13 +114,13 @@ class TestFullPipeline(unittest.TestCase):
     def test_partial_failure(self, mock_fetch):
         """If some tickers fail but others succeed, must still return the successful data."""
         def side_effect(source, ticker, target_date, logger):
-            if ticker == "AAPL" and source == "MASSIVE":
+            if ticker == "AAPL":
                 ts = pd.to_datetime(["2025-01-15 14:30:00"]).tz_localize("UTC")
                 return pd.DataFrame({
                     "timestamp": ts, "symbol": ["AAPL"],
                     "open": [150.0], "high": [151.0], "low": [149.0],
                     "close": [150.5], "volume": [1000], "session": ["REG"]
-                }), "✅ Massive"
+                }), "✅ Yahoo"
             return pd.DataFrame(), "❌ Error"
         
         mock_fetch.side_effect = side_effect
@@ -112,8 +128,8 @@ class TestFullPipeline(unittest.TestCase):
         from src.data.harvester import run_harvest_logic
         logger = MockLogger()
         db_map = {
-            "AAPL": {"yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None, "p1": "MASSIVE", "p2": "YAHOO", "p3": None},
-            "FAKE": {"yahoo_ticker": "FAKE", "massive_ticker": "FAKE", "binance_ticker": None, "p1": "MASSIVE", "p2": "YAHOO", "p3": None},
+            "AAPL": {"yahoo_ticker": "AAPL", "capital_epic": "AAPL", "binance_ticker": None, "p1": "YAHOO", "p2": "CAPITAL", "p3": None},
+            "FAKE": {"yahoo_ticker": "FAKE", "capital_epic": "FAKE", "binance_ticker": None, "p1": "YAHOO", "p2": "CAPITAL", "p3": None},
         }
         
         final_df, report = run_harvest_logic(["AAPL", "FAKE"], date(2025, 1, 15), db_map, logger)

@@ -4,7 +4,7 @@ Tests for src/data/normalizer.py — Verify normalization handles edge cases.
 import unittest
 import pandas as pd
 import numpy as np
-from src.data.normalizer import normalize_yahoo_df, normalize_massive_df
+from src.data.normalizer import normalize_yahoo_df, normalize_capital_df
 from src.config import SCHEMA_COLS
 
 
@@ -110,49 +110,43 @@ class TestNormalizeYahoo(unittest.TestCase):
         self.assertEqual(list(result.columns), SCHEMA_COLS)
 
 
-class TestNormalizeMassive(unittest.TestCase):
+class TestNormalizeCapital(unittest.TestCase):
 
     def test_empty_dataframe(self):
         """Must return empty DF with correct columns if input is empty."""
-        result = normalize_massive_df(pd.DataFrame(), "AAPL")
+        result = normalize_capital_df(pd.DataFrame(), "AAPL")
         self.assertTrue(result.empty)
         self.assertEqual(list(result.columns), SCHEMA_COLS)
 
-    def test_standard_massive_data(self):
-        """Standard Massive data must normalize correctly."""
+    def test_standard_capital_data(self):
+        """Standard Capital data must normalize correctly with volume=0."""
         df = pd.DataFrame({
-            "SnapshotTime": pd.to_datetime(["2025-01-15 14:30:00", "2025-01-15 14:31:00"]).tz_localize("UTC"),
-            "Open": [150.0, 150.5],
-            "High": [150.5, 151.0],
-            "Low": [149.5, 150.0],
-            "Close": [150.2, 150.8],
-            "Volume": [1000, 2000]
+            "timestamp": pd.to_datetime(["2025-01-15 08:00:00", "2025-01-15 08:01:00"]).tz_localize("UTC"),
+            "open": [149.0, 149.5],
+            "high": [149.5, 150.0],
+            "low": [148.5, 149.0],
+            "close": [149.2, 149.8],
+            "volume": [0.0, 0.0]
         })
         
-        result = normalize_massive_df(df, "AAPL")
+        result = normalize_capital_df(df, "AAPL", session_label="PRE")
         self.assertEqual(len(result), 2)
         self.assertEqual(list(result.columns), SCHEMA_COLS)
         self.assertEqual(result['symbol'].iloc[0], "AAPL")
+        self.assertEqual(result['session'].iloc[0], "PRE")
+        self.assertTrue((result['volume'] == 0.0).all())
 
-    def test_massive_naive_timestamps(self):
-        """Naive timestamps must be localized to UTC."""
+    def test_capital_missing_volume_column(self):
+        """If volume column is missing from Capital data, must default to 0."""
         df = pd.DataFrame({
-            "SnapshotTime": pd.to_datetime(["2025-01-15 14:30:00", "2025-01-15 14:31:00"]),
-            "Open": [150.0, 150.5],
-            "High": [150.5, 151.0],
-            "Low": [149.5, 150.0],
-            "Close": [150.2, 150.8],
-            "Volume": [1000, 2000]
+            "timestamp": pd.to_datetime(["2025-01-15 08:00:00"]).tz_localize("UTC"),
+            "open": [149.0], "high": [149.5],
+            "low": [148.5], "close": [149.2],
+            "session": ["PRE"], "symbol": ["AAPL"]
         })
         
-        result = normalize_massive_df(df, "AAPL")
-        self.assertIsNotNone(result['timestamp'].dt.tz)
-
-    def test_no_capital_normalizer_exists(self):
-        """Capital.com normalizer should have been removed."""
-        import src.data.normalizer as norm_module
-        self.assertFalse(hasattr(norm_module, 'normalize_capital_df'),
-                         "normalize_capital_df should have been removed")
+        result = normalize_capital_df(df, "AAPL")
+        self.assertTrue((result['volume'] == 0.0).all())
 
 
 if __name__ == '__main__':

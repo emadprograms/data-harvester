@@ -28,3 +28,10 @@ dist/
 # VSCode
 .vscode/
 .DS_Store
+
+# Logs
+logs/
+
+# Local Databases
+*.db
+*.sqlite

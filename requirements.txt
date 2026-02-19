@@ -6,3 +6,4 @@ urllib3
 pytz
 infisical-python>=2.0.0
 toml
+python-dotenv

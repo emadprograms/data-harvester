@@ -46,34 +46,28 @@ def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG'
     return df_norm[SCHEMA_COLS]
 
 
-def normalize_massive_df(df, symbol, session_label="REG"):
-    """
-    Normalizes Massive (Polygon) data to the standard schema.
-    """
+def normalize_capital_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG') -> pd.DataFrame:
+    """Normalizes Capital.com data to target schema."""
     if df.empty:
         return pd.DataFrame(columns=SCHEMA_COLS)
-
-    df = df.copy()
     
-    # Rename columns to match Schema (lowercase)
-    df.rename(columns={
-        "Open": "open",
-        "High": "high",
-        "Low": "low", 
-        "Close": "close",
-        "Volume": "volume",
-        "SnapshotTime": "timestamp"
-    }, inplace=True)
+    df_norm = df.copy()
+    df_norm['symbol'] = symbol
+    df_norm['session'] = session_label
     
-    # Ensure UTC Datetime
-    if df['timestamp'].dt.tz is None:
-         df['timestamp'] = df['timestamp'].dt.tz_localize(UTC)
+    # Ensure columns are lowercase
+    df_norm.columns = [c.lower() for c in df_norm.columns]
+    
+    # Handle missing volume
+    if 'volume' not in df_norm.columns:
+        df_norm['volume'] = 0.0
     else:
-         df['timestamp'] = df['timestamp'].dt.tz_convert(UTC)
-
-    df['symbol'] = symbol
-    df['session'] = session_label
+        df_norm['volume'] = df_norm['volume'].fillna(0.0)
     
-    # Reorder and Select
-    final_df = df[SCHEMA_COLS]
-    return final_df
+    # Ensure timestamp is UTC
+    if df_norm['timestamp'].dt.tz is None:
+        df_norm['timestamp'] = df_norm['timestamp'].dt.tz_localize('UTC')
+    else:
+        df_norm['timestamp'] = df_norm['timestamp'].dt.tz_convert('UTC')
+        
+    return df_norm[SCHEMA_COLS]

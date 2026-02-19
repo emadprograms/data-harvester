@@ -12,7 +12,6 @@ class TestInfisicalManager(unittest.TestCase):
         """Reset singleton for clean tests."""
         from src.infisical_manager import InfisicalManager
         InfisicalManager._instance = None
-        InfisicalManager._massive_keys_cache = None
 
     @patch.dict(os.environ, {}, clear=True)
     @patch("src.infisical_manager.os.path.exists", return_value=False)
@@ -33,12 +32,13 @@ class TestInfisicalManager(unittest.TestCase):
 
     @patch.dict(os.environ, {}, clear=True)
     @patch("src.infisical_manager.os.path.exists", return_value=False)
-    def test_get_massive_keys_when_not_connected(self, mock_exists):
-        """get_massive_api_keys when not connected must return empty list."""
+    def test_get_capital_credentials_when_not_connected(self, mock_exists):
+        """get_capital_credentials when not connected must return dict with None values."""
         from src.infisical_manager import InfisicalManager
         mgr = InfisicalManager()
-        keys = mgr.get_massive_api_keys()
-        self.assertEqual(keys, [])
+        creds = mgr.get_capital_credentials()
+        self.assertIsInstance(creds, dict)
+        self.assertIsNone(creds.get("api_key"))
 
     @patch.dict(os.environ, {}, clear=True)
     @patch("src.infisical_manager.os.path.exists", return_value=False)
@@ -72,18 +72,6 @@ class TestInfisicalManager(unittest.TestCase):
         self.assertEqual(val2, "test_value")
         # API should only be called once (cached on second call)
         mgr.client.getSecret.assert_called_once()
-
-    @patch.dict(os.environ, {}, clear=True)
-    @patch("src.infisical_manager.os.path.exists", return_value=False)
-    def test_massive_keys_class_level_cache(self, mock_exists):
-        """Massive keys must use class-level cache across instances."""
-        from src.infisical_manager import InfisicalManager
-        # Pre-populate the class cache
-        InfisicalManager._massive_keys_cache = ["key1", "key2"]
-        
-        mgr = InfisicalManager()
-        keys = mgr.get_massive_api_keys()
-        self.assertEqual(keys, ["key1", "key2"])
 
 
 if __name__ == '__main__':

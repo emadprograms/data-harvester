@@ -7,7 +7,7 @@ STRATEGY:
 
 import pandas as pd
 import time
-from src.database.connection import get_db_connection
+from src.database.connection import get_db_connection, get_local_db_connection
 from src.config import UTC, US_EASTERN
 
 # --- Basic CRUD for Symbol Mapping ---
@@ -20,7 +20,7 @@ def get_symbol_map_from_db():
     try:
         # Fetch from new table
         res = client.execute("""
-            SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker, priority_1, priority_2, priority_3 
+            SELECT display_name, yahoo_ticker, capital_epic, binance_ticker, priority_1, priority_2, priority_3 
             FROM market_symbols 
             ORDER BY display_name
         """)
@@ -30,7 +30,7 @@ def get_symbol_map_from_db():
         for row in res.rows:
             inventory[row[0]] = {
                 'yahoo_ticker': row[1],
-                'massive_ticker': row[2],
+                'capital_epic': row[2],
                 'binance_ticker': row[3],
                 'p1': row[4],
                 'p2': row[5],
@@ -48,11 +48,11 @@ def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3
     try:
         # Check if column exists, if not, migration handles it, but safe insert:
         client.execute(
-            """INSERT INTO market_symbols (display_name, yahoo_ticker, massive_ticker, binance_ticker, priority_1, priority_2, priority_3) 
+            """INSERT INTO market_symbols (display_name, yahoo_ticker, capital_epic, binance_ticker, priority_1, priority_2, priority_3) 
                VALUES (?, ?, ?, ?, ?, ?, ?) 
                ON CONFLICT(display_name) DO UPDATE SET 
                  yahoo_ticker=excluded.yahoo_ticker, 
-                 massive_ticker=excluded.massive_ticker,
+                 capital_epic=excluded.capital_epic,
                  binance_ticker=excluded.binance_ticker,
                  priority_1=excluded.priority_1,
                  priority_2=excluded.priority_2,
@@ -78,16 +78,36 @@ def delete_symbol_mapping(ticker):
 
 # --- MARKET DATA OPERATIONS ---
 
-def save_data_to_turso(df: pd.DataFrame, logger=None):
+def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
+    """Generic helper to save a batch of rows to a specific database client."""
+    BATCH_SIZE = 100
+    try:
+        for i in range(0, len(rows_to_insert), BATCH_SIZE):
+            batch = rows_to_insert[i : i + BATCH_SIZE]
+            placeholders = ", ".join(["(?, ?, ?, ?, ?, ?, ?, ?)"] * len(batch))
+            flat_values = [item for sublist in batch for item in sublist]
+            
+            query = f"""
+                INSERT OR REPLACE INTO market_data 
+                (timestamp, symbol, open, high, low, close, volume, session) 
+                VALUES {placeholders}
+            """
+            client.execute(query, flat_values)
+            time.sleep(0.02) # Faster for batch inserts
+        return True
+    except Exception as e:
+        err = f"{label} Save Error: {e}"
+        if logger: logger.log(f"   ❌ {err}")
+        else: print(f"❌ {err}")
+        return False
+
+
+def save_data_to_storage(df: pd.DataFrame, logger=None):
     """
-    Saves market data using INSERT OR REPLACE.
+    Saves market data to BOTH Turso (remote) and Local SQLite.
     CRITICAL: Normalizes timestamps to UTC strings to ensure uniqueness.
     """
     if df.empty:
-        return False
-
-    client = get_db_connection()
-    if not client:
         return False
 
     try:
@@ -109,42 +129,40 @@ def save_data_to_turso(df: pd.DataFrame, logger=None):
 
         # 4. Prepare Batch
         rows_to_insert = []
-        for _, row in batch_df.iterrows():
+        for row in batch_df.itertuples(index=False):
             rows_to_insert.append((
-                row['timestamp_str'], # The UTC String
-                row['symbol'],
-                row['open'], row['high'], row['low'], row['close'], row['volume'],
-                row['session']
+                row.timestamp_str,
+                row.symbol,
+                row.open, row.high, row.low, row.close, row.volume,
+                row.session
             ))
 
-        # 5. Execute Batch (INSERT OR REPLACE updates duplicates)
-        BATCH_SIZE = 100
-        
         if logger:
-            logger.log(f"   💾 Committing {len(rows_to_insert)} records...")
+            logger.log(f"   💾 Dual Comitting {len(rows_to_insert)} records...")
 
-        for i in range(0, len(rows_to_insert), BATCH_SIZE):
-            batch = rows_to_insert[i : i + BATCH_SIZE]
-            placeholders = ", ".join(["(?, ?, ?, ?, ?, ?, ?, ?)"] * len(batch))
-            flat_values = [item for sublist in batch for item in sublist]
-            
-            query = f"""
-                INSERT OR REPLACE INTO market_data 
-                (timestamp, symbol, open, high, low, close, volume, session) 
-                VALUES {placeholders}
-            """
-            client.execute(query, flat_values)
-            time.sleep(0.05) # Gentle on the DB
-            
-        return True
+        # 5. Save to Turso
+        turso_success = False
+        turso_client = get_db_connection()
+        if turso_client:
+            turso_success = _save_to_client(turso_client, rows_to_insert, logger, "Turso")
+        
+        # 6. Save to Local
+        local_success = False
+        local_client = get_local_db_connection()
+        if local_client:
+            local_success = _save_to_client(local_client, rows_to_insert, logger, "Local")
+
+        return turso_success or local_success # Success if at least one worked
 
     except Exception as e:
-        # Improved Error Logging to see exactly what failed
-        err = f"Save Error: {e}"
+        err = f"Storage Global Error: {e}"
         if logger: logger.log(f"   ❌ {err}")
         else: print(f"❌ {err}")
-        print(err) # Print to console for extra visibility
         return False
+
+# Keep old name for backward compatibility if needed, but redirects to new dual storage
+def save_data_to_turso(df: pd.DataFrame, logger=None):
+    return save_data_to_storage(df, logger)
 
 
 def fetch_data_health_matrix(tickers: list, start_date, end_date, session_filter="Total"):

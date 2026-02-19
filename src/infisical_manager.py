@@ -2,10 +2,13 @@ from infisical_client import InfisicalClient, ClientSettings, GetSecretOptions, 
 import os
 import toml
 import threading
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 class InfisicalManager:
     _instance = None
-    _massive_keys_cache = None
     _cache_lock = threading.Lock()
 
     def __new__(cls):
@@ -89,45 +92,11 @@ class InfisicalManager:
         except Exception:
             return None
 
-    def get_massive_api_keys(self):
-        """
-        Retrieves all 9 identified Massive API keys for rotation.
-        Uses a shared class-level cache to avoid redundant slow calls in parallel threads.
-        """
-        with self._cache_lock:
-            if InfisicalManager._massive_keys_cache is not None:
-                return InfisicalManager._massive_keys_cache
-            
-            keys = []
-            
-            # 1. New keys from "minephysical" / "Stock Data Archive"
-            discovered_keys = [
-                "massive-arshademad",
-                "massive-fbbfecc3",
-                "massive-ghf44378",
-                "massive-emadarshadalam",
-                "massive-arshadbah",
-                "massive-dunola8439",
-                "massive-fifamobile8439",
-                "massive-emadarshadalam1",
-                "massive-hamzaarshadalam"
-            ]
-            
-            print(f"   🔐 Bootstrapping Massive keys from Infisical (First time sync)...")
-            for nk in discovered_keys:
-                val = self.get_secret(nk)
-                if val: keys.append(val)
 
-            # 2. Legacy/Standard keys fallback
-            legacy_base = self.get_secret("massive_stock_data_API_KEY")
-            if legacy_base and legacy_base not in keys: 
-                keys.append(legacy_base)
-                
-            for i in range(1, 11):
-                ki = self.get_secret(f"massive_stock_data_API_KEY_{i}")
-                if ki and ki not in keys:
-                    keys.append(ki)
-            
-            InfisicalManager._massive_keys_cache = keys
-            print(f"   ✅ Successfully cached {len(keys)} Massive API keys.")
-            return keys
+    def get_capital_credentials(self) -> dict:
+        """Retrieves Capital.com credentials."""
+        return {
+            "api_key": self.get_secret("capital_com_x_cap_api_key"),
+            "identifier": self.get_secret("capital_com_identifier"),
+            "password": self.get_secret("capital_com_password")
+        }
