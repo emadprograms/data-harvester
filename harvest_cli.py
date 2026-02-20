@@ -30,7 +30,7 @@ if __name__ == "__main__":
         log_filename = f"logs/harvest_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.log"
         logger = CLILogger(log_path=log_filename)
         
-        # 0. Pre-Harvest: Download Master DB from GDrive
+        # 0. Pre-Harvest Cleanup & Download
         from src.utils.gdrive import upload_to_gdrive_oauth, download_from_gdrive_oauth
         client_id = mgr.get_secret("emadprograms_market_data_gdrive_client_id")
         client_secret = mgr.get_secret("emadprograms_market_data_gdrive_client_secret")
@@ -38,18 +38,13 @@ if __name__ == "__main__":
         gdrive_folder = mgr.get_secret("emadprograms_market_data_gdrive_folder_id")
         local_db_path = "market_data.db"
         
-        # Smart Download: Only download if local is missing or looks "stale" (heuristic)
-        should_download = not os.path.exists(local_db_path)
-        if not should_download:
-            # Check if local file is very small (likely truncated) or old
-            if os.path.getsize(local_db_path) < 1000: # Less than 1KB
-                should_download = True
+        # Clean slate: Remove any leftover DB from previous runs
+        if os.path.exists(local_db_path):
+            os.remove(local_db_path)
         
+        # Always download from GDrive (Ephemeral mode)
         if all([client_id, client_secret, refresh_token, gdrive_folder]):
-            if should_download:
-                download_from_gdrive_oauth(local_db_path, local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger)
-            else:
-                logger.log("ℹ️ Local master DB exists. Skipping GDrive download to prevent staleness.")
+            download_from_gdrive_oauth(local_db_path, local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger)
         else:
             missing_keys = []
             if not client_id: missing_keys.append("client_id")
@@ -166,6 +161,19 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Unexpected error: {e}")
     finally:
+        # Cleanup: Delete the local DB buffer before exit (Ephemeral architecture)
+        local_db_path = "market_data.db"
+        if os.path.exists(local_db_path):
+            try:
+                os.remove(local_db_path)
+                # Also cleanup WAL/SHM files if they exist
+                for ext in ["-wal", "-shm"]:
+                    if os.path.exists(local_db_path + ext):
+                        os.remove(local_db_path + ext)
+                if logger: logger.log("🧹 Local DB buffer cleaned up.")
+            except Exception as e:
+                print(f"⚠️ Cleanup warning: {e}")
+
         # The Infisical client spins up background threads (aiohttp) that can
         # hang the script indefinitely. os._exit(0) kills them instantly.
         print("\n👋 Harvest complete. Exiting...")
