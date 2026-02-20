@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from datetime import datetime, time as dt_time, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from src.config import US_EASTERN, UTC
+from src.config import US_EASTERN, UTC, SCHEMA_COLS
 from src.api.capital import fetch_capital_data
 from src.api.yahoo import fetch_yahoo_market_data
 from src.api.binance import fetch_binance_daily
@@ -230,6 +230,8 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         cleaned = []
         for df in all_data:
             if not df.empty:
+                # 0. Copy to avoid in-place issues
+                df = df.copy()
                 # 1. Normalize columns to lowercase and unique
                 df.columns = [str(c).lower() for c in df.columns]
                 df = df.loc[:, ~df.columns.duplicated()]
