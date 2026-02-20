@@ -1,1 +1,1 @@
-{ "build": { "buildCommand": "pip install -r discord_bot/requirements.txt" }, "deploy": { "startCommand": "python discord_bot/bot.py", "restartPolicyType": "ON_FAILURE" } }
+{ "build": { "builder": "NIXPACKS", "buildCommand": "pip install -r discord_bot/requirements.txt" }, "deploy": { "startCommand": "python discord_bot/bot.py", "rootDirectory": "discord_bot" } }
