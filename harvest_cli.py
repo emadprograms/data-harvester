@@ -92,15 +92,17 @@ if __name__ == "__main__":
             else:
                 logger.log("⚠️ Discord notification skipped or failed.")
 
-            # 7. Google Drive Sync
-            from src.utils.gdrive import upload_to_gdrive
-            gdrive_json = mgr.get_secret("GDRIVE_SERVICE_ACCOUNT_JSON")
-            gdrive_folder = mgr.get_secret("GDRIVE_FOLDER_ID")
+            # 7. Google Drive Sync (OAuth)
+            from src.utils.gdrive import upload_to_gdrive_oauth
+            client_id = mgr.get_secret("GDRIVE_CLIENT_ID")
+            client_secret = mgr.get_secret("GDRIVE_CLIENT_SECRET")
+            refresh_token = mgr.get_secret("GDRIVE_REFRESH_TOKEN")
+            gdrive_folder = mgr.get_secret("gdrive_market_data_folder_id")
             
-            if gdrive_json and gdrive_folder:
-                upload_to_gdrive(local_db_path, gdrive_folder, gdrive_json, logger)
+            if all([client_id, client_secret, refresh_token, gdrive_folder]):
+                upload_to_gdrive_oauth(local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger)
             else:
-                logger.log("⚠️ GDrive sync skipped (Secrets missing in Infisical)")
+                logger.log("⚠️ GDrive sync skipped (OAuth Secrets missing in Infisical)")
 
     except KeyboardInterrupt:
         print("\n🛑 Harvest interrupted by user.")
