@@ -36,3 +36,6 @@ logs/
 # Local Databases
 *.db
 *.sqlite
+
+# Temporary folders
+buy_cash/
