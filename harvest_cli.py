@@ -188,7 +188,7 @@ def main():
                             
                             if local_md5 == gdrive_md5:
                                 logger.log(f"✅ GDrive MD5 MATCHED: {local_md5[:8]}...")
-                                integrity_msg += " | GDrive MD5 OK"
+                                integrity_msg += " | Local-to-GDrive MD5 OK"
                                 md5_matched = True
                                 break
                             else:
@@ -202,7 +202,7 @@ def main():
                         msg = "❌ CRITICAL: GDrive MD5 Mismatch persisted after maximum retries. Data may be out of sync."
                         logger.log(msg)
                         critical_errors += f"- {msg}\n"
-                        integrity_msg += " | GDrive MD5 ❌"
+                        integrity_msg += " | Local-to-GDrive MD5 ❌"
                 else:
                     logger.log("⚠️ GDrive sync skipped (OAuth Secrets missing)")
             else:

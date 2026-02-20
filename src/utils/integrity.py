@@ -47,13 +47,9 @@ def verify_sync(turso_client, local_client, date_str, logger=None):
 
     if is_ok:
         msg = f"✅ Sync OK for {date_str} | Rows: {fp_local['count']:,}"
-    elif abs(drift) < 50:
-        # Silencer: Small drift is expected during overlapping runs (timing artifacts)
-        msg = f"✅ Sync OK (Minor Drift: {drift}) for {date_str} | Turso: {fp_remote['count']:,}"
-        is_ok = True  # Treat as OK for reporting purposes
     else:
         msg = (
-            f"⚠️ SYNC DRIFT on {date_str} | "
+            f"❌ SYNC DRIFT on {date_str} | "
             f"Turso: {fp_remote['count']:,} rows | "
             f"Local: {fp_local['count']:,} rows"
         )
