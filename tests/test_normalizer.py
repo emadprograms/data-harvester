@@ -4,7 +4,7 @@ Tests for src/data/normalizer.py — Verify normalization handles edge cases.
 import unittest
 import pandas as pd
 import numpy as np
-from src.data.normalizer import normalize_yahoo_df, normalize_capital_df
+from src.data.normalizer import normalize_yahoo_df
 from src.config import SCHEMA_COLS
 
 
@@ -109,44 +109,6 @@ class TestNormalizeYahoo(unittest.TestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(list(result.columns), SCHEMA_COLS)
 
-
-class TestNormalizeCapital(unittest.TestCase):
-
-    def test_empty_dataframe(self):
-        """Must return empty DF with correct columns if input is empty."""
-        result = normalize_capital_df(pd.DataFrame(), "AAPL")
-        self.assertTrue(result.empty)
-        self.assertEqual(list(result.columns), SCHEMA_COLS)
-
-    def test_standard_capital_data(self):
-        """Standard Capital data must normalize correctly with volume=0."""
-        df = pd.DataFrame({
-            "timestamp": pd.to_datetime(["2025-01-15 08:00:00", "2025-01-15 08:01:00"]).tz_localize("UTC"),
-            "open": [149.0, 149.5],
-            "high": [149.5, 150.0],
-            "low": [148.5, 149.0],
-            "close": [149.2, 149.8],
-            "volume": [0.0, 0.0]
-        })
-        
-        result = normalize_capital_df(df, "AAPL", session_label="PRE")
-        self.assertEqual(len(result), 2)
-        self.assertEqual(list(result.columns), SCHEMA_COLS)
-        self.assertEqual(result['symbol'].iloc[0], "AAPL")
-        self.assertEqual(result['session'].iloc[0], "PRE")
-        self.assertTrue((result['volume'] == 0.0).all())
-
-    def test_capital_missing_volume_column(self):
-        """If volume column is missing from Capital data, must default to 0."""
-        df = pd.DataFrame({
-            "timestamp": pd.to_datetime(["2025-01-15 08:00:00"]).tz_localize("UTC"),
-            "open": [149.0], "high": [149.5],
-            "low": [148.5], "close": [149.2],
-            "session": ["PRE"], "symbol": ["AAPL"]
-        })
-        
-        result = normalize_capital_df(df, "AAPL")
-        self.assertTrue((result['volume'] == 0.0).all())
 
 
 if __name__ == '__main__':
