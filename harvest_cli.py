@@ -9,7 +9,7 @@ from src.database.schema import init_db
 from src.database.operations import get_symbol_map_from_db, save_data_to_storage
 from src.data.harvester import run_harvest_logic
 from src.config import US_EASTERN
-from src.utils.discord import send_discord_harvest_report
+from src.utils.discord import send_discord_harvest_report, build_health_alerts
 
 # -----------------------------------------------------------------------------
 # Logging Setup
@@ -113,9 +113,21 @@ if __name__ == "__main__":
         )
         
         # Save data if successful
+        integrity_msg = ""
         if not final_df.empty:
             if save_data_to_storage(final_df, logger):
                 logger.log(f"✅ Data successfully harvested and saved to dual storage. Total rows: {len(final_df)}")
+                
+                # Integrity Check: Compare today's fingerprint between Turso and Local
+                try:
+                    from src.utils.integrity import verify_sync
+                    from src.database.connection import get_db_connection, get_local_db_connection
+                    turso_c = get_db_connection()
+                    local_c = get_local_db_connection()
+                    if turso_c and local_c:
+                        _, integrity_msg = verify_sync(turso_c, local_c, str(target_date), logger)
+                except Exception as e:
+                    logger.log(f"⚠️ Integrity check skipped: {e}")
             else:
                 logger.log("❌ Failed to save data to storage.")
         else:
@@ -131,10 +143,14 @@ if __name__ == "__main__":
                 with open(logger.log_path, 'a', encoding='utf-8') as f:
                     f.write(f"\nSummary:\n{summary_str}\n")
             
-            # Send to Discord
+            # Send to Discord with health alerts and integrity status
             # 6. Discord Notification
             total_rows = len(final_df)
-            if send_discord_harvest_report(report_df, target_date, total_rows, file_path=log_filename):
+            health_alerts = build_health_alerts(report_df, now_et.hour)
+            if send_discord_harvest_report(report_df, target_date, total_rows,
+                                           file_path=log_filename,
+                                           health_alerts=health_alerts,
+                                           integrity_status=integrity_msg):
                 logger.log("📨 Discord notification sent with logs.")
             else:
                 logger.log("⚠️ Discord notification skipped or failed.")
