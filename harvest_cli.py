@@ -126,6 +126,7 @@ def main():
         # --- NEW ROBUST SYNC WORKFLOW ---
         integrity_msg = "Unknown"
         sync_verified = False
+        critical_errors = ""
 
         if not final_df.empty:
             # A. Dual Write
@@ -169,12 +170,14 @@ def main():
                 else:
                     logger.log("⚠️ GDrive sync skipped (OAuth Secrets missing)")
             else:
-                logger.log("❌ Failed to save data to storage.")
+                err_msg = "❌ Failed to save data to storage (Finite Float error likely)."
+                logger.log(err_msg)
+                critical_errors += f"- {err_msg}\n"
         else:
             logger.log("⚠️ No data harvested.")
             
         # 3. Final Summary & Discord Notification
-        if not report_df.empty:
+        if not report_df.empty or critical_errors:
             logger.log("\n📊 Harvest Summary:")
             summary_str = report_df.to_string(index=False)
             print(summary_str)
@@ -188,7 +191,8 @@ def main():
             if send_discord_harvest_report(report_df, target_date, total_rows,
                                            file_path=log_filename,
                                            health_alerts=health_alerts,
-                                           integrity_status=integrity_msg):
+                                           integrity_status=integrity_msg,
+                                           critical_errors=critical_errors):
                 logger.log("📨 Discord notification sent with logs.")
             else:
                 logger.log("⚠️ Discord notification skipped or failed.")

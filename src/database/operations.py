@@ -157,21 +157,27 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, turso_client=None, local
         numeric_cols = ['open', 'high', 'low', 'close', 'volume']
         for col in numeric_cols:
             if col in batch_df.columns:
-                # Convert Infinity to NaN, then all NaN to None (NULL in SQL)
+                # First pass: Pandas level sanitization
                 batch_df[col] = batch_df[col].replace([np.inf, -np.inf], np.nan)
-                # We use where/mask or simply fillna(np.nan) is not enough for 'None' in itertuples
-                # but itertuples will preserve None as NULL in the SQL driver
                 batch_df[col] = batch_df[col].where(batch_df[col].notnull(), None)
 
-        # 5. Prepare Batch
+        # 5. Prepare Batch with LAST-CALL Sanitization
+        import math
         rows_to_insert = []
         for row in batch_df.itertuples(index=False):
-            rows_to_insert.append((
-                row.timestamp_str,
-                row.symbol,
-                row.open, row.high, row.low, row.close, row.volume,
+            # Final sanity check for each value to ensure no non-finite floats reach the driver
+            sanitized_row = []
+            for item in [
+                row.timestamp_str, row.symbol, 
+                row.open, row.high, row.low, row.close, row.volume, 
                 row.session
-            ))
+            ]:
+                if isinstance(item, float) and not math.isfinite(item):
+                    sanitized_row.append(None)
+                else:
+                    sanitized_row.append(item)
+            
+            rows_to_insert.append(tuple(sanitized_row))
 
         if logger:
             logger.log(f"   💾 Dual Comitting {len(rows_to_insert)} records...")

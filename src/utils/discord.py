@@ -72,7 +72,8 @@ def build_health_alerts(report_df, now_et_hour):
 
 
 def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows,
-                                file_path=None, health_alerts="", integrity_status=""):
+                                file_path=None, health_alerts="", integrity_status="", 
+                                critical_errors=""):
     """
     Sends a compact ticker table to Discord, split across messages if needed.
     Attaches a file (e.g., local DB) if provided.
@@ -83,13 +84,18 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
 
     try:
         header = f"🚜 **Harvest Complete** | `{target_date}`\n"
+        
+        # Add critical errors at the top if present
+        if critical_errors:
+            msg = f"🚨 **CRITICAL ERRORS DETECTED** 🚨\n{critical_errors}\n\n" + header
+        else:
+            msg = header
 
-        if report_df.empty:
-            _post(webhook_url, header + "No data harvested.")
+        if report_df.empty and not critical_errors:
+            _post(webhook_url, msg + "No data harvested.")
             return True
 
         # Simplified message without the detailed table
-        msg = header
         msg += f"📊 **Total Rows Harvested**: `{total_rows:,}`\n"
         msg += "📄 *Full details are available in the attached log.*"
 

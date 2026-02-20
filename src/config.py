@@ -14,9 +14,9 @@ SCHEMA_COLS = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume', 
 
 # Binance Configuration
 BINANCE_DOMAINS = [
+    "https://api.binance.us",
     "https://api1.binance.com", 
     "https://api2.binance.com", 
     "https://api3.binance.com", 
-    "https://api.binance.us", 
     "https://api.binance.com"
 ]
