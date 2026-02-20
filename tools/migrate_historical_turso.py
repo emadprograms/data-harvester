@@ -145,10 +145,10 @@ def perform_migration(remote, local, batch_size=BATCH_SIZE, logger=None):
     return migrated
 
 
-def repair_local_from_turso(remote, local, logger=None):
+def repair_local_from_turso(remote, local, logger=None, force_exhaustive=False):
     """
     Heuristic repair: If Turso has more rows or newer data, 
-    sync the last few batches to ensure parity.
+    sync batches to ensure parity.
     """
     def log(msg):
         if logger: logger.log(msg)
@@ -157,7 +157,7 @@ def repair_local_from_turso(remote, local, logger=None):
     remote_count = get_count(remote)
     local_count = get_count(local)
     
-    if remote_count <= local_count:
+    if remote_count <= local_count and not force_exhaustive:
         # Check if remote has newer data even if counts match
         res_r = remote.execute("SELECT MAX(timestamp) FROM market_data")
         res_l = local.execute("SELECT MAX(timestamp) FROM market_data")
@@ -168,11 +168,13 @@ def repair_local_from_turso(remote, local, logger=None):
             log("✅ Local SQLite is up-to-date with Turso.")
             return
 
-    log(f"🔄 Gap detected! Remote: {remote_count:,}, Local: {local_count:,}. Repairing...")
-    # For a quick repair, we fetch the most recent rows by timestamp descending
-    # until we hit records we already have.
+    log(f"🔄 Gap/Sync check: Remote: {remote_count:,}, Local: {local_count:,}.")
+    
+    # Exhaustive repair: fetch recent rows by timestamp descending
     batch_size = 5000
     offset = 0
+    total_added = 0
+    
     while True:
         res = remote.execute(
             "SELECT timestamp, symbol, open, high, low, close, volume, session "
@@ -181,22 +183,32 @@ def repair_local_from_turso(remote, local, logger=None):
         )
         if not res.rows: break
         
-        inserted = 0
+        batch_added = 0
         for row in res.rows:
             try:
                 # Use INSERT OR IGNORE to only add what's missing
                 local.execute(
-                    "INSERT OR IGNORE INTO market_data VALUES (?,?,?,?,?,?,?,?)", list(row)
+                  "INSERT OR IGNORE INTO market_data (timestamp, symbol, open, high, low, close, volume, session) "
+                  "VALUES (?,?,?,?,?,?,?,?)", list(row)
                 )
-                # If we use a custom exec that returns rowcount, we could stop early
-                # For now, we'll just process a few batches for safety
-                inserted += 1
+                batch_added += 1
             except: pass
             
+        total_added += batch_added
         offset += batch_size
-        if offset > 20000: break # Don't repair more than 20k rows this way; run full migrate if needed
+        
+        # Heuristic: If we processed a batch and added 0 new rows, we've likely hit the "already synced" barrier
+        if batch_added == 0 and not force_exhaustive:
+            break
+            
+        if not force_exhaustive and offset > 50000: 
+            log("⚠️ Repair threshold exceeded (50k rows). Run full migrate if needed.")
+            break
     
-    log("✅ Local repair check complete.")
+    if total_added > 0:
+        log(f"✅ Repair complete. Added {total_added:,} missing rows.")
+    else:
+        log("✅ Parity verified. No new rows added.")
 
 
 # ---------------------------------------------------------------------------

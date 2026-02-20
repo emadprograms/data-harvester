@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import hashlib
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -91,3 +92,28 @@ def upload_to_gdrive_oauth(file_path: str, folder_id: str, client_id: str, clien
         if logger: logger.log(f"❌ {err}")
         else: print(err)
         return False
+
+def get_local_md5(file_path: str):
+    """Calculates the MD5 hash of a local file."""
+    if not os.path.exists(file_path):
+        return None
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+def get_gdrive_md5(file_name: str, folder_id: str, client_id: str, client_secret: str, refresh_token: str, logger=None):
+    """Retrieves the MD5 checksum of a file on Google Drive."""
+    try:
+        service = _get_gdrive_service(client_id, client_secret, refresh_token)
+        query = f"name = '{file_name}' and '{folder_id}' in parents and trashed = false"
+        results = service.files().list(q=query, spaces='drive', fields='files(id, name, md5Checksum)').execute()
+        items = results.get('files', [])
+        
+        if items:
+            return items[0].get('md5Checksum')
+        return None
+    except Exception as e:
+        if logger: logger.log(f"⚠️ Error retrieving GDrive MD5: {e}")
+        return None

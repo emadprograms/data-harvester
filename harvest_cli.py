@@ -104,7 +104,7 @@ def main():
         if discord_webhook:
             os.environ["DISCORD_WEBHOOK_URL"] = discord_webhook
 
-        # 3. Fetch Inventory
+        # 2. Fetch Inventory
         symbol_map = get_symbol_map_from_db(turso_client)
         inventory_list = list(symbol_map.keys())
         
@@ -123,27 +123,58 @@ def main():
             harvest_mode="🚀 Full Day"
         )
         
-        # Save data if successful
-        integrity_msg = ""
+        # --- NEW ROBUST SYNC WORKFLOW ---
+        integrity_msg = "Unknown"
+        sync_verified = False
+
         if not final_df.empty:
+            # A. Dual Write
             if save_data_to_storage(final_df, logger, turso_client=turso_client, local_client=local_client):
-                logger.log(f"✅ Data successfully harvested and saved to dual storage. Total rows: {len(final_df)}")
+                logger.log(f"✅ Data written to dual storage. Rows: {len(final_df)}")
                 
-                # Integrity Check: Compare today's fingerprint between Turso and Local
-                try:
-                    from src.utils.integrity import verify_sync
-                    if turso_client and local_client:
-                        _, integrity_msg = verify_sync(turso_client, local_client, str(target_date), logger)
-                except Exception as e:
-                    logger.log(f"⚠️ Integrity check skipped: {e}")
+                # B. Post-Harvest Verification & Repair
+                # Ensure Turso and Local are EXACTLY the same before moving to GDrive
+                from src.utils.integrity import verify_sync
+                from tools.migrate_historical_turso import repair_local_from_turso
+                
+                logger.log("🔍 Post-Harvest Parity Check...")
+                sync_ok, integrity_msg = verify_sync(turso_client, local_client, str(target_date), logger)
+                
+                if not sync_ok:
+                    logger.log("⚠️ Sync drift detected after save. Performing exhaustive repair...")
+                    repair_local_from_turso(turso_client, local_client, logger, force_exhaustive=True)
+                    sync_ok, integrity_msg = verify_sync(turso_client, local_client, str(target_date), logger)
+                
+                if sync_ok:
+                    logger.log("✅ Parity Verified (Turso vs Local).")
+                    sync_verified = True
+                else:
+                    logger.log("❌ Sync Mismatch persisted after repair. Check Turso logs.")
+
+                # C. Final GDrive Sync with MD5 Verification
+                if all([client_id, client_secret, refresh_token, gdrive_folder]):
+                    from src.utils.gdrive import upload_to_gdrive_oauth, get_local_md5, get_gdrive_md5
+                    
+                    if upload_to_gdrive_oauth(local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger):
+                        # Verify MD5 Checksum
+                        local_md5 = get_local_md5(local_db_path)
+                        gdrive_md5 = get_gdrive_md5(local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger)
+                        
+                        if local_md5 == gdrive_md5:
+                            logger.log(f"✅ GDrive Sync Verified (MD5: {local_md5[:8]}...)")
+                            integrity_msg += " | GDrive MD5 OK"
+                        else:
+                            logger.log(f"❌ GDrive Sync MD5 Mismatch! Local: {local_md5}, Remote: {gdrive_md5}")
+                            integrity_msg += " | GDrive MD5 DRIFT ⚠️"
+                else:
+                    logger.log("⚠️ GDrive sync skipped (OAuth Secrets missing)")
             else:
                 logger.log("❌ Failed to save data to storage.")
         else:
             logger.log("⚠️ No data harvested.")
-        
-        # Print summary and send Discord notification
+            
+        # 3. Final Summary & Discord Notification
         if not report_df.empty:
-            # Print to console/log
             logger.log("\n📊 Harvest Summary:")
             summary_str = report_df.to_string(index=False)
             print(summary_str)
@@ -152,7 +183,6 @@ def main():
                     f.write(f"\nSummary:\n{summary_str}\n")
             
             # Send to Discord with health alerts and integrity status
-            # 6. Discord Notification
             total_rows = len(final_df)
             health_alerts = build_health_alerts(report_df, now_et.hour)
             if send_discord_harvest_report(report_df, target_date, total_rows,
@@ -162,12 +192,6 @@ def main():
                 logger.log("📨 Discord notification sent with logs.")
             else:
                 logger.log("⚠️ Discord notification skipped or failed.")
-
-            # 7. Google Drive Sync (OAuth)
-            if all([client_id, client_secret, refresh_token, gdrive_folder]):
-                upload_to_gdrive_oauth(local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger)
-            else:
-                logger.log("⚠️ GDrive sync skipped (OAuth Secrets missing in Infisical)")
 
     except KeyboardInterrupt:
         print("\n🛑 Harvest interrupted by user.")

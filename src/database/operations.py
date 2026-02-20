@@ -6,6 +6,7 @@ STRATEGY:
 """
 
 import pandas as pd
+import numpy as np
 import time
 from src.database.connection import get_db_connection, get_local_db_connection
 from src.config import UTC, US_EASTERN
@@ -151,7 +152,18 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, turso_client=None, local
         # 3. Create String for SQLite (Removes Offset confusion)
         batch_df['timestamp_str'] = batch_df['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
 
-        # 4. Prepare Batch
+        # 4. Sanitize Numeric Data (Handle Infinity / NaN for SQL)
+        # Turso/SQLite don't like 'inf' or 'NaN' in float columns
+        numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+        for col in numeric_cols:
+            if col in batch_df.columns:
+                # Convert Infinity to NaN, then all NaN to None (NULL in SQL)
+                batch_df[col] = batch_df[col].replace([np.inf, -np.inf], np.nan)
+                # We use where/mask or simply fillna(np.nan) is not enough for 'None' in itertuples
+                # but itertuples will preserve None as NULL in the SQL driver
+                batch_df[col] = batch_df[col].where(batch_df[col].notnull(), None)
+
+        # 5. Prepare Batch
         rows_to_insert = []
         for row in batch_df.itertuples(index=False):
             rows_to_insert.append((

@@ -102,12 +102,6 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
                 all_ok = False
             time.sleep(0.5)
 
-        # Send health alerts as a follow-up message
-        if health_alerts:
-            if not _post(webhook_url, health_alerts):
-                all_ok = False
-            time.sleep(0.5)
-
         # Send integrity status as a follow-up message
         if integrity_status:
             if not _post(webhook_url, f"🔒 **Integrity** | {integrity_status}"):
