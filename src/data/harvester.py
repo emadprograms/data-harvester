@@ -85,6 +85,7 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         t_c = rules.get('capital_epic') or ticker
         t_b = rules.get('binance_ticker') or ticker
         p1 = rules.get('p1')
+        p2 = rules.get('p2')
 
         # --- BINANCE (Crypto/Forex Proxy) ---
         if p1 == "BINANCE":
@@ -103,9 +104,6 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                 logger.log(f"   ⚠️ Binance failed for {ticker}. Attempting fallback...")
                 p1 = p2 # Promote p2 to p1 for the hybrid logic below
                 # p2 remains as it was, but we effectively skip binance
-
-        # --- SPLICED HYBRID (Stocks/ETFs/Futures) ---
-        p2 = rules.get('p2')
         
         # 1. Fetch in PRIORITY ORDER: P1 first, P2 only as fallback
         df_primary = pd.DataFrame(); msg_primary = "Skipped"
