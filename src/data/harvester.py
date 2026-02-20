@@ -86,18 +86,23 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         t_b = rules.get('binance_ticker') or ticker
         p1 = rules.get('p1')
 
-        # --- SPECIAL CASE: BINANCE (Crypto) ---
+        # --- BINANCE (Crypto/Forex Proxy) ---
         if p1 == "BINANCE":
-            df, msg = fetch_from_source("BINANCE", t_b, target_date, logger)
-            if df.empty: return ticker, pd.DataFrame(), msg, "FAILED", 0, 0, 0
-            
-            df['timestamp'] = df['timestamp'].dt.tz_convert(US_EASTERN)
-            df['symbol'] = ticker # Map back to display name
-            c_pre = df[df['timestamp'].dt.time < t_930am].copy(); c_pre['session'] = 'PRE'
-            c_reg = df[(df['timestamp'].dt.time >= t_930am) & (df['timestamp'].dt.time < t_4pm)].copy(); c_reg['session'] = 'REG'
-            c_post = df[df['timestamp'].dt.time >= t_4pm].copy(); c_post['session'] = 'POST'
-            final = pd.concat([c_pre, c_reg, c_post]).sort_values('timestamp')
-            return ticker, final, "✅ Binance Hub", "BINANCE", len(c_pre), len(c_reg), len(c_post)
+            df_b, msg_b = fetch_from_source("BINANCE", t_b, target_date, logger)
+            if not df_b.empty:
+                # Successfully fetched from Binance
+                df_b['timestamp'] = df_b['timestamp'].dt.tz_convert(US_EASTERN)
+                df_b['symbol'] = ticker # Map back to display name
+                c_pre = df_b[df_b['timestamp'].dt.time < t_930am].copy(); c_pre['session'] = 'PRE'
+                c_reg = df_b[(df_b['timestamp'].dt.time >= t_930am) & (df_b['timestamp'].dt.time < t_4pm)].copy(); c_reg['session'] = 'REG'
+                c_post = df_b[df_b['timestamp'].dt.time >= t_4pm].copy(); c_post['session'] = 'POST'
+                final = pd.concat([c_pre, c_reg, c_post]).sort_values('timestamp')
+                return ticker, final, "✅ Binance Hub", "BINANCE", len(c_pre), len(c_reg), len(c_post)
+            else:
+                # Binance failed, try fallback (Yahoo/Capital)
+                logger.log(f"   ⚠️ Binance failed for {ticker}. Attempting fallback...")
+                p1 = p2 # Promote p2 to p1 for the hybrid logic below
+                # p2 remains as it was, but we effectively skip binance
 
         # --- SPLICED HYBRID (Stocks/ETFs/Futures) ---
         p2 = rules.get('p2')
