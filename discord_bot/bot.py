@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuration from Environment Variables
-DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+DISCORD_TOKEN = os.getenv("discord_captain_data_webhook_url")
 GITHUB_TOKEN = os.getenv("GITHUB_PAT")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "emadprograms/data-harvester")
 WORKFLOW_FILENAME = os.getenv("WORKFLOW_FILENAME", "harvest.yml")
@@ -65,7 +65,7 @@ async def trigger_harvest(ctx):
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
-        print("❌ CRITICAL: DISCORD_BOT_TOKEN is missing.")
+        print("❌ CRITICAL: discord_captain_data_webhook_url is missing.")
         exit(1)
     if not GITHUB_TOKEN:
         print("❌ CRITICAL: GITHUB_PAT is missing.")
