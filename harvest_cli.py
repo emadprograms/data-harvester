@@ -4,7 +4,7 @@ CLI/automation worker script for scheduled data harvesting.
 import os
 import sys
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from src.database.schema import init_db
 from src.database.operations import get_symbol_map_from_db, save_data_to_storage
 from src.data.harvester import run_harvest_logic
@@ -27,7 +27,7 @@ if __name__ == "__main__":
         
         # 0. Set up Session Logging
         from src.utils.logger import CLILogger
-        log_filename = f"logs/harvest_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.log"
+        log_filename = f"logs/harvest_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
         logger = CLILogger(log_path=log_filename)
         
         # 0. Pre-Harvest Cleanup & Download
@@ -77,7 +77,7 @@ if __name__ == "__main__":
         
         # Weekend Check: If it's Saturday/Sunday morning ET, we don't expect new data usually, 
         # but the workflow is scheduled Tue-Sat Bahrain (Mon-Fri ET).
-        logger.log(f"🌍 Running Harvest at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
+        logger.log(f"🌍 Running Harvest at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
         logger.log(f"🗽 ET Time: {now_et.strftime('%Y-%m-%d %H:%M:%S')} (Hour: {now_et.hour})")
         logger.log(f"🎯 Target Market Date: {target_date}")
 

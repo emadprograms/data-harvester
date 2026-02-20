@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 class CLILogger:
     """A simple logger that prints to console and optionally a file."""
@@ -10,11 +10,11 @@ class CLILogger:
             os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
             # Clear/Init file
             with open(self.log_path, 'w', encoding='utf-8') as f:
-                f.write(f"--- Harvest Log Started: {datetime.utcnow().isoformat()} ---\n")
+                f.write(f"--- Harvest Log Started: {datetime.now(timezone.utc).isoformat()} ---\n")
     
     def log(self, message):
         msg = f"🔹 {message}"
         print(msg)
         if self.log_path:
             with open(self.log_path, 'a', encoding='utf-8') as f:
-                f.write(f"{datetime.utcnow().isoformat()} | {message}\n")
+                f.write(f"{datetime.now(timezone.utc).isoformat()} | {message}\n")
