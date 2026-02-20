@@ -1,0 +1,13 @@
+services:
+  - type: worker
+    name: harvester-discord-bot
+    env: python
+    buildCommand: "pip install -r discord_bot/requirements.txt"
+    startCommand: "python discord_bot/bot.py"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: GITHUB_PAT
+        sync: false
