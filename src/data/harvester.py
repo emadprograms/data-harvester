@@ -107,57 +107,57 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         # --- SPLICED HYBRID (Stocks/ETFs/Futures) ---
         p2 = rules.get('p2')
         
-        # 1. Determine Sources & Fetch
-        df_cap = pd.DataFrame(); msg_cap = "Skipped"
-        df_yho = pd.DataFrame(); msg_yho = "Skipped"
+        # 1. Fetch in PRIORITY ORDER: P1 first, P2 only as fallback
+        df_primary = pd.DataFrame(); msg_primary = "Skipped"
+        df_fallback = pd.DataFrame(); msg_fallback = "Skipped"
+        primary_source = p1   # e.g. "YAHOO" or "CAPITAL"
+        fallback_source = p2  # e.g. "CAPITAL" or "YAHOO" or "NONE"
 
-        should_fetch_capital = (p1 == "CAPITAL") or (p2 == "CAPITAL")
-        should_fetch_yahoo = (p1 == "YAHOO") or (p2 == "YAHOO")
+        # Map source name -> ticker
+        source_ticker = {"YAHOO": t_y, "CAPITAL": t_c, "BINANCE": t_b}
 
-        if should_fetch_capital:
-            df_cap, msg_cap = fetch_from_source("CAPITAL", t_c, target_date, logger)
-        
-        # --- STRICT CAPITAL LOGIC ---
-        # If P1 is Capital and we got data -> SKIP Yahoo (Pure Capital)
-        if p1 == "CAPITAL" and not df_cap.empty:
-            should_fetch_yahoo = False
-            msg_yho = "Skipped (Capital Success)"
+        # Fetch P1
+        if primary_source and primary_source != "NONE":
+            df_primary, msg_primary = fetch_from_source(
+                primary_source, source_ticker.get(primary_source, ticker), target_date, logger
+            )
 
-        if should_fetch_yahoo:
-            df_yho, msg_yho = fetch_from_source("YAHOO", t_y, target_date, logger)
+        # Fetch P2 ONLY if P1 failed or returned empty
+        if df_primary.empty and fallback_source and fallback_source != "NONE":
+            df_fallback, msg_fallback = fetch_from_source(
+                fallback_source, source_ticker.get(fallback_source, ticker), target_date, logger
+            )
 
-        if df_cap.empty and df_yho.empty:
-            return ticker, pd.DataFrame(), f"❌ Both Failed ({msg_cap}/{msg_yho})", "FAILED", 0, 0, 0
+        if df_primary.empty and df_fallback.empty:
+            return ticker, pd.DataFrame(), f"❌ Both Failed ({msg_primary}/{msg_fallback})", "FAILED", 0, 0, 0
 
         # Localize/Convert to ET for splicing
-        for d in [df_cap, df_yho]:
+        for d in [df_primary, df_fallback]:
             if not d.empty:
                 if d['timestamp'].dt.tz is None:
                     d['timestamp'] = d['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
                 else:
                     d['timestamp'] = d['timestamp'].dt.tz_convert(US_EASTERN)
 
-        # 2. Slice and Dice
+        # 2. Slice and Dice — Primary source gets preference for ALL sessions
         c_pre = pd.DataFrame(); c_reg = pd.DataFrame(); c_post = pd.DataFrame()
 
-        # PRE from Capital (Best) -> Fallback to Yahoo
-        if not df_cap.empty:
-            c_pre = df_cap[df_cap['timestamp'].dt.time < t_930am].copy()
-        if c_pre.empty and not df_yho.empty:
-            c_pre = df_yho[df_yho['timestamp'].dt.time < t_930am].copy()
-        
-        # REG from Yahoo (Best Volume) -> Fallback to Capital
-        # BUT if P1=CAPITAL (ETFs), use Capital Reg too (since we skipped Yahoo)
-        if not df_yho.empty:
-            c_reg = df_yho[(df_yho['timestamp'].dt.time >= t_930am) & (df_yho['timestamp'].dt.time < t_4pm)].copy()
-        if c_reg.empty and not df_cap.empty:
-            c_reg = df_cap[(df_cap['timestamp'].dt.time >= t_930am) & (df_cap['timestamp'].dt.time < t_4pm)].copy()
+        # Use primary for each session, fallback only if primary is empty for that session
+        for df_first, df_second in [(df_primary, df_fallback)]:
+            if not df_first.empty:
+                c_pre = df_first[df_first['timestamp'].dt.time < t_930am].copy()
+            if c_pre.empty and not df_second.empty:
+                c_pre = df_second[df_second['timestamp'].dt.time < t_930am].copy()
 
-        # POST from Capital (Best) -> Fallback to Yahoo
-        if not df_cap.empty:
-            c_post = df_cap[df_cap['timestamp'].dt.time >= t_4pm].copy()
-        if c_post.empty and not df_yho.empty:
-            c_post = df_yho[df_yho['timestamp'].dt.time >= t_4pm].copy()
+            if not df_first.empty:
+                c_reg = df_first[(df_first['timestamp'].dt.time >= t_930am) & (df_first['timestamp'].dt.time < t_4pm)].copy()
+            if c_reg.empty and not df_second.empty:
+                c_reg = df_second[(df_second['timestamp'].dt.time >= t_930am) & (df_second['timestamp'].dt.time < t_4pm)].copy()
+
+            if not df_first.empty:
+                c_post = df_first[df_first['timestamp'].dt.time >= t_4pm].copy()
+            if c_post.empty and not df_second.empty:
+                c_post = df_second[df_second['timestamp'].dt.time >= t_4pm].copy()
 
         # Assign session labels
         if not c_pre.empty: c_pre['session'] = 'PRE' 
@@ -169,8 +169,12 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         final_stack['symbol'] = ticker # Map back to display name
         
         source_label = "HYBRID"
-        if df_cap.empty: source_label = "YAHOO-ONLY"
-        if df_yho.empty: source_label = "CAPITAL-ONLY"
+        if df_fallback.empty: 
+            # Only primary was used
+            source_label = f"{primary_source}-ONLY"
+        if df_primary.empty:
+            # Only fallback was used
+            source_label = f"{fallback_source}-ONLY"
 
         status_label = "✅ Spliced"
         if source_label == "CAPITAL-ONLY": status_label = "✅ Capital"
