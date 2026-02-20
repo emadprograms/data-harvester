@@ -85,7 +85,7 @@ if __name__ == "__main__":
             
             # Send to Discord
             # 6. Discord Notification
-            local_db_path = "local_market_data.db"
+            local_db_path = "market_data.db"
             total_rows = len(final_df)
             if send_discord_harvest_report(report_df, target_date, total_rows, file_path=local_db_path):
                 logger.log("📨 Discord notification sent.")

@@ -28,7 +28,7 @@ def get_db_connection():
 def get_local_db_connection():
     """Establishes a synchronous connection to the local SQLite database."""
     try:
-        local_db_path = "file:local_market_data.db"
+        local_db_path = "file:market_data.db"
         config = {"url": local_db_path}
         return create_client_sync(**config)
     except Exception as e:
