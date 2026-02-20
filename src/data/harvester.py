@@ -134,8 +134,8 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                 primary_source, source_ticker.get(primary_source, ticker), target_date, logger
             )
 
-        # Fetch P2 ONLY if P1 failed or returned empty
-        if df_primary.empty and fallback_source and fallback_source != "NONE":
+        # Fetch P2 unconditionally if it's not NONE
+        if fallback_source and fallback_source != "NONE":
             df_fallback, msg_fallback = fetch_from_source(
                 fallback_source, source_ticker.get(fallback_source, ticker), target_date, logger
             )
@@ -151,25 +151,44 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                 else:
                     d['timestamp'] = d['timestamp'].dt.tz_convert(US_EASTERN)
 
-        # 2. Slice and Dice — Primary source gets preference for ALL sessions
-        c_pre = pd.DataFrame(); c_reg = pd.DataFrame(); c_post = pd.DataFrame()
+        # 2. Slice and Dice — Capital preferred for Pre/Post, Yahoo for Regular
+        sources_data = {}
+        if not df_primary.empty:
+            sources_data[primary_source] = df_primary
+        if not df_fallback.empty:
+            sources_data[fallback_source] = df_fallback
 
-        # Use primary for each session, fallback only if primary is empty for that session
-        for df_first, df_second in [(df_primary, df_fallback)]:
-            if not df_first.empty:
-                c_pre = df_first[df_first['timestamp'].dt.time < t_930am].copy()
-            if c_pre.empty and not df_second.empty:
-                c_pre = df_second[df_second['timestamp'].dt.time < t_930am].copy()
+        def get_slice(preferred_source, start_time, end_time):
+            # Try preferred
+            if preferred_source in sources_data:
+                df = sources_data[preferred_source]
+                if start_time and end_time:
+                    s = df[(df['timestamp'].dt.time >= start_time) & (df['timestamp'].dt.time < end_time)].copy()
+                elif start_time:
+                    s = df[df['timestamp'].dt.time >= start_time].copy()
+                else:
+                    s = df[df['timestamp'].dt.time < end_time].copy()
+                if not s.empty:
+                    return s, preferred_source
+            
+            # Try other available sources
+            for src, df in sources_data.items():
+                if src != preferred_source:
+                    if start_time and end_time:
+                        s = df[(df['timestamp'].dt.time >= start_time) & (df['timestamp'].dt.time < end_time)].copy()
+                    elif start_time:
+                        s = df[df['timestamp'].dt.time >= start_time].copy()
+                    else:
+                        s = df[df['timestamp'].dt.time < end_time].copy()
+                    if not s.empty:
+                        return s, src
+            return pd.DataFrame(), None
 
-            if not df_first.empty:
-                c_reg = df_first[(df_first['timestamp'].dt.time >= t_930am) & (df_first['timestamp'].dt.time < t_4pm)].copy()
-            if c_reg.empty and not df_second.empty:
-                c_reg = df_second[(df_second['timestamp'].dt.time >= t_930am) & (df_second['timestamp'].dt.time < t_4pm)].copy()
+        c_pre, src_pre = get_slice("CAPITAL", None, t_930am)
+        c_reg, src_reg = get_slice("YAHOO", t_930am, t_4pm)
+        c_post, src_post = get_slice("CAPITAL", t_4pm, None)
 
-            if not df_first.empty:
-                c_post = df_first[df_first['timestamp'].dt.time >= t_4pm].copy()
-            if c_post.empty and not df_second.empty:
-                c_post = df_second[df_second['timestamp'].dt.time >= t_4pm].copy()
+        used_sources = set([s for s in [src_pre, src_reg, src_post] if s])
 
         # Assign session labels
         if not c_pre.empty: c_pre['session'] = 'PRE' 
@@ -181,12 +200,10 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         final_stack['symbol'] = ticker # Map back to display name
         
         source_label = "HYBRID"
-        if df_fallback.empty: 
-            # Only primary was used
-            source_label = f"{primary_source}-ONLY"
-        if df_primary.empty:
-            # Only fallback was used
-            source_label = f"{fallback_source}-ONLY"
+        if len(used_sources) == 1:
+            source_label = f"{list(used_sources)[0]}-ONLY"
+        elif not used_sources:
+            source_label = "FAILED"
 
         status_label = "✅ Spliced"
         if source_label == "CAPITAL-ONLY": status_label = "✅ Capital"
