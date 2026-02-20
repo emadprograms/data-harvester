@@ -14,24 +14,22 @@ def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG'
     
     df_norm = df.copy()
     
-    # Normalize column names to lowercase IMMEDIATELY to prevent duplicates later
-    df_norm.columns = [c.lower() for c in df_norm.columns]
-    # Drop any duplicate columns that might exist after lowercasing (e.g. 'Symbol' and 'symbol')
-    df_norm = df_norm.loc[:, ~df_norm.columns.duplicated()]
-    
-    # ... (Previous index handling code) ...
+    # Flatten MultiIndex FIRST (Yahoo sometimes returns these)
     if isinstance(df_norm.columns, pd.MultiIndex):
         df_norm.columns = df_norm.columns.get_level_values(0)
     
+    # Now safe to lowercase and deduplicate
+    df_norm.columns = [str(c).lower() for c in df_norm.columns]
+    df_norm = df_norm.loc[:, ~df_norm.columns.duplicated()]
+    
     df_norm.reset_index(inplace=True)
-    df_norm.rename(columns={
-        'Datetime': 'timestamp', 
-        'Open': 'open', 
-        'High': 'high', 
-        'Low': 'low', 
-        'Close': 'close', 
-        'Volume': 'volume'
-    }, inplace=True)
+    # Lowercase again to catch the index column name (e.g. 'Datetime' -> 'datetime')
+    df_norm.columns = [str(c).lower() for c in df_norm.columns]
+    df_norm = df_norm.loc[:, ~df_norm.columns.duplicated()]
+    
+    # Rename datetime -> timestamp (the only non-obvious mapping)
+    if 'datetime' in df_norm.columns:
+        df_norm.rename(columns={'datetime': 'timestamp'}, inplace=True)
     
     # --- VIX FIX: Handle Missing Volume for Indices ---
     if 'volume' not in df_norm.columns:
