@@ -56,12 +56,15 @@ if __name__ == "__main__":
         # Initialize database (will create or use downloaded file)
         init_db()
         
-        # Gap Filling / Repair from Turso
+        # Gap Filling / Repair from Turso (Self-Healing)
+        # This merges data from previous mid-day runs into the local buffer
         try:
             from tools.migrate_historical_turso import repair_local_from_turso, get_remote_client, get_local_client
+            logger.log("🔍 Checking for data gaps between Turso and local buffer...")
             remote = get_remote_client(mgr)
             local = get_local_client()
             repair_local_from_turso(remote, local, logger)
+            logger.log("🔹 Local foundation verified/repaired from Turso.")
         except Exception as e:
             logger.log(f"⚠️ Gap repair skipped: {e}")
 
