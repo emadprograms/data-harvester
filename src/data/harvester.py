@@ -189,25 +189,34 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         future_to_ticker = {executor.submit(harvest_single_ticker, t): t for t in tickers_to_harvest}
         
         for future in as_completed(future_to_ticker):
-            ticker, df, status, source, pre, reg, post = future.result()
-            completed_count += 1
-            
-            if progress_callback:
-                progress_callback(None, "PROG", (completed_count, total_tickers, f"Processed {ticker}"))
-            
-            update_ui(ticker, "Status", status)
-            if not df.empty:
-                update_ui(ticker, "Pre-Market", f"✅ {source} ({pre})")
-                update_ui(ticker, "Regular Session", f"✅ {source} ({reg})")
-                update_ui(ticker, "Post-Market", f"✅ {source} ({post})")
-                update_ui(ticker, "Total Rows", len(df))
-                all_data.append(df)
-            
-            report_cards.append({
-                "Ticker": ticker, "Mode": source, 
-                "Pre": pre, "Reg": reg, "Post": post, 
-                "Total": len(df), "Status": status
-            })
+            try:
+                ticker, df, status, source, pre, reg, post = future.result()
+                completed_count += 1
+                
+                if progress_callback:
+                    progress_callback(None, "PROG", (completed_count, total_tickers, f"Processed {ticker}"))
+                
+                update_ui(ticker, "Status", status)
+                if not df.empty:
+                    update_ui(ticker, "Pre-Market", f"✅ {source} ({pre})")
+                    update_ui(ticker, "Regular Session", f"✅ {source} ({reg})")
+                    update_ui(ticker, "Post-Market", f"✅ {source} ({post})")
+                    update_ui(ticker, "Total Rows", len(df))
+                    all_data.append(df)
+                
+                report_cards.append({
+                    "Ticker": ticker, "Mode": source, 
+                    "Pre": pre, "Reg": reg, "Post": post, 
+                    "Total": len(df), "Status": status
+                })
+            except Exception as e:
+                ticker_err = future_to_ticker[future]
+                logger.log(f"   ❌ Thread Error for {ticker_err}: {e}")
+                report_cards.append({
+                    "Ticker": ticker_err, "Mode": "FAILED", 
+                    "Pre": 0, "Reg": 0, "Post": 0, 
+                    "Total": 0, "Status": f"❌ Error: {str(e)[:30]}"
+                })
 
     if not all_data:
         logger.log("⚠️ No data was collected for any ticker in this run.")
