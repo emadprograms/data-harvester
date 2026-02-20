@@ -1,10 +1,10 @@
 name: Daily Harvest
 
 on:
-  schedule:
-    # Run at 02:00 UTC (5:00 AM Bahrain) on Tuesday-Saturday
-    # This captures the full market session for the day that just ended (Mon-Fri).
-    - cron: '0 2 * * 2-6'
+    # Run twice daily at 4:05 AM and 4:05 PM Bahrain (AST) time.
+    # This ensures we stay within Capital.com's 16-hour 1-minute data window.
+    - cron: '05 01 * * *'  # 4:05 AM Bahrain (Final Session Harvest)
+    - cron: '05 13 * * *'  # 4:05 PM Bahrain (Pre-Market Session Harvest)
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
