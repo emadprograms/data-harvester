@@ -25,5 +25,5 @@ def generate_refresh_token(client_secrets_path):
     print("\nCopy these values into Infisical!")
 
 if __name__ == "__main__":
-    path = input("Enter path to your client_secret_xxxx.json file: ").strip()
+    path = input("Enter path to your client_secret_xxxx.json file: ").strip().strip("'").strip('"')
     generate_refresh_token(path)

@@ -94,9 +94,9 @@ if __name__ == "__main__":
 
             # 7. Google Drive Sync (OAuth)
             from src.utils.gdrive import upload_to_gdrive_oauth
-            client_id = mgr.get_secret("GDRIVE_CLIENT_ID")
-            client_secret = mgr.get_secret("GDRIVE_CLIENT_SECRET")
-            refresh_token = mgr.get_secret("GDRIVE_REFRESH_TOKEN")
+            client_id = mgr.get_secret("emadprograms_market_data_gdrive_client_id")
+            client_secret = mgr.get_secret("emadprograms_market_data_gdrive_client_secret")
+            refresh_token = mgr.get_secret("emadprograms_market_data_gdrive_refresh_token")
             gdrive_folder = mgr.get_secret("gdrive_market_data_folder_id")
             
             if all([client_id, client_secret, refresh_token, gdrive_folder]):

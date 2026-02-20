@@ -12,14 +12,14 @@ Since you are using a personal Google account, we need to use **OAuth 2.0** so t
 5.  Go to **OAuth consent screen**:
     *   Choose **External**.
     *   Add your email and basic info.
-    *   **Crucial**: Add your own email as a **Test User**.
+    * 6.  **Crucial**: Add your own email (`emadprograms@gmail.com`) as a **Test User** in the "Test users" section.
     *   Publish the app (or keep it in testing, it doesn't matter since you are the test user).
-6.  Go to **Credentials**:
+7.  Go to **Credentials**:
     *   Click **+ CREATE CREDENTIALS** > **OAuth client ID**.
     *   Application type: **Desktop app**.
     *   Name: `Harvester CLI`.
     *   Click **Create**.
-7.  Click the **Download JSON** icon for your new Client ID. Save it to your computer.
+8.  Click the **Download JSON** icon for your new Client ID. Save it to your computer.
 
 ---
 
