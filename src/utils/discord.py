@@ -106,6 +106,10 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
         if integrity_status:
             msg += f"\n\n🔒 **Integrity** | {integrity_status}"
 
+        # Truncate to avoid 2000-character Discord limit
+        if len(msg) > 1950:
+            msg = msg[:1950] + "\n... (truncated)"
+
         # Post the single combined message
         all_ok = _post(webhook_url, msg, file_path)
 

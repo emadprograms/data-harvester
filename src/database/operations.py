@@ -211,9 +211,6 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, turso_client=None, local
         if own_local and local_client:
             local_client.close()
 
-# Keep old name for backward compatibility if needed, but redirects to new dual storage
-def save_data_to_turso(df: pd.DataFrame, logger=None):
-    return save_data_to_storage(df, logger)
 
 
 def fetch_data_health_matrix(tickers: list, start_date, end_date, session_filter="Total"):
@@ -279,3 +276,6 @@ def fetch_data_health_matrix(tickers: list, start_date, end_date, session_filter
     except Exception as e:
         print(f"❌ Error fetching health matrix: {e}")
         return pd.DataFrame()
+    finally:
+        if client:
+            client.close()

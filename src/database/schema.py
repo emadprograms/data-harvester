@@ -63,16 +63,7 @@ def _init_client(client):
         try:
             res_new = client.execute("SELECT count(*) FROM market_symbols")
             if res_new.rows and res_new.rows[0][0] == 0:
-                # Table is empty, try to migrate from old schema or seed defaults
-                try:
-                    res_old = client.execute("SELECT count(*) FROM symbol_map")
-                    if res_old.rows and res_old.rows[0][0] > 0:
-                        _migrate_from_old_schema(client)
-                    else:
-                        _seed_default_symbols(client)
-                except Exception:
-                    # symbol_map likely doesn't exist
-                    _seed_default_symbols(client)
+                _seed_default_symbols(client)
         except Exception as e:
             print(f"⚠️ Migration/Seeding warning: {e}")
 
@@ -95,39 +86,6 @@ def _init_client(client):
         print(f"❌ DB Init Error: {e}")
 
 
-def _migrate_from_old_schema(client):
-    """Migrates data from the old symbol_map table to market_symbols."""
-    print("📦 Migrating inventory to new schema...")
-    old_rows = client.execute("SELECT user_ticker, capital_epic, source_strategy FROM symbol_map").rows
-    for row in old_rows:
-        user_ticker = row[0]
-        cap_epic = row[1]
-        strategy = row[2]
-        
-        p1 = "YAHOO"
-        p2 = "CAPITAL"
-        y_ticker = user_ticker
-        c_ticker = cap_epic
-        b_ticker = None
-        
-        if user_ticker.endswith("USDT"):
-             p1 = "BINANCE"
-             p2 = "YAHOO"
-             b_ticker = user_ticker
-        elif user_ticker.endswith("=F"):
-             p1 = "YAHOO"
-             p2 = "CAPITAL"
-             
-        if strategy == "CAPITAL_ONLY":
-            p1 = "CAPITAL"
-            p2 = "NONE"
-
-        client.execute(
-            """INSERT INTO market_symbols 
-               (display_name, yahoo_ticker, capital_epic, binance_ticker, priority_1, priority_2) 
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            [user_ticker, y_ticker, c_ticker, b_ticker, p1, p2]
-        )
 
 
 def _seed_default_symbols(client):

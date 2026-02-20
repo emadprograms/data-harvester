@@ -51,30 +51,3 @@ def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG'
     return df_norm[SCHEMA_COLS].copy()
 
 
-def normalize_capital_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG') -> pd.DataFrame:
-    """Normalizes Capital.com data to target schema."""
-    if df.empty:
-        return pd.DataFrame(columns=SCHEMA_COLS)
-    
-    df_norm = df.copy()
-    
-    # Normalize column names to lowercase IMMEDIATELY
-    df_norm.columns = [c.lower() for c in df_norm.columns]
-    df_norm = df_norm.loc[:, ~df_norm.columns.duplicated()]
-
-    df_norm['symbol'] = symbol
-    df_norm['session'] = session_label
-    
-    # Handle missing volume
-    if 'volume' not in df_norm.columns:
-        df_norm['volume'] = 0.0
-    else:
-        df_norm['volume'] = df_norm['volume'].fillna(0.0)
-    
-    # Ensure timestamp is UTC
-    if df_norm['timestamp'].dt.tz is None:
-        df_norm['timestamp'] = df_norm['timestamp'].dt.tz_localize('UTC')
-    else:
-        df_norm['timestamp'] = df_norm['timestamp'].dt.tz_convert('UTC')
-        
-    return df_norm[SCHEMA_COLS]

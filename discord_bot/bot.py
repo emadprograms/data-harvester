@@ -2,7 +2,6 @@ import os
 import discord
 from discord.ext import commands
 import requests
-import json
 from dotenv import load_dotenv
 
 # Load local environment variables if present

@@ -121,13 +121,17 @@ def perform_migration(remote, local, batch_size=BATCH_SIZE, logger=None):
         if not rows:
             break
 
-        # Bulk insert
-        for row in rows:
+        # Bulk insert in chunks to avoid SQLite parameter limits
+        CHUNK_SIZE = 100
+        for i in range(0, len(rows), CHUNK_SIZE):
+            chunk = rows[i:i+CHUNK_SIZE]
+            placeholders = ", ".join(["(?, ?, ?, ?, ?, ?, ?, ?)"] * len(chunk))
+            flat_values = [item for row in chunk for item in row]
             local.execute(
-                "INSERT OR IGNORE INTO market_data "
-                "(timestamp, symbol, open, high, low, close, volume, session) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                list(row),
+                f"INSERT OR IGNORE INTO market_data "
+                f"(timestamp, symbol, open, high, low, close, volume, session) "
+                f"VALUES {placeholders}",
+                flat_values
             )
 
         migrated += len(rows)
@@ -212,7 +216,7 @@ def repair_local_from_turso(remote, local, logger=None, force_exhaustive=False):
                   "VALUES (?,?,?,?,?,?,?,?)", list(row)
                 )
                 batch_added += res_insert.rows_affected
-            except: pass
+            except Exception: pass
             
         total_added += batch_added
         offset += current_limit
