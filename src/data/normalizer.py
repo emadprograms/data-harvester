@@ -11,7 +11,13 @@ def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG'
     """Normalizes Yahoo Finance data to target schema."""
     if df.empty:
         return pd.DataFrame(columns=SCHEMA_COLS)
+    
     df_norm = df.copy()
+    
+    # Normalize column names to lowercase IMMEDIATELY to prevent duplicates later
+    df_norm.columns = [c.lower() for c in df_norm.columns]
+    # Drop any duplicate columns that might exist after lowercasing (e.g. 'Symbol' and 'symbol')
+    df_norm = df_norm.loc[:, ~df_norm.columns.duplicated()]
     
     # ... (Previous index handling code) ...
     if isinstance(df_norm.columns, pd.MultiIndex):
@@ -30,8 +36,8 @@ def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG'
     # --- VIX FIX: Handle Missing Volume for Indices ---
     if 'volume' not in df_norm.columns:
         df_norm['volume'] = 0.0
-    else:
-        df_norm['volume'] = df_norm['volume'].fillna(0)
+    
+    df_norm['volume'] = df_norm['volume'].fillna(0)
     # --------------------------------------------------
 
     # ... (Rest of standard normalization) ...
@@ -42,8 +48,9 @@ def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG'
         
     df_norm['symbol'] = symbol
     df_norm['session'] = session_label
-    df_norm.columns = [c.lower() for c in df_norm.columns]
-    return df_norm[SCHEMA_COLS]
+    
+    # Final safety check: ensure exactly SCHEMA_COLS in correct order
+    return df_norm[SCHEMA_COLS].copy()
 
 
 def normalize_capital_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG') -> pd.DataFrame:
@@ -52,11 +59,13 @@ def normalize_capital_df(df: pd.DataFrame, symbol: str, session_label: str = 'RE
         return pd.DataFrame(columns=SCHEMA_COLS)
     
     df_norm = df.copy()
+    
+    # Normalize column names to lowercase IMMEDIATELY
+    df_norm.columns = [c.lower() for c in df_norm.columns]
+    df_norm = df_norm.loc[:, ~df_norm.columns.duplicated()]
+
     df_norm['symbol'] = symbol
     df_norm['session'] = session_label
-    
-    # Ensure columns are lowercase
-    df_norm.columns = [c.lower() for c in df_norm.columns]
     
     # Handle missing volume
     if 'volume' not in df_norm.columns:

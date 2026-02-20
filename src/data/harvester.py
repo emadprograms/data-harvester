@@ -226,10 +226,20 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
     report_df = pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
 
     try:
-        # Reset index on each DF to prevent "Reindexing only valid with uniquely valued Index objects"
-        cleaned = [df.reset_index(drop=True) for df in all_data]
+        # Aggressive cleanup to prevent "Reindexing only valid with uniquely valued Index objects"
+        cleaned = []
+        for df in all_data:
+            if not df.empty:
+                # 1. Force unique columns (keep first)
+                df = df.loc[:, ~df.columns.duplicated()]
+                # 2. Reset index to ensure no index collisions
+                df = df.reset_index(drop=True)
+                cleaned.append(df)
+        
         if cleaned:
             final_df = pd.concat(cleaned, ignore_index=True)
+            # Final sanity check: ensure no duplicate columns in merged result
+            final_df = final_df.loc[:, ~final_df.columns.duplicated()]
     except Exception as e:
         logger.log(f"❌ Error during final data merging: {e}")
 
