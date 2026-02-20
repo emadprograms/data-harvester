@@ -1,9 +1,59 @@
 import os
+import io
 import json
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+
+def _get_gdrive_service(client_id, client_secret, refresh_token):
+    """Internal helper to get the GDrive service with refreshed tokens."""
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        client_id=client_id,
+        client_secret=client_secret,
+        token_uri="https://oauth2.googleapis.com/token"
+    )
+    if not creds.valid:
+        creds.refresh(Request())
+    return build('drive', 'v3', credentials=creds)
+
+def download_from_gdrive_oauth(file_name: str, local_path: str, folder_id: str, client_id: str, client_secret: str, refresh_token: str, logger=None):
+    """
+    Downloads a specific file from GDrive to a local path.
+    Returns True if downloaded, False if not found or error.
+    """
+    if not all([client_id, client_secret, refresh_token]):
+        return False
+
+    try:
+        service = _get_gdrive_service(client_id, client_secret, refresh_token)
+        
+        # 1. Search for existing file
+        query = f"name = '{file_name}' and '{folder_id}' in parents and trashed = false"
+        results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        items = results.get('files', [])
+
+        if not items:
+            if logger: logger.log(f"ℹ️ File '{file_name}' not found on GDrive. Starting fresh.")
+            return False
+
+        file_id = items[0]['id']
+        request = service.files().get_media(fileId=file_id)
+        
+        with io.FileIO(local_path, 'wb') as fh:
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+        
+        if logger: logger.log(f"📥 Downloaded existing '{file_name}' from GDrive.")
+        return True
+
+    except Exception as e:
+        if logger: logger.log(f"⚠️ GDrive Download skipped: {e}")
+        return False
 
 def upload_to_gdrive_oauth(file_path: str, folder_id: str, client_id: str, client_secret: str, refresh_token: str, logger=None):
     """
@@ -14,21 +64,7 @@ def upload_to_gdrive_oauth(file_path: str, folder_id: str, client_id: str, clien
         return False
 
     try:
-        # Create credentials object
-        creds = Credentials(
-            token=None,
-            refresh_token=refresh_token,
-            client_id=client_id,
-            client_secret=client_secret,
-            token_uri="https://oauth2.googleapis.com/token"
-        )
-
-        # Refresh the token if needed
-        if not creds.valid:
-            creds.refresh(Request())
-
-        service = build('drive', 'v3', credentials=creds)
-
+        service = _get_gdrive_service(client_id, client_secret, refresh_token)
         file_name = os.path.basename(file_path)
 
         # 1. Search for existing file

@@ -22,24 +22,71 @@ from src.utils.logger import CLILogger
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     try:
-        # Initialize database
+        from src.infisical_manager import InfisicalManager
+        mgr = InfisicalManager()
+        
+        # 0. Set up Session Logging
+        from src.utils.logger import CLILogger
+        log_filename = f"logs/harvest_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.log"
+        logger = CLILogger(log_path=log_filename)
+        
+        # 0. Pre-Harvest: Download Master DB from GDrive
+        from src.utils.gdrive import upload_to_gdrive_oauth, download_from_gdrive_oauth
+        client_id = mgr.get_secret("emadprograms_market_data_gdrive_client_id")
+        client_secret = mgr.get_secret("emadprograms_market_data_gdrive_client_secret")
+        refresh_token = mgr.get_secret("emadprograms_market_data_gdrive_refresh_token")
+        gdrive_folder = mgr.get_secret("emadprograms_market_data_gdrive_folder_id")
+        local_db_path = "market_data.db"
+        
+        # Smart Download: Only download if local is missing or looks "stale" (heuristic)
+        should_download = not os.path.exists(local_db_path)
+        if not should_download:
+            # Check if local file is very small (likely truncated) or old
+            if os.path.getsize(local_db_path) < 1000: # Less than 1KB
+                should_download = True
+        
+        if all([client_id, client_secret, refresh_token, gdrive_folder]):
+            if should_download:
+                download_from_gdrive_oauth(local_db_path, local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger)
+            else:
+                logger.log("ℹ️ Local master DB exists. Skipping GDrive download to prevent staleness.")
+        else:
+            missing_keys = []
+            if not client_id: missing_keys.append("client_id")
+            if not client_secret: missing_keys.append("client_secret")
+            if not refresh_token: missing_keys.append("refresh_token")
+            if not gdrive_folder: missing_keys.append("folder_id")
+            logger.log(f"⚠️ GDrive download skipped (Missing keys: {', '.join(missing_keys)})")
+
+        # Initialize database (will create or use downloaded file)
         init_db()
         
+        # Gap Filling / Repair from Turso
+        try:
+            from tools.migrate_historical_turso import repair_local_from_turso, get_remote_client, get_local_client
+            remote = get_remote_client(mgr)
+            local = get_local_client()
+            repair_local_from_turso(remote, local, logger)
+        except Exception as e:
+            logger.log(f"⚠️ Gap repair skipped: {e}")
+
         # Setup parameters
-        # Schedule logic: Run at 6 AM Bahrain (10 PM ET / 11 PM ET)
-        # At this time, 'today' ET is the market session that just concluded.
+        # Schedule logic: The trading day officially "rolls over" at 4 AM ET when pre-market opens.
+        # If we run between Midnight and 4 AM ET, we want to fetch the previous day's finalized data.
         now_et = datetime.now(US_EASTERN)
-        target_date = now_et.date()
+        if now_et.hour < 4:
+            target_date = (now_et - timedelta(days=1)).date()
+            logger.log("🕒 Time is before 4 AM ET. Targeting previous trading day.")
+        else:
+            target_date = now_et.date()
         
         # Weekend Check: If it's Saturday/Sunday morning ET, we don't expect new data usually, 
         # but the workflow is scheduled Tue-Sat Bahrain (Mon-Fri ET).
-        print(f"🌍 Running Harvest at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
-        print(f"🗽 ET Time: {now_et.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"🎯 Target Market Date: {target_date}")
+        logger.log(f"🌍 Running Harvest at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
+        logger.log(f"🗽 ET Time: {now_et.strftime('%Y-%m-%d %H:%M:%S')} (Hour: {now_et.hour})")
+        logger.log(f"🎯 Target Market Date: {target_date}")
 
         # 2. Get Discord Webhook from Infisical
-        from src.infisical_manager import InfisicalManager
-        mgr = InfisicalManager()
         discord_webhook = mgr.get_secret("discord_data_harvest_cli_webhook_url")
         if discord_webhook:
             os.environ["DISCORD_WEBHOOK_URL"] = discord_webhook
@@ -48,9 +95,6 @@ if __name__ == "__main__":
         symbol_map = get_symbol_map_from_db()
         inventory_list = list(symbol_map.keys())
         
-        # Create CLI logger
-        logger = CLILogger()
-
         if not inventory_list:
             logger.log("⚠️ Symbol inventory is empty. Nothing to harvest.")
             # FORCE EXIT:
@@ -79,26 +123,23 @@ if __name__ == "__main__":
         
         # Print summary and send Discord notification
         if not report_df.empty:
-            print("\n📊 Harvest Summary:")
+            # Print to console/log
+            logger.log("\n📊 Harvest Summary:")
             summary_str = report_df.to_string(index=False)
             print(summary_str)
+            if logger.log_path:
+                with open(logger.log_path, 'a', encoding='utf-8') as f:
+                    f.write(f"\nSummary:\n{summary_str}\n")
             
             # Send to Discord
             # 6. Discord Notification
-            local_db_path = "market_data.db"
             total_rows = len(final_df)
-            if send_discord_harvest_report(report_df, target_date, total_rows, file_path=local_db_path):
-                logger.log("📨 Discord notification sent.")
+            if send_discord_harvest_report(report_df, target_date, total_rows, file_path=log_filename):
+                logger.log("📨 Discord notification sent with logs.")
             else:
                 logger.log("⚠️ Discord notification skipped or failed.")
 
             # 7. Google Drive Sync (OAuth)
-            from src.utils.gdrive import upload_to_gdrive_oauth
-            client_id = mgr.get_secret("emadprograms_market_data_gdrive_client_id")
-            client_secret = mgr.get_secret("emadprograms_market_data_gdrive_client_secret")
-            refresh_token = mgr.get_secret("emadprograms_market_data_gdrive_refresh_token")
-            gdrive_folder = mgr.get_secret("gdrive_market_data_folder_id")
-            
             if all([client_id, client_secret, refresh_token, gdrive_folder]):
                 upload_to_gdrive_oauth(local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger)
             else:
