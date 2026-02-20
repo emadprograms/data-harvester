@@ -1,6 +1,7 @@
 name: Daily Harvest
 
 on:
+  schedule:
     # Run twice daily at 4:05 AM and 4:05 PM Bahrain (AST) time.
     # This ensures we stay within Capital.com's 16-hour 1-minute data window.
     - cron: '05 01 * * *'  # 4:05 AM Bahrain (Final Session Harvest)
