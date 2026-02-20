@@ -53,8 +53,8 @@ class TestBinanceFetch(unittest.TestCase):
         logger = MockLogger()
         df = fetch_binance_daily("INVALIDXYZ", date(2025, 1, 15), logger)
         self.assertTrue(df.empty)
-        # Should have logged the error
-        self.assertTrue(any("Binance Error" in m for m in logger.messages))
+        # Should have logged the comprehensive error report
+        self.assertTrue(any("All Binance domains failed" in m for m in logger.messages))
 
     @patch("src.api.binance.requests.get")
     def test_geo_block_tries_next_domain(self, mock_get):
@@ -92,7 +92,7 @@ class TestBinanceFetch(unittest.TestCase):
         logger = MockLogger()
         df = fetch_binance_daily("BTCUSDT", date(2025, 1, 15), logger)
         self.assertTrue(df.empty)
-        self.assertTrue(any("Exception" in m for m in logger.messages))
+        self.assertTrue(any("All Binance domains failed" in m for m in logger.messages))
 
     @patch("src.api.binance.requests.get")
     def test_logger_is_optional(self, mock_get):
