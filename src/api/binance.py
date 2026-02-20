@@ -42,10 +42,7 @@ def fetch_binance_daily(ticker: str, target_date_obj, logger=None) -> pd.DataFra
                     "limit": 1000
                 }
                 
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-                }
-                response = requests.get(url, params=params, headers=headers, timeout=5)
+                response = requests.get(url, params=params, timeout=5)
                 
                 # Handle Geo-Blocking / IP Bans
                 if response.status_code in [403, 451]:
