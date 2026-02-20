@@ -88,54 +88,17 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
             _post(webhook_url, header + "No data harvested.")
             return True
 
-        # Build compact table lines
-        lines = []
-        for _, row in report_df.sort_values("Ticker").iterrows():
-            ticker = row["Ticker"]
-            total = row["Total"]
-            status = row.get("Status", "")
-            is_bad = total == 0 or "❌" in status or "⚠️" in status
-            marker = "⚠️" if is_bad else "  "
-            lines.append(f"{marker} {ticker:<10} {total:>5}")
+        # Simplified message without the detailed table
+        msg = header
+        msg += f"📊 **Total Rows Harvested**: `{total_rows:,}`\n"
+        msg += "📄 *Full details are available in the attached log.*"
 
-        footer = f"{'─'*20}\n   {'TOTAL':<10} {total_rows:>5}"
+        # Post the message with attachment
+        all_ok = _post(webhook_url, msg, file_path)
 
-        # Split into chunks
-        MAX_CONTENT = 1850
-        chunks = []
-        current_lines = []
-        current_len = 0
-
-        for line in lines:
-            line_len = len(line) + 1
-            if current_len + line_len > MAX_CONTENT and current_lines:
-                chunks.append(current_lines)
-                current_lines = []
-                current_len = 0
-            current_lines.append(line)
-            current_len += line_len
-
-        if current_lines:
-            chunks.append(current_lines)
-
-        all_ok = True
-        for i, chunk_lines in enumerate(chunks):
-            msg = ""
-            if i == 0:
-                msg += header
-
-            table = "\n".join(chunk_lines)
-            if i == len(chunks) - 1:
-                table += f"\n{footer}"
-
-            msg += f"```\n{table}\n```"
-
-            # On the LAST chunk, attach the file if it exists
-            attachment = None
-            if i == len(chunks) - 1 and file_path and os.path.exists(file_path):
-                attachment = file_path
-
-            if not _post(webhook_url, msg, attachment):
+        # Send health alerts as a follow-up message
+        if health_alerts:
+            if not _post(webhook_url, health_alerts):
                 all_ok = False
             time.sleep(0.5)
 
