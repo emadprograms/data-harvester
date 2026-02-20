@@ -20,7 +20,12 @@ from src.utils.logger import CLILogger
 # -----------------------------------------------------------------------------
 # Main Execution
 # -----------------------------------------------------------------------------
-if __name__ == "__main__":
+
+def main():
+    logger = None
+    turso_client = None
+    local_client = None
+    
     try:
         from src.infisical_manager import InfisicalManager
         mgr = InfisicalManager()
@@ -53,20 +58,30 @@ if __name__ == "__main__":
             if not gdrive_folder: missing_keys.append("folder_id")
             logger.log(f"⚠️ GDrive download skipped (Missing keys: {', '.join(missing_keys)})")
 
-        # Initialize database (will create or use downloaded file)
-        init_db()
+        # 0. Initialize Database Clients (Managed centrally for clean shutdown)
+        from src.database.connection import get_db_connection, get_local_db_connection
+        turso_client = get_db_connection()
+        local_client = get_local_db_connection()
+
+        if not turso_client:
+            logger.log("❌ CRITICAL: Could not connect to Turso. Exiting.")
+            return
+
+        # Initialize database schema (using our managed clients)
+        init_db(turso_client)
+        if local_client:
+            init_db(local_client)
         
         # Gap Filling / Repair from Turso (Self-Healing)
         # This merges data from previous mid-day runs into the local buffer
-        try:
-            from tools.migrate_historical_turso import repair_local_from_turso, get_remote_client, get_local_client
-            logger.log("🔍 Checking for data gaps between Turso and local buffer...")
-            remote = get_remote_client(mgr)
-            local = get_local_client()
-            repair_local_from_turso(remote, local, logger)
-            logger.log("🔹 Local foundation verified/repaired from Turso.")
-        except Exception as e:
-            logger.log(f"⚠️ Gap repair skipped: {e}")
+        if local_client:
+            try:
+                from tools.migrate_historical_turso import repair_local_from_turso
+                logger.log("🔍 Checking for data gaps between Turso and local buffer...")
+                repair_local_from_turso(turso_client, local_client, logger)
+                logger.log("🔹 Local foundation verified/repaired from Turso.")
+            except Exception as e:
+                logger.log(f"⚠️ Gap repair skipped: {e}")
 
         # Setup parameters
         # Schedule logic: The trading day officially "rolls over" at 4 AM ET when pre-market opens.
@@ -90,14 +105,12 @@ if __name__ == "__main__":
             os.environ["DISCORD_WEBHOOK_URL"] = discord_webhook
 
         # 3. Fetch Inventory
-        symbol_map = get_symbol_map_from_db()
+        symbol_map = get_symbol_map_from_db(turso_client)
         inventory_list = list(symbol_map.keys())
         
         if not inventory_list:
             logger.log("⚠️ Symbol inventory is empty. Nothing to harvest.")
-            # FORCE EXIT:
-            sys.stdout.flush() 
-            os._exit(0)
+            return
             
         # Harvest full day for all symbols
         logger.log(f"Starting harvest for {len(inventory_list)} symbols on {target_date}")
@@ -113,17 +126,14 @@ if __name__ == "__main__":
         # Save data if successful
         integrity_msg = ""
         if not final_df.empty:
-            if save_data_to_storage(final_df, logger):
+            if save_data_to_storage(final_df, logger, turso_client=turso_client, local_client=local_client):
                 logger.log(f"✅ Data successfully harvested and saved to dual storage. Total rows: {len(final_df)}")
                 
                 # Integrity Check: Compare today's fingerprint between Turso and Local
                 try:
                     from src.utils.integrity import verify_sync
-                    from src.database.connection import get_db_connection, get_local_db_connection
-                    turso_c = get_db_connection()
-                    local_c = get_local_db_connection()
-                    if turso_c and local_c:
-                        _, integrity_msg = verify_sync(turso_c, local_c, str(target_date), logger)
+                    if turso_client and local_client:
+                        _, integrity_msg = verify_sync(turso_client, local_client, str(target_date), logger)
                 except Exception as e:
                     logger.log(f"⚠️ Integrity check skipped: {e}")
             else:
@@ -164,7 +174,15 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Unexpected error: {e}")
     finally:
-        # Cleanup: Delete the local DB buffer before exit (Ephemeral architecture)
+        # 1. Close Database Connections
+        if turso_client:
+            try: turso_client.close()
+            except: pass
+        if local_client:
+            try: local_client.close()
+            except: pass
+
+        # 2. Cleanup: Delete the local DB buffer before exit (Ephemeral architecture)
         local_db_path = "market_data.db"
         if os.path.exists(local_db_path):
             try:
@@ -177,8 +195,8 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"⚠️ Cleanup warning: {e}")
 
-        # The Infisical client spins up background threads (aiohttp) that can
-        # hang the script indefinitely. os._exit(0) kills them instantly.
         print("\n👋 Harvest complete. Exiting...")
         sys.stdout.flush() # Ensure all output is printed
-        os._exit(0)
+
+if __name__ == "__main__":
+    main()

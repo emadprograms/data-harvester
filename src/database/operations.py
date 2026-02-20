@@ -12,9 +12,13 @@ from src.config import UTC, US_EASTERN
 
 # --- Basic CRUD for Symbol Mapping ---
 
-def get_symbol_map_from_db():
+def get_symbol_map_from_db(client=None):
     """Fetches the complete symbol inventory from the new table."""
-    client = get_db_connection()
+    own_client = False
+    if not client:
+        client = get_db_connection()
+        own_client = True
+        
     if not client:
         return {}
     try:
@@ -39,10 +43,17 @@ def get_symbol_map_from_db():
         return inventory
     except Exception:
         return {}
+    finally:
+        if own_client and client:
+            client.close()
 
-def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3=None):
+def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3=None, client=None):
     """Adds or updates a symbol's rules."""
-    client = get_db_connection()
+    own_client = False
+    if not client:
+        client = get_db_connection()
+        own_client = True
+        
     if not client:
         return False
     try:
@@ -63,10 +74,17 @@ def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3
     except Exception as e:
         print(f"❌ Error saving symbol: {e}")
         return False
+    finally:
+        if own_client and client:
+            client.close()
 
-def delete_symbol_mapping(ticker):
+def delete_symbol_mapping(ticker, client=None):
     """Deletes a symbol."""
-    client = get_db_connection()
+    own_client = False
+    if not client:
+        client = get_db_connection()
+        own_client = True
+        
     if not client:
         return False
     try:
@@ -75,6 +93,9 @@ def delete_symbol_mapping(ticker):
     except Exception as e:
         print(f"❌ Error deleting symbol: {e}")
         return False
+    finally:
+        if own_client and client:
+            client.close()
 
 # --- MARKET DATA OPERATIONS ---
 
@@ -102,13 +123,16 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
         return False
 
 
-def save_data_to_storage(df: pd.DataFrame, logger=None):
+def save_data_to_storage(df: pd.DataFrame, logger=None, turso_client=None, local_client=None):
     """
     Saves market data to BOTH Turso (remote) and Local SQLite.
     CRITICAL: Normalizes timestamps to UTC strings to ensure uniqueness.
     """
     if df.empty:
         return False
+
+    own_turso = False
+    own_local = False
 
     try:
         # 1. Copy and Normalize Timestamp
@@ -142,13 +166,17 @@ def save_data_to_storage(df: pd.DataFrame, logger=None):
 
         # 5. Save to Turso
         turso_success = False
-        turso_client = get_db_connection()
+        if not turso_client:
+            turso_client = get_db_connection()
+            own_turso = True
         if turso_client:
             turso_success = _save_to_client(turso_client, rows_to_insert, logger, "Turso")
         
         # 6. Save to Local
         local_success = False
-        local_client = get_local_db_connection()
+        if not local_client:
+            local_client = get_local_db_connection()
+            own_local = True
         if local_client:
             local_success = _save_to_client(local_client, rows_to_insert, logger, "Local")
 
@@ -159,6 +187,11 @@ def save_data_to_storage(df: pd.DataFrame, logger=None):
         if logger: logger.log(f"   ❌ {err}")
         else: print(f"❌ {err}")
         return False
+    finally:
+        if own_turso and turso_client:
+            turso_client.close()
+        if own_local and local_client:
+            local_client.close()
 
 # Keep old name for backward compatibility if needed, but redirects to new dual storage
 def save_data_to_turso(df: pd.DataFrame, logger=None):

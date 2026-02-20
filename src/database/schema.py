@@ -13,12 +13,20 @@ def init_db(client=None):
     else:
         # Initialize both Turso and Local
         turso_client = get_db_connection()
-        if turso_client:
-            _init_client(turso_client)
+        try:
+            if turso_client:
+                _init_client(turso_client)
+        finally:
+            if turso_client:
+                turso_client.close()
         
         local_client = get_local_db_connection()
-        if local_client:
-            _init_client(local_client)
+        try:
+            if local_client:
+                _init_client(local_client)
+        finally:
+            if local_client:
+                local_client.close()
 
 
 def _init_client(client):
