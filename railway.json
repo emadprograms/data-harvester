@@ -1,1 +1,1 @@
-{ "build": { "builder": "NIXPACKS", "buildCommand": "pip install -r discord_bot/requirements.txt" }, "deploy": { "startCommand": "python discord_bot/bot.py", "rootDirectory": "discord_bot" } }
+{ "build": { "builder": "NIXPACKS", "buildCommand": "pip install -r requirements.txt" }, "deploy": { "startCommand": "python bot.py", "rootDirectory": "discord_bot" } }
