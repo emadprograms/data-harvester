@@ -223,13 +223,13 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
             
-        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp_str = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         log_file = os.path.join(log_dir, f"harvest_{timestamp_str}.log")
         
         with open(log_file, "w") as f:
             f.write(f"HARVEST RUN REPORT\n")
             f.write(f"==================\n")
-            f.write(f"Run Time: {datetime.now()}\n")
+            f.write(f"Run Time: {datetime.utcnow()} (UTC)\n")
             f.write(f"Target Date: {target_date}\n\n")
             
             if not report_df.empty:

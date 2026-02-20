@@ -33,7 +33,7 @@ if __name__ == "__main__":
         
         # Weekend Check: If it's Saturday/Sunday morning ET, we don't expect new data usually, 
         # but the workflow is scheduled Tue-Sat Bahrain (Mon-Fri ET).
-        print(f"🌍 Running Harvest at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (Local)")
+        print(f"🌍 Running Harvest at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
         print(f"🗽 ET Time: {now_et.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"🎯 Target Market Date: {target_date}")
 
