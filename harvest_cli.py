@@ -22,6 +22,26 @@ from src.utils.logger import CLILogger
 # -----------------------------------------------------------------------------
 
 def main():
+    """
+    Main entry point for the stateless data harvesting engine.
+    
+    This function orchestrates a strictly ephemeral execution cycle designed for
+    automated runs (e.g., via GitHub Actions). The cycle ensures data integrity
+    by moving through the following phases:
+    
+    1. Pre-Harvest: Downloads the master SQLite database from Google Drive and
+       establishes connections to the remote Turso database.
+    2. Self-Heal: Merges any missing recent data from Turso into the local buffer
+       to ensure the foundation is complete before the new harvest begins.
+    3. Harvest: Fetches parallel market data across multiple sources (Capital.com, Binance, Yahoo)
+       for the targeted trading day.
+    4. Dual Write & Verify: Commits the new data to both the Turso remote and the
+       local SQLite buffer, then performs a parity check to ensure they match.
+    5. Sync: Uploads the updated local SQLite database back to Google Drive, strictly
+       verifying integrity with an MD5 hash check.
+    6. Notify & Clean: Dispatches a final Discord notification with the harvest summary
+       and completely deletes the local database to leave no persistent state.
+    """
     logger = None
     turso_client = None
     local_client = None

@@ -57,11 +57,25 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger):
 
 def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None):
     """
-    Parallel Harvester:
-    Spliced Hybrid Logic: 
-    - PRE-Market: Capital.com
-    - REG-Market: Yahoo Finance (for Volume)
-    - POST-Market: Capital.com
+    Executes the highly concurrent hybrid harvesting engine.
+    
+    This function orchestrates a multi-threaded fetch across 45+ instruments,
+    dynamically routing requests to the best available data source based on
+    the instrument type and current market session.
+    
+    Hybrid Splicing Logic:
+    - Pre-Market (< 9:30 AM ET): Fetched from primary (e.g., Capital.com CFD).
+    - Regular Session (9:30 AM - 4:00 PM ET): Fetched from primary or fallback (Yahoo for indices).
+    - Post-Market (>= 4:00 PM ET): Fetched from primary (e.g., Capital.com CFD).
+    
+    Crypto assets (using Binance) bypass the splicing and are fetched as a continuous 24-hour stream.
+    All data is ultimately localized to US/Eastern timezone, sanitized to the standard 
+    SCHEMA_COLS format, and deduplicated before returning.
+    
+    Returns:
+        tuple: (final_df, report_df)
+            - final_df (DataFrame): The merged, sanitized, and deduplicated OHLCV dataset.
+            - report_df (DataFrame): A summary matrix detailing the success/failure of each symbol.
     """
     def update_ui(ticker, col, val):
         if progress_callback:

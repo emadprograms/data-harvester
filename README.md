@@ -2,15 +2,13 @@
 
 A high-performance, stateless data harvesting engine designed for scheduled daily automation. Optimized for resilience, integrity, and ephemeral execution environments (like GitHub Actions).
 
-## 🏛 Stateless v4.0 Architecture
+## 🏛 Architecture & Documentation
 
-The harvester follows a strict **ephemeral run cycle** to ensure data integrity and avoid local state drift:
-1. **Bootstrap**: Download the latest master database from **Google Drive**.
-2. **Self-Heal**: Automatically repair any data gaps between the remote **Turso** instance and the local buffer.
-3. **Harvest**: Parallel fetch of 1-minute candles from **Capital.com**, **Binance**, and **Yahoo Finance**.
-4. **Dual-Commit**: Sync new data to both the cloud (Turso) and the local session buffer.
-5. **Persist**: Verify integrity (Fingerprinting) and upload the updated master database back to **Google Drive**.
-6. **Purge**: Completely wipe the local environment, leaving no persistent footprint.
+The harvester follows a strict **ephemeral run cycle** to ensure data integrity and avoid local state drift.
+
+For a deep dive into the system's design, dual-layer persistence, and Google Drive authentication:
+👉 **[Read the System Architecture Guide](docs/system_architecture.md)**
+👉 **[Read the Google Drive Setup Guide](docs/GOOGLE_DRIVE_SETUP.md)**
 
 ## 🛠 Key Features
 
