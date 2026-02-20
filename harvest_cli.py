@@ -90,9 +90,17 @@ if __name__ == "__main__":
             if send_discord_harvest_report(report_df, target_date, total_rows, file_path=local_db_path):
                 logger.log("📨 Discord notification sent.")
             else:
-                # Only log if a webhook was provided but it failed
-                if os.getenv("DISCORD_WEBHOOK_URL"):
-                    logger.log("⚠️ Discord notification failed.")
+                logger.log("⚠️ Discord notification skipped or failed.")
+
+            # 7. Google Drive Sync
+            from src.utils.gdrive import upload_to_gdrive
+            gdrive_json = mgr.get_secret("GDRIVE_SERVICE_ACCOUNT_JSON")
+            gdrive_folder = mgr.get_secret("GDRIVE_FOLDER_ID")
+            
+            if gdrive_json and gdrive_folder:
+                upload_to_gdrive(local_db_path, gdrive_folder, gdrive_json, logger)
+            else:
+                logger.log("⚠️ GDrive sync skipped (Secrets missing in Infisical)")
 
     except KeyboardInterrupt:
         print("\n🛑 Harvest interrupted by user.")
