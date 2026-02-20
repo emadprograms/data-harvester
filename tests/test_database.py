@@ -48,8 +48,8 @@ class TestDatabaseOperations(unittest.TestCase):
     @patch("src.database.operations.get_db_connection")
     def test_save_data_empty_df(self, mock_conn):
         """Saving empty DF must return False without touching DB."""
-        from src.database.operations import save_data_to_turso
-        result = save_data_to_turso(pd.DataFrame())
+        from src.database.operations import save_data_to_storage
+        result = save_data_to_storage(pd.DataFrame())
         self.assertFalse(result)
         mock_conn.assert_not_called()
 
@@ -57,12 +57,12 @@ class TestDatabaseOperations(unittest.TestCase):
     def test_save_data_no_connection(self, mock_conn):
         """No DB connection must return False gracefully."""
         mock_conn.return_value = None
-        from src.database.operations import save_data_to_turso
+        from src.database.operations import save_data_to_storage
         
         df = pd.DataFrame({"timestamp": [datetime.now()], "symbol": ["AAPL"],
                            "open": [150], "high": [151], "low": [149],
                            "close": [150.5], "volume": [1000], "session": ["REG"]})
-        result = save_data_to_turso(df)
+        result = save_data_to_storage(df)
         self.assertFalse(result)
 
     @patch("src.database.operations.get_db_connection")
@@ -71,7 +71,7 @@ class TestDatabaseOperations(unittest.TestCase):
         mock_client = MagicMock()
         mock_conn.return_value = mock_client
         
-        from src.database.operations import save_data_to_turso
+        from src.database.operations import save_data_to_storage
         import pytz
         
         df = pd.DataFrame({
@@ -82,7 +82,7 @@ class TestDatabaseOperations(unittest.TestCase):
         })
         
         logger = MockLogger()
-        result = save_data_to_turso(df, logger)
+        result = save_data_to_storage(df, logger)
         self.assertTrue(result)
         mock_client.execute.assert_called()
 
@@ -93,7 +93,7 @@ class TestDatabaseOperations(unittest.TestCase):
         mock_client.execute.side_effect = Exception("SQL Error: table locked")
         mock_conn.return_value = mock_client
         
-        from src.database.operations import save_data_to_turso
+        from src.database.operations import save_data_to_storage
         
         df = pd.DataFrame({
             "timestamp": pd.to_datetime(["2025-01-15 14:30:00"]).tz_localize("UTC"),
@@ -103,7 +103,7 @@ class TestDatabaseOperations(unittest.TestCase):
         })
         
         logger = MockLogger()
-        result = save_data_to_turso(df, logger)
+        result = save_data_to_storage(df, logger)
         self.assertFalse(result)
         self.assertTrue(any("Save Error" in m for m in logger.messages))
 

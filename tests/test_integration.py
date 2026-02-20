@@ -90,7 +90,7 @@ class TestFullPipeline(unittest.TestCase):
         mock_client = MagicMock()
         mock_conn.return_value = mock_client
         
-        from src.database.operations import save_data_to_turso
+        from src.database.operations import save_data_to_storage
         
         df = pd.DataFrame({
             "timestamp": pd.to_datetime(["2025-01-15 14:30:00", "2025-01-15 14:31:00"]).tz_localize("UTC"),
@@ -101,7 +101,7 @@ class TestFullPipeline(unittest.TestCase):
         })
         
         logger = MockLogger()
-        result = save_data_to_turso(df, logger)
+        result = save_data_to_storage(df, logger)
         self.assertTrue(result)
         
         # Verify the SQL was called
