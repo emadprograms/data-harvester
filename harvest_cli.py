@@ -100,7 +100,7 @@ def main():
         logger.log(f"🎯 Target Market Date: {target_date}")
 
         # 2. Get Discord Webhook from Infisical
-        discord_webhook = mgr.get_secret("discord_data_harvest_cli_webhook_url")
+        discord_webhook = mgr.get_secret("discord_captain_data_webhook_url")
         if discord_webhook:
             os.environ["DISCORD_WEBHOOK_URL"] = discord_webhook
 

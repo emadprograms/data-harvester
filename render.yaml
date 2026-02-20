@@ -7,7 +7,7 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
-      - key: discord_captain_data_webhook_url
+      - key: DISCORD_BOT_TOKEN
         sync: false
       - key: GITHUB_PAT
         sync: false
