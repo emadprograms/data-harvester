@@ -100,18 +100,14 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
         msg += "📄 *Full details are available in the attached log.*"
 
         # Post the message with attachment
-        all_ok = _post(webhook_url, msg, file_path)
-
-        # Send health alerts as a follow-up message
         if health_alerts:
-            if not _post(webhook_url, health_alerts):
-                all_ok = False
-            time.sleep(0.5)
-
-        # Send integrity status as a follow-up message
+            msg += f"\n\n{health_alerts}"
+            
         if integrity_status:
-            if not _post(webhook_url, f"🔒 **Integrity** | {integrity_status}"):
-                all_ok = False
+            msg += f"\n\n🔒 **Integrity** | {integrity_status}"
+
+        # Post the single combined message
+        all_ok = _post(webhook_url, msg, file_path)
 
         return all_ok
 

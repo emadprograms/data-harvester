@@ -123,18 +123,18 @@ def main():
             harvest_mode="🚀 Full Day"
         )
         
-        # --- NEW ROBUST SYNC WORKFLOW ---
+        # --- STRICT SYNC & NOTIFICATION WORKFLOW ---
         integrity_msg = "Unknown"
-        sync_verified = False
         critical_errors = ""
+        harvest_successful = False
 
         if not final_df.empty:
-            # A. Dual Write
+            # A. Dual Write (Slowly/safely batched by save_data_to_storage)
             if save_data_to_storage(final_df, logger, turso_client=turso_client, local_client=local_client):
                 logger.log(f"✅ Data written to dual storage. Rows: {len(final_df)}")
+                harvest_successful = True
                 
-                # B. Post-Harvest Verification & Repair
-                # Ensure Turso and Local are EXACTLY the same before moving to GDrive
+                # B. Post-Harvest Parity Check (Turso vs Local)
                 from src.utils.integrity import verify_sync
                 from tools.migrate_historical_turso import repair_local_from_turso
                 
@@ -142,31 +142,47 @@ def main():
                 sync_ok, integrity_msg = verify_sync(turso_client, local_client, str(target_date), logger)
                 
                 if not sync_ok:
-                    logger.log("⚠️ Sync drift detected after save. Performing exhaustive repair...")
+                    logger.log("⚠️ Sync drift detected after save. Performing targeted repair...")
                     repair_local_from_turso(turso_client, local_client, logger, force_exhaustive=True)
                     sync_ok, integrity_msg = verify_sync(turso_client, local_client, str(target_date), logger)
                 
                 if sync_ok:
                     logger.log("✅ Parity Verified (Turso vs Local).")
-                    sync_verified = True
                 else:
-                    logger.log("❌ Sync Mismatch persisted after repair. Check Turso logs.")
+                    msg = "❌ Sync Mismatch persisted after repair. Check Turso logs."
+                    logger.log(msg)
+                    critical_errors += f"- {msg}\n"
 
-                # C. Final GDrive Sync with MD5 Verification
+                # C. Final GDrive Sync with MD5 Gate
                 if all([client_id, client_secret, refresh_token, gdrive_folder]):
                     from src.utils.gdrive import upload_to_gdrive_oauth, get_local_md5, get_gdrive_md5
                     
-                    if upload_to_gdrive_oauth(local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger):
-                        # Verify MD5 Checksum
-                        local_md5 = get_local_md5(local_db_path)
-                        gdrive_md5 = get_gdrive_md5(local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger)
-                        
-                        if local_md5 == gdrive_md5:
-                            logger.log(f"✅ GDrive Sync Verified (MD5: {local_md5[:8]}...)")
-                            integrity_msg += " | GDrive MD5 OK"
+                    max_retries = 3
+                    md5_matched = False
+                    
+                    for attempt in range(1, max_retries + 1):
+                        logger.log(f"☁️ Uploading to GDrive (Attempt {attempt}/{max_retries})...")
+                        if upload_to_gdrive_oauth(local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger):
+                            local_md5 = get_local_md5(local_db_path)
+                            gdrive_md5 = get_gdrive_md5(local_db_path, gdrive_folder, client_id, client_secret, refresh_token, logger)
+                            
+                            if local_md5 == gdrive_md5:
+                                logger.log(f"✅ GDrive MD5 MATCHED: {local_md5[:8]}...")
+                                integrity_msg += " | GDrive MD5 OK"
+                                md5_matched = True
+                                break
+                            else:
+                                logger.log(f"⚠️ GDrive Sync MD5 Mismatch! Local: {local_md5}, Remote: {gdrive_md5}")
+                                import time
+                                time.sleep(2)
                         else:
-                            logger.log(f"❌ GDrive Sync MD5 Mismatch! Local: {local_md5}, Remote: {gdrive_md5}")
-                            integrity_msg += " | GDrive MD5 DRIFT ⚠️"
+                            logger.log("⚠️ Upload failed. Retrying...")
+                            
+                    if not md5_matched:
+                        msg = "❌ CRITICAL: GDrive MD5 Mismatch persisted after maximum retries. Data may be out of sync."
+                        logger.log(msg)
+                        critical_errors += f"- {msg}\n"
+                        integrity_msg += " | GDrive MD5 ❌"
                 else:
                     logger.log("⚠️ GDrive sync skipped (OAuth Secrets missing)")
             else:
@@ -176,24 +192,32 @@ def main():
         else:
             logger.log("⚠️ No data harvested.")
             
-        # 3. Final Summary & Discord Notification
-        if not report_df.empty or critical_errors:
+        # 3. Final Summary & SINGLE Discord Notification
+        # Ensure we only send ONE ping to the user capturing EVERYTHING
+        if harvest_successful or critical_errors or not report_df.empty:
             logger.log("\n📊 Harvest Summary:")
-            summary_str = report_df.to_string(index=False)
+            summary_str = report_df.to_string(index=False) if not report_df.empty else "No Data"
             print(summary_str)
             if logger.log_path:
                 with open(logger.log_path, 'a', encoding='utf-8') as f:
                     f.write(f"\nSummary:\n{summary_str}\n")
             
-            # Send to Discord with health alerts and integrity status
-            total_rows = len(final_df)
-            health_alerts = build_health_alerts(report_df, now_et.hour)
-            if send_discord_harvest_report(report_df, target_date, total_rows,
-                                           file_path=log_filename,
-                                           health_alerts=health_alerts,
-                                           integrity_status=integrity_msg,
-                                           critical_errors=critical_errors):
-                logger.log("📨 Discord notification sent with logs.")
+            total_rows = len(final_df) if not final_df.empty else 0
+            health_alerts = build_health_alerts(report_df, now_et.hour) if not report_df.empty else ""
+            
+            logger.log("📨 Sending final unified Discord notification...")
+            success = send_discord_harvest_report(
+                report_df=report_df, 
+                target_date=target_date, 
+                total_rows=total_rows,
+                file_path=log_filename,
+                health_alerts=health_alerts,
+                integrity_status=integrity_msg,
+                critical_errors=critical_errors
+            )
+            
+            if success:
+                logger.log("✅ Discord notification sent successfully.")
             else:
                 logger.log("⚠️ Discord notification skipped or failed.")
 

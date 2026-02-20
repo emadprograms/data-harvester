@@ -170,39 +170,64 @@ def repair_local_from_turso(remote, local, logger=None, force_exhaustive=False):
 
     log(f"🔄 Gap/Sync check: Remote: {remote_count:,}, Local: {local_count:,}.")
     
+    # Calculate exactly how many rows we need if we are just filling a gap
+    deficit = remote_count - local_count
+    targeted_limit = None
+    if deficit > 0 and not force_exhaustive:
+        # Buffer of 500 rows to ensure we catch everything around the gap
+        targeted_limit = deficit + 500
+        log(f"🎯 Targeted Repair: Fetching maximum of {targeted_limit} rows to close gap.")
+    
     # Exhaustive repair: fetch recent rows by timestamp descending
     batch_size = 5000
     offset = 0
     total_added = 0
+    total_fetched = 0
     
     while True:
+        # If targeted, don't fetch more than we need in this batch
+        current_limit = batch_size
+        if targeted_limit and (total_fetched + batch_size > targeted_limit):
+            current_limit = targeted_limit - total_fetched
+            
+        if current_limit <= 0:
+            break
+            
         res = remote.execute(
             "SELECT timestamp, symbol, open, high, low, close, volume, session "
             "FROM market_data ORDER BY timestamp DESC "
-            f"LIMIT {batch_size} OFFSET {offset}"
+            f"LIMIT {current_limit} OFFSET {offset}"
         )
-        if not res.rows: break
+        fetched_count = len(res.rows)
+        if fetched_count == 0: break
+        total_fetched += fetched_count
         
         batch_added = 0
         for row in res.rows:
             try:
                 # Use INSERT OR IGNORE to only add what's missing
-                local.execute(
+                # It returns rows_affected = 1 if inserted, 0 if ignored
+                res_insert = local.execute(
                   "INSERT OR IGNORE INTO market_data (timestamp, symbol, open, high, low, close, volume, session) "
                   "VALUES (?,?,?,?,?,?,?,?)", list(row)
                 )
-                batch_added += 1
+                batch_added += res_insert.rows_affected
             except: pass
             
         total_added += batch_added
-        offset += batch_size
+        offset += current_limit
         
-        # Heuristic: If we processed a batch and added 0 new rows, we've likely hit the "already synced" barrier
+        # Heuristic: If we processed a batch and added 0 new rows (all were IGNORED), we've likely hit the "already synced" barrier
         if batch_added == 0 and not force_exhaustive:
+            log(f"🔹 Hit existing data at offset {offset}. Stopping repair to save Turso reads.")
             break
             
-        if not force_exhaustive and offset > 50000: 
-            log("⚠️ Repair threshold exceeded (50k rows). Run full migrate if needed.")
+        if not force_exhaustive and offset >= 50000: 
+            log("⚠️ Repair threshold exceeded (50k rows). Stopping. Run full migrate if needed.")
+            break
+            
+        if targeted_limit and total_fetched >= targeted_limit:
+            log("🎯 Targeted row limit reached. Stopping repair.")
             break
     
     if total_added > 0:

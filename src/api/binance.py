@@ -7,26 +7,38 @@ import pandas as pd
 from datetime import datetime, timezone
 from src.config import SCHEMA_COLS, BINANCE_DOMAINS
 
+# Global cache for the first successful endpoint to prevent repetitive 451 geo-block testing
+WORKING_BINANCE_DOMAIN = None
+
 def fetch_binance_daily(ticker: str, target_date_obj, logger=None) -> pd.DataFrame:
     """
     Fetches full 24h 1-minute klines from Binance for a specific symbol.
     The ticker must be in Binance format (e.g., 'BTCUSDT', 'EURUSDT').
-    Attempts to fetch from api.binance.com first, then api.binance.us (fallback).
+    Uses a Smart Cache strategy to remember the working domain and silence 451 warnings.
     """
-    # 1. Use the Ticker Directly (No Mapping)
+    global WORKING_BINANCE_DOMAIN
     binance_symbol = ticker.upper().strip()
 
-    # 2. Calculate Start/End Timestamps (UTC)
+    # Calculate Start/End Timestamps (UTC)
     start_dt = datetime.combine(target_date_obj, datetime.min.time()).replace(tzinfo=timezone.utc)
     end_dt = datetime.combine(target_date_obj, datetime.max.time()).replace(tzinfo=timezone.utc)
     
     start_ts = int(start_dt.timestamp() * 1000)
     end_ts = int(end_dt.timestamp() * 1000)
     
-    # Domain fallback strategy
-    domains = BINANCE_DOMAINS
+    # Priority: Memory -> Configured List
+    domains_to_try = []
+    if WORKING_BINANCE_DOMAIN:
+        domains_to_try.append(WORKING_BINANCE_DOMAIN)
+        for d in BINANCE_DOMAINS:
+            if d != WORKING_BINANCE_DOMAIN:
+                domains_to_try.append(d)
+    else:
+        domains_to_try = BINANCE_DOMAINS
     
-    for domain in domains:
+    warnings_collected = []
+    
+    for domain in domains_to_try:
         url = f"{domain}/api/v3/klines"
         all_klines = []
         current_start = start_ts
@@ -44,26 +56,20 @@ def fetch_binance_daily(ticker: str, target_date_obj, logger=None) -> pd.DataFra
                 
                 response = requests.get(url, params=params, timeout=5)
                 
-                # Handle Geo-Blocking / IP Bans
+                # Handle Geo-Blocking / IP Bans Silently
                 if response.status_code in [403, 451]:
-                    msg = f"⚠️ {domain} restricted ({response.status_code}). Switching domain..."
-                    if logger: logger.log(f"   {msg}")
-                    else: print(msg)
+                    warnings_collected.append(f"{domain} (451 Restricted)")
                     break # Try next domain
                 
                 if response.status_code != 200:
-                    msg = f"❌ Error {response.status_code} from {domain}: {response.text}"
-                    if logger: logger.log(f"   {msg}")
-                    else: print(msg)
+                    warnings_collected.append(f"{domain} ({response.status_code} Error)")
                     break
 
                 data = response.json()
                 
                 # Check for API errors (e.g., Invalid Symbol)
                 if isinstance(data, dict) and "code" in data:
-                    msg = f"❌ Binance Error for {binance_symbol} on {domain}: {data.get('msg')}"
-                    if logger: logger.log(f"   {msg}")
-                    else: print(msg)
+                    warnings_collected.append(f"{domain} (API Error: {data.get('msg')})")
                     break
                     
                 if not data or not isinstance(data, list):
@@ -77,28 +83,39 @@ def fetch_binance_daily(ticker: str, target_date_obj, logger=None) -> pd.DataFra
                 current_start = last_close_ts + 1
                 success = True
             
-            if success and all_klines:
-                # 3. Convert to DataFrame
-                df = pd.DataFrame(all_klines, columns=[
-                    "timestamp", "open", "high", "low", "close", "volume", 
-                    "close_time", "q_vol", "trades", "buy_base", "buy_quote", "ignore"
-                ])
+            if success:
+                # Cache the domain that actually worked
+                if WORKING_BINANCE_DOMAIN != domain:
+                    WORKING_BINANCE_DOMAIN = domain
+                    if logger: logger.log(f"   ✅ Binance Memory updated: Using {domain} moving forward.")
                 
-                # 4. Normalize Types
-                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-                numeric_cols = ["open", "high", "low", "close", "volume"]
-                df[numeric_cols] = df[numeric_cols].astype(float)
-                
-                # 5. Final Schema Cleanup
-                df["symbol"] = ticker 
-                df["session"] = "REG" # Default label, Harvester will slice this later
-                
-                return df[SCHEMA_COLS]
+                if all_klines:
+                    # Convert to DataFrame
+                    df = pd.DataFrame(all_klines, columns=[
+                        "timestamp", "open", "high", "low", "close", "volume", 
+                        "close_time", "q_vol", "trades", "buy_base", "buy_quote", "ignore"
+                    ])
+                    
+                    # Normalize Types
+                    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+                    numeric_cols = ["open", "high", "low", "close", "volume"]
+                    df[numeric_cols] = df[numeric_cols].astype(float)
+                    
+                    # Final Schema Cleanup
+                    df["symbol"] = ticker 
+                    df["session"] = "REG" 
+                    
+                    return df[SCHEMA_COLS]
+                else:
+                    return pd.DataFrame()
 
         except Exception as e:
-            msg = f"❌ Exception fetching Binance data for {binance_symbol} on {domain}: {e}"
-            if logger: logger.log(f"   {msg}")
-            else: print(msg)
+            warnings_collected.append(f"{domain} (Exception: {e})")
             continue
 
+    # If we get here, ALL domains failed. Now we log the warnings.
+    msg = f"❌ All Binance domains failed for {binance_symbol}. Reasons: {', '.join(warnings_collected)}"
+    if logger: logger.log(f"   {msg}")
+    else: print(msg)
+    
     return pd.DataFrame()
