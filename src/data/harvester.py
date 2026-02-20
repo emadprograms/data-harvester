@@ -230,18 +230,35 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         cleaned = []
         for df in all_data:
             if not df.empty:
-                # 1. Force unique columns (keep first)
+                # 1. Normalize columns to lowercase and unique
+                df.columns = [str(c).lower() for c in df.columns]
                 df = df.loc[:, ~df.columns.duplicated()]
+                
                 # 2. Reset index to ensure no index collisions
                 df = df.reset_index(drop=True)
+                
+                # 3. Ensure all SCHEMA_COLS exist (fill missing with None/0)
+                for col in SCHEMA_COLS:
+                    if col not in df.columns:
+                        df[col] = 0.0 if col in ['open', 'high', 'low', 'close', 'volume'] else None
+                
+                # 4. Filter to exact schema columns
+                df = df[SCHEMA_COLS].copy()
                 cleaned.append(df)
         
         if cleaned:
+            logger.log(f"   🔗 Merging {len(cleaned)} sanitized dataframes...")
             final_df = pd.concat(cleaned, ignore_index=True)
-            # Final sanity check: ensure no duplicate columns in merged result
-            final_df = final_df.loc[:, ~final_df.columns.duplicated()]
+            
+            # Final deduplication by timestamp/symbol pair
+            dups = final_df.duplicated(subset=['timestamp', 'symbol']).sum()
+            if dups > 0:
+                logger.log(f"   ⚠️ Found {dups} duplicate timestamp entries. Dropping.")
+                final_df = final_df.drop_duplicates(subset=['timestamp', 'symbol'])
     except Exception as e:
         logger.log(f"❌ Error during final data merging: {e}")
+        import traceback
+        logger.log(traceback.format_exc())
 
     # --- PERSISTENT LOGGING ---
     try:
