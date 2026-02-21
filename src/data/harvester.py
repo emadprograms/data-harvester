@@ -13,12 +13,12 @@ def _validate_date_match(df, target_date, source_name, logger, ticker):
     if df.empty:
         return df, "Empty"
         
-    # Localize safely to ET to check the calendar date of the rows
+    # Check calendar date in UTC (all APIs are queried with UTC boundaries)
     temp_df = df.copy()
     if temp_df['timestamp'].dt.tz is None:
-        temp_df['timestamp'] = temp_df['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
+        temp_df['timestamp'] = temp_df['timestamp'].dt.tz_localize(UTC)
     else:
-        temp_df['timestamp'] = temp_df['timestamp'].dt.tz_convert(US_EASTERN)
+        temp_df['timestamp'] = temp_df['timestamp'].dt.tz_convert(UTC)
         
     valid_mask = temp_df['timestamp'].dt.date == target_date
     valid_df = df[valid_mask].copy() # Apply mask to original df to preserve original tz state
