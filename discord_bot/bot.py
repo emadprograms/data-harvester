@@ -27,7 +27,7 @@ async def on_ready():
     print(f'✅ Harvester Bot online: {bot.user.name} ({bot.user.id})')
     print('Ready for data collection.')
 
-@bot.command(name="harvest")
+@bot.command(name="data")
 async def trigger_harvest(ctx, date_str: str = None):
     """Triggers the data harvest workflow."""
     

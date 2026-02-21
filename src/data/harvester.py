@@ -8,10 +8,35 @@ from src.api.yahoo import fetch_yahoo_market_data
 from src.api.binance import fetch_binance_daily
 from src.data.normalizer import normalize_yahoo_df
 
+def _validate_date_match(df, target_date, source_name, logger, ticker):
+    """ Helper to ensure API didn't return rogue historical/future data. """
+    if df.empty:
+        return df, "Empty"
+        
+    # Localize safely to ET to check the calendar date of the rows
+    temp_df = df.copy()
+    if temp_df['timestamp'].dt.tz is None:
+        temp_df['timestamp'] = temp_df['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
+    else:
+        temp_df['timestamp'] = temp_df['timestamp'].dt.tz_convert(US_EASTERN)
+        
+    valid_mask = temp_df['timestamp'].dt.date == target_date
+    valid_df = df[valid_mask].copy() # Apply mask to original df to preserve original tz state
+    
+    dropped = len(df) - len(valid_df)
+    if dropped > 0:
+        logger.log(f"   ⚠️ {ticker} [{source_name}]: Dropped {dropped} rogue rows not matching target date {target_date}.")
+        
+    if valid_df.empty:
+        return valid_df, f"❌ {source_name} Empty (All rows rejected due to wrong date)"
+        
+    return valid_df, f"✅ {source_name}"
+    
+
 def fetch_from_source(source_name, specific_ticker, target_date, logger):
     """
     Generic fetcher that routes to the correct API.
-    Returns: DataFrame (Normalized), status_msg
+    Returns: DataFrame (Normalized & Date-Validated), status_msg
     """
     if not source_name or source_name == "NONE":
         return pd.DataFrame(), "No Source"
@@ -22,7 +47,7 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger):
             raw = fetch_yahoo_market_data(specific_ticker, target_date, logger)
             if not raw.empty:
                 norm = normalize_yahoo_df(raw, specific_ticker) 
-                return norm, "✅ Yahoo"
+                return _validate_date_match(norm, target_date, "Yahoo", logger, specific_ticker)
             return pd.DataFrame(), "❌ Yahoo Empty"
             
         # --- CAPITAL ---
@@ -37,7 +62,7 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger):
             if not raw.empty:
                 # Capital implementation already normalizes to SCHEMA_COLS
                 raw['symbol'] = specific_ticker # Ensure symbol is set correctly
-                return raw, "✅ Capital"
+                return _validate_date_match(raw, target_date, "Capital", logger, specific_ticker)
             
             return pd.DataFrame(), f"❌ {err_msg}" if err_msg else "❌ Capital Empty"
             
@@ -45,7 +70,7 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger):
         elif source_name == "BINANCE":
             raw = fetch_binance_daily(specific_ticker, target_date, logger)
             if not raw.empty:
-                return raw, "✅ Binance"
+                return _validate_date_match(raw, target_date, "Binance", logger, specific_ticker)
             return pd.DataFrame(), "❌ Binance Empty"
 
     except Exception as e:
@@ -53,7 +78,6 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger):
         return pd.DataFrame(), f"❌ Error {source_name}"
         
     return pd.DataFrame(), f"Unknown Source {source_name}"
-
 
 def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None):
     """
