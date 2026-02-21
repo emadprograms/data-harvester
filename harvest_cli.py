@@ -126,6 +126,12 @@ def main():
                 logger.log("🕒 Time is before 4 AM ET. Targeting previous trading day.")
             else:
                 target_date = now_et.date()
+                
+            # NEW LOGIC: Ensure the resolved target_date is not a weekend.
+            # target_date.weekday() returns 0 for Monday ... 5 for Sat, 6 for Sun
+            while target_date.weekday() > 4:  # If Saturday (5) or Sunday (6)
+                target_date -= timedelta(days=1)
+                logger.log(f"⚠️ Weekend detected. Rolling back Target Date to last trading day => {target_date}")
         
         # Weekend Check: If it's Saturday/Sunday morning ET, we don't expect new data usually, 
         # but the workflow is scheduled Tue-Sat Bahrain (Mon-Fri ET).
