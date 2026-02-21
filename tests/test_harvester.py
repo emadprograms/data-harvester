@@ -96,7 +96,7 @@ class TestFetchFromSource(unittest.TestCase):
     def test_binance_source_success(self, mock_binance):
         """BINANCE source must call fetch_binance_daily."""
         mock_binance.return_value = pd.DataFrame({
-            "timestamp": pd.to_datetime(["2025-01-15 00:00:00"]).tz_localize("UTC"),
+            "timestamp": pd.to_datetime(["2025-01-15 15:00:00"]).tz_localize("UTC"),
             "symbol": ["BTCUSDT"], "open": [40000.0], "high": [41000.0],
             "low": [39000.0], "close": [40500.0], "volume": [100.0],
             "session": ["REG"]
