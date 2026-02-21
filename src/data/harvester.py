@@ -176,7 +176,8 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                 else:
                     d['timestamp'] = d['timestamp'].dt.tz_convert(US_EASTERN)
 
-        # 2. Slice and Dice — Capital preferred for Pre/Post, Yahoo for Regular
+        # 2. Slice and Dice — Yahoo preferred for ALL sessions (real exchange prices)
+        #    Capital.com only used as last-resort fallback (CFD midpoints differ from exchange)
         sources_data = {}
         if not df_primary.empty:
             sources_data[primary_source] = df_primary
@@ -209,9 +210,11 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                         return s, src
             return pd.DataFrame(), None
 
-        c_pre, src_pre = get_slice("CAPITAL", None, t_930am)
+        # Yahoo preferred for ALL sessions — it returns real exchange prices
+        # Capital.com CFD midpoints can diverge significantly from exchange prices
+        c_pre, src_pre = get_slice("YAHOO", None, t_930am)
         c_reg, src_reg = get_slice("YAHOO", t_930am, t_4pm)
-        c_post, src_post = get_slice("CAPITAL", t_4pm, None)
+        c_post, src_post = get_slice("YAHOO", t_4pm, None)
 
         used_sources = set([s for s in [src_pre, src_reg, src_post] if s])
 
