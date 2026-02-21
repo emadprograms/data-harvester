@@ -5,7 +5,7 @@ Uses mocking to avoid real API calls.
 import unittest
 from unittest.mock import patch, MagicMock
 import pandas as pd
-from datetime import date, time as dt_time
+from datetime import date, datetime, time as dt_time
 from src.data.harvester import fetch_from_source, run_harvest_logic
 from src.config import US_EASTERN, UTC
 
@@ -39,11 +39,17 @@ class TestFetchFromSource(unittest.TestCase):
         df, msg = fetch_from_source("", "AAPL", date(2025, 1, 15), logger)
         self.assertTrue(df.empty)
 
+    @patch("src.data.harvester.datetime")
     @patch("src.data.harvester.fetch_capital_data")
-    def test_capital_source_success(self, mock_capital):
+    def test_capital_source_success(self, mock_capital, mock_dt):
         """CAPITAL source must call fetch_capital_data and return data."""
+        from src.config import UTC
+        mock_dt.now.return_value = datetime(2025, 1, 15, 22, 0, 0, tzinfo=UTC)
+        mock_dt.combine = datetime.combine
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        
         mock_df = pd.DataFrame({
-            "timestamp": pd.to_datetime(["2025-01-15 08:00:00"]).tz_localize("UTC"),
+            "timestamp": pd.to_datetime(["2025-01-15 15:00:00"]).tz_localize("UTC"),
             "open": [150.0], "high": [151.0], "low": [149.0],
             "close": [150.5], "volume": [0.0]
         })
@@ -54,9 +60,15 @@ class TestFetchFromSource(unittest.TestCase):
         self.assertFalse(df.empty)
         self.assertIn("Capital", msg)
 
+    @patch("src.data.harvester.datetime")
     @patch("src.data.harvester.fetch_capital_data")
-    def test_capital_source_failure(self, mock_capital):
+    def test_capital_source_failure(self, mock_capital, mock_dt):
         """CAPITAL source failure must return empty DF with error message."""
+        from src.config import UTC
+        mock_dt.now.return_value = datetime(2025, 1, 15, 22, 0, 0, tzinfo=UTC)
+        mock_dt.combine = datetime.combine
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        
         mock_capital.return_value = (pd.DataFrame(), "Session Failed")
         
         logger = MockLogger()
@@ -107,9 +119,15 @@ class TestFetchFromSource(unittest.TestCase):
         self.assertFalse(df.empty)
         self.assertIn("Binance", msg)
 
+    @patch("src.data.harvester.datetime")
     @patch("src.data.harvester.fetch_capital_data")
-    def test_source_exception_caught(self, mock_capital):
+    def test_source_exception_caught(self, mock_capital, mock_dt):
         """Any exception during fetch must be caught and logged."""
+        from src.config import UTC
+        mock_dt.now.return_value = datetime(2025, 1, 15, 22, 0, 0, tzinfo=UTC)
+        mock_dt.combine = datetime.combine
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        
         mock_capital.side_effect = Exception("Network timeout")
         
         logger = MockLogger()

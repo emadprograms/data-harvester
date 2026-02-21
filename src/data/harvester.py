@@ -53,11 +53,23 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger):
             
         # --- CAPITAL ---
         elif source_name == "CAPITAL":
-            start_utc = US_EASTERN.localize(datetime.combine(target_date, dt_time(0, 0))).astimezone(UTC)
-            # Use next day 00:00 as exclusive end boundary (captures full 24h)
             from datetime import timedelta
-            next_day = target_date + timedelta(days=1)
-            end_utc = US_EASTERN.localize(datetime.combine(next_day, dt_time(0, 0))).astimezone(UTC)
+            
+            # GUARD: Capital.com only serves 1-minute data for the past ~16 hours.
+            # If the target date is beyond this window, skip Capital entirely
+            # to avoid receiving stale/wrong-date data.
+            now_utc = datetime.now(UTC)
+            target_end_utc = US_EASTERN.localize(
+                datetime.combine(target_date + timedelta(days=1), dt_time(0, 0))
+            ).astimezone(UTC)
+            hours_ago = (now_utc - target_end_utc).total_seconds() / 3600
+            
+            if hours_ago > 16:
+                logger.log(f"   ⏭️ {specific_ticker} [Capital]: Skipped — target date {target_date} is {hours_ago:.0f}h old (>16h limit).")
+                return pd.DataFrame(), "⏭️ Capital Skipped (>16h)"
+            
+            start_utc = US_EASTERN.localize(datetime.combine(target_date, dt_time(0, 0))).astimezone(UTC)
+            end_utc = target_end_utc
             
             raw, err_msg = fetch_capital_data(specific_ticker, start_utc, end_utc, logger)
             if not raw.empty:
@@ -176,8 +188,9 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                 else:
                     d['timestamp'] = d['timestamp'].dt.tz_convert(US_EASTERN)
 
-        # 2. Slice and Dice — Yahoo preferred for ALL sessions (real exchange prices)
-        #    Capital.com only used as last-resort fallback (CFD midpoints differ from exchange)
+        # 2. Slice and Dice — Capital preferred for Pre/Post, Yahoo for Regular
+        #    Capital.com provides real-time Pre/Post market data that Yahoo may lack.
+        #    The 16-hour guard above ensures Capital is only called for recent dates.
         sources_data = {}
         if not df_primary.empty:
             sources_data[primary_source] = df_primary
@@ -210,8 +223,7 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                         return s, src
             return pd.DataFrame(), None
 
-        # Yahoo preferred for ALL sessions — it returns real exchange prices
-        # Capital.com CFD midpoints can diverge significantly from exchange prices
+        # Capital preferred for Pre/Post (extended hours), Yahoo for Regular session
         c_pre, src_pre = get_slice("CAPITAL", None, t_930am)
         c_reg, src_reg = get_slice("YAHOO", t_930am, t_4pm)
         c_post, src_post = get_slice("CAPITAL", t_4pm, None)
