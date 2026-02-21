@@ -4,6 +4,7 @@ from discord.ext import commands
 import requests
 import asyncio
 from dotenv import load_dotenv
+from datetime import datetime, timedelta, timezone
 
 # Load local environment variables if present
 load_dotenv()
@@ -27,11 +28,32 @@ async def on_ready():
     print('Ready for data collection.')
 
 @bot.command(name="harvest")
-async def trigger_harvest(ctx):
+async def trigger_harvest(ctx, date_str: str = None):
     """Triggers the data harvest workflow."""
     
+    # 1. Error Handling and Validation for Date
+    if date_str:
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            now_utc_date = datetime.now(timezone.utc).date()
+            
+            # Validation 1: Not a future date
+            if target_date > now_utc_date:
+                await ctx.send(f"❌ **Invalid Date:** `{date_str}` is in the future. I can only harvest past or present dates.")
+                return
+                
+            # Validation 2: Not older than ~3 months (90 days)
+            oldest_allowed_date = now_utc_date - timedelta(days=90)
+            if target_date < oldest_allowed_date:
+                await ctx.send(f"❌ **Invalid Date:** `{date_str}` is too old. I can only harvest dates up to 90 days in the past due to API limits.")
+                return
+                
+        except ValueError:
+            await ctx.send(f"❌ **Invalid Date Format:** `{date_str}`. Please use `YYYY-MM-DD` (e.g., `2026-02-18`).")
+            return
+
     # Visual feedback so user knows it instantly triggered
-    status_msg = await ctx.send("� **Starting the harvest...**")
+    status_msg = await ctx.send(f"⏳ **Starting the harvest{' for ' + date_str if date_str else ''}...**")
     
     # Prepare GitHub API request
     url = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/{WORKFLOW_FILENAME}/dispatches"
@@ -43,9 +65,9 @@ async def trigger_harvest(ctx):
     }
     
     # We trigger the workflow on the 'main' branch
-    data = {
-        "ref": "main"
-    }
+    data = {"ref": "main"}
+    if date_str:
+        data["inputs"] = {"target_date": date_str}
     
     try:
         response = requests.post(url, headers=headers, json=data)

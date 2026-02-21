@@ -4,6 +4,7 @@ CLI/automation worker script for scheduled data harvesting.
 import os
 import sys
 import logging
+import argparse
 from datetime import datetime, timedelta, timezone
 from src.database.schema import init_db
 from src.database.operations import get_symbol_map_from_db, save_data_to_storage
@@ -103,15 +104,28 @@ def main():
             except Exception as e:
                 logger.log(f"⚠️ Gap repair skipped: {e}")
 
+        # Parse command line arguments
+        parser = argparse.ArgumentParser(description="Data Harvester CLI")
+        parser.add_argument("--date", type=str, help="Target date for harvest in YYYY-MM-DD format", default=None)
+        args = parser.parse_args()
+
         # Setup parameters
-        # Schedule logic: The trading day officially "rolls over" at 4 AM ET when pre-market opens.
-        # If we run between Midnight and 4 AM ET, we want to fetch the previous day's finalized data.
-        now_et = datetime.now(US_EASTERN)
-        if now_et.hour < 4:
-            target_date = (now_et - timedelta(days=1)).date()
-            logger.log("🕒 Time is before 4 AM ET. Targeting previous trading day.")
+        if args.date:
+            try:
+                target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+                logger.log(f"📅 Using manually provided target date: {target_date}")
+            except ValueError:
+                logger.log(f"❌ Invalid date format provided: {args.date}. Expected YYYY-MM-DD.")
+                return
         else:
-            target_date = now_et.date()
+            # Schedule logic: The trading day officially "rolls over" at 4 AM ET when pre-market opens.
+            # If we run between Midnight and 4 AM ET, we want to fetch the previous day's finalized data.
+            now_et = datetime.now(US_EASTERN)
+            if now_et.hour < 4:
+                target_date = (now_et - timedelta(days=1)).date()
+                logger.log("🕒 Time is before 4 AM ET. Targeting previous trading day.")
+            else:
+                target_date = now_et.date()
         
         # Weekend Check: If it's Saturday/Sunday morning ET, we don't expect new data usually, 
         # but the workflow is scheduled Tue-Sat Bahrain (Mon-Fri ET).

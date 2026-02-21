@@ -7,7 +7,11 @@ on:
     - cron: '05 01 * * *'  # 4:05 AM Bahrain (Final Session Harvest)
     - cron: '05 13 * * *'  # 4:05 PM Bahrain (Pre-Market Session Harvest)
   workflow_dispatch:  # Allow manual trigger
-
+    inputs:
+      target_date:
+        description: 'Target date for harvest in YYYY-MM-DD format'
+        required: false
+        type: string
 jobs:
   harvest:
     runs-on: ubuntu-latest
@@ -36,4 +40,8 @@ jobs:
         INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
         INFISICAL_PROJECT_ID: ${{ secrets.INFISICAL_PROJECT_ID }}
       run: |
-        python harvest_cli.py
+        if [ -n "${{ github.event.inputs.target_date }}" ]; then
+          python harvest_cli.py --date "${{ github.event.inputs.target_date }}"
+        else
+          python harvest_cli.py
+        fi
