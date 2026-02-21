@@ -20,7 +20,8 @@ def _validate_date_match(df, target_date, source_name, logger, ticker):
     else:
         temp_df['timestamp'] = temp_df['timestamp'].dt.tz_convert(UTC)
         
-    valid_mask = temp_df['timestamp'].dt.date == target_date
+    target_date_str = target_date.strftime('%Y-%m-%d')
+    valid_mask = temp_df['timestamp'].dt.strftime('%Y-%m-%d') == target_date_str
     valid_df = df[valid_mask].copy() # Apply mask to original df to preserve original tz state
     
     dropped = len(df) - len(valid_df)
