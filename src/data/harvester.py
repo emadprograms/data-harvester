@@ -212,9 +212,9 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
 
         # Yahoo preferred for ALL sessions — it returns real exchange prices
         # Capital.com CFD midpoints can diverge significantly from exchange prices
-        c_pre, src_pre = get_slice("YAHOO", None, t_930am)
+        c_pre, src_pre = get_slice("CAPITAL", None, t_930am)
         c_reg, src_reg = get_slice("YAHOO", t_930am, t_4pm)
-        c_post, src_post = get_slice("YAHOO", t_4pm, None)
+        c_post, src_post = get_slice("CAPITAL", t_4pm, None)
 
         used_sources = set([s for s in [src_pre, src_reg, src_post] if s])
 
