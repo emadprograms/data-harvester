@@ -51,6 +51,11 @@ def main():
         from src.infisical_manager import InfisicalManager
         mgr = InfisicalManager()
         
+        # Pre-load Discord Webhook immediately so catastrophic failures can be reported
+        discord_webhook = mgr.get_secret("discord_captain_data_webhook_url")
+        if discord_webhook:
+            os.environ["DISCORD_WEBHOOK_URL"] = discord_webhook
+            
         # 0. Set up Session Logging
         from src.utils.logger import CLILogger
         log_filename = f"logs/harvest_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
@@ -109,6 +114,9 @@ def main():
         parser.add_argument("--date", type=str, help="Target date for harvest in YYYY-MM-DD format", default=None)
         args = parser.parse_args()
 
+        # Unconditionally initialize current ET time to prevent UnboundLocalError
+        now_et = datetime.now(US_EASTERN)
+
         # Setup parameters
         if args.date:
             try:
@@ -120,29 +128,20 @@ def main():
         else:
             # Schedule logic: The trading day officially "rolls over" at 4 AM ET when pre-market opens.
             # If we run between Midnight and 4 AM ET, we want to fetch the previous day's finalized data.
-            now_et = datetime.now(US_EASTERN)
             if now_et.hour < 4:
                 target_date = (now_et - timedelta(days=1)).date()
                 logger.log("🕒 Time is before 4 AM ET. Targeting previous trading day.")
             else:
                 target_date = now_et.date()
                 
-            # NEW LOGIC: Ensure the resolved target_date is not a weekend.
-            # target_date.weekday() returns 0 for Monday ... 5 for Sat, 6 for Sun
+            # Ensure the resolved target_date is not a weekend.
             while target_date.weekday() > 4:  # If Saturday (5) or Sunday (6)
                 target_date -= timedelta(days=1)
                 logger.log(f"⚠️ Weekend detected. Rolling back Target Date to last trading day => {target_date}")
         
-        # Weekend Check: If it's Saturday/Sunday morning ET, we don't expect new data usually, 
-        # but the workflow is scheduled Tue-Sat Bahrain (Mon-Fri ET).
         logger.log(f"🌍 Running Harvest at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
         logger.log(f"🗽 ET Time: {now_et.strftime('%Y-%m-%d %H:%M:%S')} (Hour: {now_et.hour})")
         logger.log(f"🎯 Target Market Date: {target_date}")
-
-        # 2. Get Discord Webhook from Infisical
-        discord_webhook = mgr.get_secret("discord_captain_data_webhook_url")
-        if discord_webhook:
-            os.environ["DISCORD_WEBHOOK_URL"] = discord_webhook
 
         # 2. Fetch Inventory
         symbol_map = get_symbol_map_from_db(turso_client)
@@ -264,7 +263,18 @@ def main():
     except KeyboardInterrupt:
         print("\n🛑 Harvest interrupted by user.")
     except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
+        import traceback
+        err_msg = traceback.format_exc()
+        print(f"\n❌ Unexpected error:\n{err_msg}")
+        if logger:
+            logger.log(f"❌ Unexpected error:\n{err_msg}")
+        
+        # Broadcast fatal errors straight to Discord
+        webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+        if webhook_url:
+            from src.utils.discord import _post
+            safe_err = err_msg[-1900:] # Max Discord char limit constraint
+            _post(webhook_url, f"🚨 **CRITICAL HARVEST FAILURE** 🚨\nThe harvester crashed unexpectedly:\n```python\n{safe_err}\n```")
     finally:
         # 1. Close Database Connections
         if turso_client:
