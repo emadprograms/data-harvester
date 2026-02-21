@@ -28,34 +28,44 @@ SESSION_AVAILABILITY = {
 
 def build_health_alerts(report_df, now_et_hour):
     """
-    Analyze the harvest report and flag tickers with suspiciously low candle counts.
+    Analyze the harvest report and flag tickers with suspiciously low candle counts
+    or total failure.
     Returns a formatted alert string for Discord, or empty string if all healthy.
     """
     if report_df.empty:
         return ""
 
     # Determine which sessions should have data
+    # We want to check Pre, Reg, Post based on what time it is currently
     applicable = []
-    for threshold_hour in sorted(SESSION_AVAILABILITY.keys()):
-        if now_et_hour >= threshold_hour:
-            applicable = SESSION_AVAILABILITY[threshold_hour]
-
-    if not applicable:
-        return ""
+    if now_et_hour >= 4:
+        applicable.append("Pre")
+    if now_et_hour >= 10:  # By 10 AM ET, Reg should have started
+        applicable.append("Reg")
+    if now_et_hour >= 16:  # By 4 PM ET, Post should have started
+        applicable.append("Post")
 
     alerts = []
     for _, row in report_df.iterrows():
         ticker = row.get("Ticker", "?")
+        
+        # Immediate loud alert if the ticker failed completely
+        total = row.get("Total", 0)
+        if total == 0:
+            alerts.append(f"🚨 **{ticker:<10}** FAILED (0 Rows Harvested) ❌")
+            continue
+            
         issues = []
-
         for session in applicable:
             count = row.get(session, 0)
             threshold = HEALTH_THRESHOLDS.get(session, 0)
-            if count < threshold and count > 0:
-                issues.append(f"{session}={count} (min {threshold})")
-            elif count == 0 and session in applicable:
-                # 0 candles for an expected session
-                issues.append(f"{session}=0 ❌")
+            
+            # Since Capital.com is only past 16hrs, if it's skipped we might get 0 for PRE/POST
+            # But REG should ALWAYS have data
+            if count == 0:
+                issues.append(f"{session}=0❌")
+            elif count < threshold:
+                issues.append(f"{session}={count} (low)")
 
         if issues:
             alerts.append(f"⚠️ {ticker:<10} {', '.join(issues)}")
