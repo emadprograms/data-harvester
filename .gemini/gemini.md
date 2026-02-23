@@ -55,3 +55,4 @@ The following rules apply **EXCLUSIVELY** to the **Gemini CLI** agent (this inte
 
 1.  **Automatic Pushing**: Because all actions in the Gemini CLI are directed and approved by the user in real-time, the agent must **always** execute a `git push` immediately after completing a code modification or bug fix. 
 2.  **No Manual Staging Required**: The agent should assume that once a task is finished, the state is ready for the remote repository.
+3.  **Database Parity (Mirroring)**: The **Archive** and **Mirror** databases must remain 1-on-1 identical at all times for metadata and schema changes. Any modification made to the Archive database (e.g., updating `symbol_map`, renaming columns, or altering schema) MUST be immediately reflected in the Mirror database, whether explicitly requested or not.
