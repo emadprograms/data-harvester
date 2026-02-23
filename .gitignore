@@ -39,3 +39,7 @@ logs/
 
 # Temporary folders
 buy_cash/
+
+# Agent/Gemini folders
+.agent/
+.gemini/
