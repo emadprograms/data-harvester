@@ -4,7 +4,7 @@ libsql-client
 requests
 urllib3
 pytz
-infisical-python>=2.0.0
+infisicalsdk
 toml
 python-dotenv
 google-api-python-client

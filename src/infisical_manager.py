@@ -1,4 +1,4 @@
-from infisical_client import InfisicalClient, ClientSettings, GetSecretOptions, AuthenticationOptions, UniversalAuthMethod
+from infisical_sdk import InfisicalSDKClient
 import os
 import toml
 import threading
@@ -47,16 +47,12 @@ class InfisicalManager:
         if client_id and client_secret and self.project_id:
             try:
                 # Initialize Infisical Client
-                auth_method = UniversalAuthMethod(
+                self.client = InfisicalSDKClient(host="https://app.infisical.com")
+                self.client.auth.universal_auth.login(
                     client_id=client_id,
                     client_secret=client_secret
                 )
                 
-                self.client = InfisicalClient(ClientSettings(
-                    auth=AuthenticationOptions(
-                        universal_auth=auth_method
-                    )
-                ))
                 self.is_connected = True
                 self._initialized = True
                 print("✅ Infisical Connected")
@@ -78,15 +74,14 @@ class InfisicalManager:
             return self._secrets_cache[secret_name]
             
         try:
-            # NOTE: Use snake_case for options
-            secret = self.client.getSecret(options=GetSecretOptions(
+            secret = self.client.secrets.get_secret_by_name(
                 secret_name=secret_name,
                 project_id=self.project_id,
-                environment="dev",
-                path="/"
-            ))
-            # NOTE: Use snake_case for attribute access (.secret_value, NOT .secretValue)
-            val = secret.secret_value 
+                environment_slug="dev",
+                secret_path="/"
+            )
+            # NOTE: New SDK uses secretValue attribute
+            val = secret.secretValue 
             self._secrets_cache[secret_name] = val
             return val
         except Exception:

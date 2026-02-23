@@ -59,8 +59,8 @@ class TestInfisicalManager(unittest.TestCase):
         mgr.client = MagicMock()
         
         mock_secret = MagicMock()
-        mock_secret.secret_value = "test_value"
-        mgr.client.getSecret.return_value = mock_secret
+        mock_secret.secretValue = "test_value"
+        mgr.client.secrets.get_secret_by_name.return_value = mock_secret
         mgr.project_id = "test_project"
         
         # First call — should hit API
@@ -71,7 +71,7 @@ class TestInfisicalManager(unittest.TestCase):
         self.assertEqual(val1, "test_value")
         self.assertEqual(val2, "test_value")
         # API should only be called once (cached on second call)
-        mgr.client.getSecret.assert_called_once()
+        mgr.client.secrets.get_secret_by_name.assert_called_once()
 
 
 if __name__ == '__main__':
