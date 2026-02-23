@@ -4,33 +4,36 @@ Database connection management for Turso (libSQL).
 from libsql_client import create_client_sync
 import os
 
-def get_db_connection():
-    """Establishes a synchronous connection to the remote Turso database."""
+def get_archive_db_connection():
+    """Establishes a synchronous connection to the Turso Stock Data Archive database."""
     try:
         from src.infisical_manager import InfisicalManager
         mgr = InfisicalManager()
+        creds = mgr.get_turso_archive_creds()
         
-        url = mgr.get_secret("turso_arshademad_stockdataarchive_db_url")
-        token = mgr.get_secret("turso_arshademad_stockdataarchive_auth_token")
-        
-        if not url or not token:
-            print("❌ Missing Turso credentials. Check Infisical Access.")
+        if not creds['url'] or not creds['token']:
+            print("❌ Missing Turso Archive credentials.")
             return None
         
-        # Force HTTPS for reliability
-        http_url = url.replace("libsql://", "https://")
-        config = {"url": http_url, "auth_token": token}
-        return create_client_sync(**config)
+        http_url = creds['url'].replace("libsql://", "https://")
+        return create_client_sync(url=http_url, auth_token=creds['token'])
     except Exception as e:
-        print(f"❌ Turso Connection Error: {e}")
+        print(f"❌ Turso Archive Connection Error: {e}")
         return None
 
-def get_local_db_connection():
-    """Establishes a synchronous connection to the local SQLite database."""
+def get_mirror_db_connection():
+    """Establishes a synchronous connection to the Turso Stock Data Archive Mirror 1 database."""
     try:
-        local_db_path = "file:market_data.db"
-        config = {"url": local_db_path}
-        return create_client_sync(**config)
+        from src.infisical_manager import InfisicalManager
+        mgr = InfisicalManager()
+        creds = mgr.get_turso_mirror_creds()
+        
+        if not creds['url'] or not creds['token']:
+            print("❌ Missing Turso Mirror credentials.")
+            return None
+        
+        http_url = creds['url'].replace("libsql://", "https://")
+        return create_client_sync(url=http_url, auth_token=creds['token'])
     except Exception as e:
-        print(f"❌ Local DB Connection Error: {e}")
+        print(f"❌ Turso Mirror Connection Error: {e}")
         return None

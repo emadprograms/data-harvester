@@ -1,9 +1,5 @@
-"""
-Data integrity verification between Turso (remote) and local SQLite.
-Uses a lightweight "statistical fingerprint" to detect sync drift
-without reading all rows.
-"""
-
+import hashlib
+import pandas as pd
 
 def compute_fingerprint(client, date_str):
     """
@@ -27,34 +23,54 @@ def compute_fingerprint(client, date_str):
     except Exception as e:
         return {"count": -1, "volume_sum": -1, "max_ts": "ERR", "min_ts": "ERR", "error": str(e)}
 
+def calculate_df_md5(df: pd.DataFrame) -> str:
+    """Calculates MD5 hash of a DataFrame's essential columns."""
+    if df.empty:
+        return ""
+    
+    # Target columns for hash consistency
+    target_cols = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume']
+    # Sort and convert to string for stable hashing
+    df_sorted = df[target_cols].sort_values(['timestamp', 'symbol'])
+    
+    # Normalize timestamp to string if it's not already
+    if pd.api.types.is_datetime64_any_dtype(df_sorted['timestamp']):
+        df_sorted['timestamp'] = df_sorted['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Hash the CSV representation
+    hash_obj = hashlib.md5(df_sorted.to_csv(index=False).encode('utf-8'))
+    return hash_obj.hexdigest()
 
-def verify_sync(turso_client, local_client, date_str, logger=None):
+def verify_db_md5(client, df: pd.DataFrame, date_str: str, logger=None) -> tuple[bool, str]:
     """
-    Compare fingerprints between Turso and local SQLite for a given date.
-    Returns (is_ok: bool, details: str).
+    Verifies database integrity by reading back data and comparing MD5.
+    Optimized for minimum reads by targeting only the harvested date.
     """
-    fp_remote = compute_fingerprint(turso_client, date_str)
-    fp_local = compute_fingerprint(local_client, date_str)
-
-    if fp_remote.get("error") or fp_local.get("error"):
-        msg = f"⚠️ Integrity check skipped (query error)"
-        if logger:
-            logger.log(msg)
-        return True, msg  # Don't block on query errors
-
-    is_ok = (fp_remote["count"] == fp_local["count"])
-    drift = fp_remote["count"] - fp_local["count"]
-
-    if is_ok:
-        msg = f"✅ Sync OK for {date_str} | Rows: {fp_local['count']:,}"
-    else:
-        msg = (
-            f"❌ SYNC DRIFT on {date_str} | "
-            f"Turso: {fp_remote['count']:,} rows | "
-            f"Local: {fp_local['count']:,} rows"
+    if df.empty:
+        return True, "Empty Data"
+    
+    try:
+        df_md5 = calculate_df_md5(df)
+        
+        # Read back from DB
+        # We only read the rows we expect (target date)
+        res = client.execute(
+            "SELECT timestamp, symbol, open, high, low, close, volume FROM market_data WHERE timestamp LIKE ?",
+            [f"{date_str}%"]
         )
-
-    if logger:
-        logger.log(msg)
-
-    return is_ok, msg
+        
+        if not res.rows:
+            return False, "❌ DB Empty for date"
+        
+        db_df = pd.DataFrame([list(row) for row in res.rows], columns=['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume'])
+        db_md5 = calculate_df_md5(db_df)
+        
+        if df_md5 == db_md5:
+            return True, f"✅ MD5 MATCH ({df_md5[:8]})"
+        else:
+            return False, f"❌ MD5 MISMATCH (DF: {df_md5[:8]}, DB: {db_md5[:8]})"
+            
+    except Exception as e:
+        msg = f"⚠️ MD5 Verification Error: {e}"
+        if logger: logger.log(msg)
+        return False, msg

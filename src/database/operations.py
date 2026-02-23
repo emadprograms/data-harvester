@@ -8,8 +8,7 @@ STRATEGY:
 import pandas as pd
 import numpy as np
 import time
-from src.database.connection import get_db_connection, get_local_db_connection
-from src.config import UTC, US_EASTERN
+from src.database.connection import get_archive_db_connection, get_mirror_db_connection
 
 # --- Basic CRUD for Symbol Mapping ---
 
@@ -17,13 +16,18 @@ def get_symbol_map_from_db(client=None):
     """Fetches the complete symbol inventory from the new table."""
     own_client = False
     if not client:
-        client = get_db_connection()
+        client = get_archive_db_connection()
         own_client = True
         
     if not client:
-        return {}
+        # Try mirror as fallback for inventory
+        client = get_mirror_db_connection()
+        if not client:
+            return {}
+        own_client = True
+        
     try:
-        # Fetch from new table
+        # Fetch from table
         res = client.execute("""
             SELECT display_name, yahoo_ticker, capital_epic, binance_ticker, priority_1, priority_2, priority_3 
             FROM market_symbols 
@@ -49,54 +53,51 @@ def get_symbol_map_from_db(client=None):
             client.close()
 
 def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3=None, client=None):
-    """Adds or updates a symbol's rules."""
-    own_client = False
-    if not client:
-        client = get_db_connection()
-        own_client = True
-        
-    if not client:
-        return False
-    try:
-        # Check if column exists, if not, migration handles it, but safe insert:
-        client.execute(
-            """INSERT INTO market_symbols (display_name, yahoo_ticker, capital_epic, binance_ticker, priority_1, priority_2, priority_3) 
-               VALUES (?, ?, ?, ?, ?, ?, ?) 
-               ON CONFLICT(display_name) DO UPDATE SET 
-                 yahoo_ticker=excluded.yahoo_ticker, 
-                 capital_epic=excluded.capital_epic,
-                 binance_ticker=excluded.binance_ticker,
-                 priority_1=excluded.priority_1,
-                 priority_2=excluded.priority_2,
-                 priority_3=excluded.priority_3""",
-            [display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3]
-        )
-        return True
-    except Exception as e:
-        print(f"❌ Error saving symbol: {e}")
-        return False
-    finally:
-        if own_client and client:
-            client.close()
+    """Adds or updates a symbol's rules in BOTH databases."""
+    archive_client = client or get_archive_db_connection()
+    mirror_client = get_mirror_db_connection()
+    
+    success = True
+    for c in [archive_client, mirror_client]:
+        if not c: continue
+        try:
+            c.execute(
+                """INSERT INTO market_symbols (display_name, yahoo_ticker, capital_epic, binance_ticker, priority_1, priority_2, priority_3) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?) 
+                   ON CONFLICT(display_name) DO UPDATE SET 
+                     yahoo_ticker=excluded.yahoo_ticker, 
+                     capital_epic=excluded.capital_epic,
+                     binance_ticker=excluded.binance_ticker,
+                     priority_1=excluded.priority_1,
+                     priority_2=excluded.priority_2,
+                     priority_3=excluded.priority_3""",
+                [display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3]
+            )
+        except Exception as e:
+            print(f"❌ Error saving symbol to DB: {e}")
+            success = False
+    
+    if archive_client and not client: archive_client.close()
+    if mirror_client: mirror_client.close()
+    return success
 
 def delete_symbol_mapping(ticker, client=None):
-    """Deletes a symbol."""
-    own_client = False
-    if not client:
-        client = get_db_connection()
-        own_client = True
-        
-    if not client:
-        return False
-    try:
-        client.execute("DELETE FROM market_symbols WHERE display_name = ?", [ticker])
-        return True
-    except Exception as e:
-        print(f"❌ Error deleting symbol: {e}")
-        return False
-    finally:
-        if own_client and client:
-            client.close()
+    """Deletes a symbol from BOTH databases."""
+    archive_client = client or get_archive_db_connection()
+    mirror_client = get_mirror_db_connection()
+    
+    success = True
+    for c in [archive_client, mirror_client]:
+        if not c: continue
+        try:
+            c.execute("DELETE FROM market_symbols WHERE display_name = ?", [ticker])
+        except Exception as e:
+            print(f"❌ Error deleting symbol from DB: {e}")
+            success = False
+            
+    if archive_client and not client: archive_client.close()
+    if mirror_client: mirror_client.close()
+    return success
 
 # --- MARKET DATA OPERATIONS ---
 
@@ -115,7 +116,8 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
                 VALUES {placeholders}
             """
             client.execute(query, flat_values)
-            time.sleep(0.02) # Faster for batch inserts
+            # Minimal delay for Turso reliability
+            time.sleep(0.01)
         return True
     except Exception as e:
         err = f"{label} Save Error: {e}"
@@ -124,53 +126,46 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
         return False
 
 
-def save_data_to_storage(df: pd.DataFrame, logger=None, turso_client=None, local_client=None):
+def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mirror_client=None):
     """
-    Saves market data to BOTH Turso (remote) and Local SQLite.
-    CRITICAL: Normalizes timestamps to UTC strings to ensure uniqueness.
+    Saves market data to BOTH Turso Archive and Turso Mirror.
     """
     if df.empty:
         return False
 
-    own_turso = False
-    own_local = False
+    own_archive = False
+    own_mirror = False
 
     try:
-        # 1. Copy and Normalize Timestamp
+        # 1. Prepare Batch
         batch_df = df.copy()
         
-        # FIX: Added utc=True to handle timezone-aware inputs gracefully
         if not pd.api.types.is_datetime64_any_dtype(batch_df['timestamp']):
             batch_df['timestamp'] = pd.to_datetime(batch_df['timestamp'], utc=True)
 
-        # 2. FORCE UTC CONVERSION (Double safety)
         if batch_df['timestamp'].dt.tz is not None:
             batch_df['timestamp'] = batch_df['timestamp'].dt.tz_convert(UTC)
         else:
             batch_df['timestamp'] = batch_df['timestamp'].dt.tz_localize(UTC)
 
-        # 3. Create String for SQLite (Removes Offset confusion)
         batch_df['timestamp_str'] = batch_df['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
 
-        # 4. Sanitize Numeric Data (Handle Infinity / NaN for SQL)
-        # Turso/SQLite don't like 'inf' or 'NaN' in float columns
         numeric_cols = ['open', 'high', 'low', 'close', 'volume']
         for col in numeric_cols:
             if col in batch_df.columns:
-                # First pass: Pandas level sanitization
                 batch_df[col] = batch_df[col].replace([np.inf, -np.inf], np.nan)
                 batch_df[col] = batch_df[col].where(batch_df[col].notnull(), None)
 
-        # 5. Prepare Batch with LAST-CALL Sanitization
         import math
         rows_to_insert = []
         for row in batch_df.itertuples(index=False):
-            # Final sanity check for each value to ensure no non-finite floats reach the driver
             sanitized_row = []
+            # itertuples labels might vary if columns change, so we use indexed access or explicit names
+            # Based on DataFrame structure from Massive/Yahoo
             for item in [
                 row.timestamp_str, row.symbol, 
                 row.open, row.high, row.low, row.close, row.volume, 
-                row.session
+                getattr(row, 'session', 'REG')
             ]:
                 if isinstance(item, float) and not math.isfinite(item):
                     sanitized_row.append(None)
@@ -180,25 +175,25 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, turso_client=None, local
             rows_to_insert.append(tuple(sanitized_row))
 
         if logger:
-            logger.log(f"   💾 Dual Comitting {len(rows_to_insert)} records...")
+            logger.log(f"   💾 Dual Comitting {len(rows_to_insert)} records to Turso Archive & Mirror...")
 
-        # 5. Save to Turso
-        turso_success = False
-        if not turso_client:
-            turso_client = get_db_connection()
-            own_turso = True
-        if turso_client:
-            turso_success = _save_to_client(turso_client, rows_to_insert, logger, "Turso")
+        # 2. Save to Archive
+        archive_success = False
+        if not archive_client:
+            archive_client = get_archive_db_connection()
+            own_archive = True
+        if archive_client:
+            archive_success = _save_to_client(archive_client, rows_to_insert, logger, "Archive")
         
-        # 6. Save to Local
-        local_success = False
-        if not local_client:
-            local_client = get_local_db_connection()
-            own_local = True
-        if local_client:
-            local_success = _save_to_client(local_client, rows_to_insert, logger, "Local")
+        # 3. Save to Mirror
+        mirror_success = False
+        if not mirror_client:
+            mirror_client = get_mirror_db_connection()
+            own_mirror = True
+        if mirror_client:
+            mirror_success = _save_to_client(mirror_client, rows_to_insert, logger, "Mirror")
 
-        return turso_success or local_success # Success if at least one worked
+        return archive_success and mirror_success
 
     except Exception as e:
         err = f"Storage Global Error: {e}"
@@ -206,19 +201,17 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, turso_client=None, local
         else: print(f"❌ {err}")
         return False
     finally:
-        if own_turso and turso_client:
-            turso_client.close()
-        if own_local and local_client:
-            local_client.close()
-
-
+        if own_archive and archive_client:
+            archive_client.close()
+        if own_mirror and mirror_client:
+            mirror_client.close()
 
 def fetch_data_health_matrix(tickers: list, start_date, end_date, session_filter="Total"):
     """
     Fetches data, CONVERTS TO US/EASTERN, and then groups by day.
     This solves the issue where post-market data (8 PM ET) looks like tomorrow in UTC.
     """
-    client = get_db_connection()
+    client = get_archive_db_connection()
     if not client:
         return pd.DataFrame()
 
