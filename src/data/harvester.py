@@ -87,33 +87,44 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         
         rules = db_map[ticker]
         t_y = rules.get('yahoo_ticker') or ticker
-        t_b = rules.get('binance_ticker') or ticker
-        # Massive uses the ticker directly often, or we can use a dedicated field if added
-        t_m = ticker 
+        t_b = rules.get('binance_ticker')
+        t_m = rules.get('massive_ticker')
 
-        p1 = rules.get('p1')
-        p2 = rules.get('p2')
-
-        # Override p1/p2 to favor MASSIVE if not already set or if it's a company
-        # User said: "especially for the companies, the primary source is going to be massive"
-        if p1 != "BINANCE":
-            # If not crypto, use Massive as primary, Yahoo as fallback
-            primary_src = "MASSIVE"
-            fallback_src = "YAHOO"
-            primary_ticker = t_m
-            fallback_ticker = t_y
-        else:
+        # DEFAULT PRIORITY LOGIC (Implemented in code as requested)
+        # 1. Crypto / Stablecoins
+        if ticker.endswith("USDT") and ticker != "GC=F":
             primary_src = "BINANCE"
-            fallback_src = "YAHOO" # Fallback if binance fails?
-            primary_ticker = t_b
+            fallback_src = "YAHOO"
+            primary_ticker = t_b or ticker
             fallback_ticker = t_y
+
+        # 2. Gold Futures (PAXGUSDT on Binance preferred over GC=F on Yahoo)
+        elif ticker == "GC=F":
+            primary_src = "BINANCE" if t_b else "YAHOO"
+            fallback_src = "YAHOO" if t_b else "NONE"
+            primary_ticker = t_b if t_b else t_y
+            fallback_ticker = t_y if t_b else None
+
+        # 3. Specialized Assets (Yahoo Only)
+        elif ticker in ["CL=F", "VIX", "UUP", "XLC"]:
+            primary_src = "YAHOO"
+            fallback_src = "NONE"
+            primary_ticker = t_y
+            fallback_ticker = None
+
+        # 4. Standard Equities / ETFs
+        else:
+            primary_src = "MASSIVE" if t_m else "YAHOO"
+            fallback_src = "YAHOO" if t_m else "NONE"
+            primary_ticker = t_m or t_y
+            fallback_ticker = t_y if t_m else None
 
         # Try Primary
         df, msg = fetch_from_source(primary_src, primary_ticker, target_date, logger)
         source_label = primary_src
 
         # Fallback if Primary fails
-        if df.empty:
+        if df.empty and fallback_src != "NONE":
             logger.log(f"   ⚠️ {primary_src} failed for {ticker}. Attempting fallback {fallback_src}...")
             df, msg = fetch_from_source(fallback_src, fallback_ticker, target_date, logger)
             source_label = f"FB-{fallback_src}"
