@@ -13,7 +13,7 @@ from src.database.connection import get_archive_db_connection, get_mirror_db_con
 # --- Basic CRUD for Symbol Mapping ---
 
 def get_symbol_map_from_db(client=None):
-    """Fetches the complete symbol inventory from the new table."""
+    """Fetches the complete symbol inventory from the symbol_map table."""
     own_client = False
     if not client:
         client = get_archive_db_connection()
@@ -29,8 +29,8 @@ def get_symbol_map_from_db(client=None):
     try:
         # Fetch from table
         res = client.execute("""
-            SELECT display_name, yahoo_ticker, capital_epic, binance_ticker, priority_1, priority_2, priority_3 
-            FROM market_symbols 
+            SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker 
+            FROM symbol_map 
             ORDER BY display_name
         """)
         
@@ -39,11 +39,8 @@ def get_symbol_map_from_db(client=None):
         for row in res.rows:
             inventory[row[0]] = {
                 'yahoo_ticker': row[1],
-                'capital_epic': row[2],
-                'binance_ticker': row[3],
-                'p1': row[4],
-                'p2': row[5],
-                'p3': row[6]
+                'massive_ticker': row[2],
+                'binance_ticker': row[3]
             }
         return inventory
     except Exception:
@@ -52,7 +49,7 @@ def get_symbol_map_from_db(client=None):
         if own_client and client:
             client.close()
 
-def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3=None, client=None):
+def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, client=None):
     """Adds or updates a symbol's rules in BOTH databases."""
     archive_client = client or get_archive_db_connection()
     mirror_client = get_mirror_db_connection()
@@ -62,16 +59,13 @@ def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3
         if not c: continue
         try:
             c.execute(
-                """INSERT INTO market_symbols (display_name, yahoo_ticker, capital_epic, binance_ticker, priority_1, priority_2, priority_3) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?) 
+                """INSERT INTO symbol_map (display_name, yahoo_ticker, massive_ticker, binance_ticker) 
+                   VALUES (?, ?, ?, ?) 
                    ON CONFLICT(display_name) DO UPDATE SET 
                      yahoo_ticker=excluded.yahoo_ticker, 
-                     capital_epic=excluded.capital_epic,
-                     binance_ticker=excluded.binance_ticker,
-                     priority_1=excluded.priority_1,
-                     priority_2=excluded.priority_2,
-                     priority_3=excluded.priority_3""",
-                [display_name, y_ticker, m_ticker, b_ticker, p1, p2, p3]
+                     massive_ticker=excluded.massive_ticker,
+                     binance_ticker=excluded.binance_ticker""",
+                [display_name, y_ticker, m_ticker, b_ticker]
             )
         except Exception as e:
             print(f"❌ Error saving symbol to DB: {e}")
@@ -90,7 +84,7 @@ def delete_symbol_mapping(ticker, client=None):
     for c in [archive_client, mirror_client]:
         if not c: continue
         try:
-            c.execute("DELETE FROM market_symbols WHERE display_name = ?", [ticker])
+            c.execute("DELETE FROM symbol_map WHERE display_name = ?", [ticker])
         except Exception as e:
             print(f"❌ Error deleting symbol from DB: {e}")
             success = False

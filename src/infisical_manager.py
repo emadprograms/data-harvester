@@ -97,18 +97,27 @@ class InfisicalManager:
 
 
     def get_massive_keys(self) -> list:
-        """Retrieves the 8 Polygon/Massive API keys."""
-        keys = []
-        for i in range(1, 9):
-            key = self.get_secret(f"massive_api_key_{i}")
-            if key:
-                keys.append(key)
-        # Fallback to a single key if numbered keys don't exist
-        if not keys:
-            main_key = self.get_secret("massive_api_key")
-            if main_key:
-                keys.append(main_key)
-        return keys
+        """Retrieves all Polygon/Massive API keys matching the 'massive-' prefix."""
+        if not self.is_connected:
+            return []
+            
+        try:
+            # List all secrets to find those matching 'massive-'
+            response = self.client.secrets.list_secrets(
+                project_id=self.project_id,
+                environment_slug="dev",
+                secret_path="/"
+            )
+            
+            keys = []
+            for s in response.secrets:
+                if s.secretKey.startswith("massive-") or s.secretKey == "massive_api_key":
+                    keys.append(s.secretValue)
+            
+            return keys
+        except Exception as e:
+            print(f"⚠️ Error fetching Massive keys: {e}")
+            return []
 
     def get_turso_archive_creds(self) -> dict:
         """Retrieves Turso Stock Data Archive credentials."""
@@ -120,6 +129,6 @@ class InfisicalManager:
     def get_turso_mirror_creds(self) -> dict:
         """Retrieves Turso Stock Data Archive Mirror 1 credentials."""
         return {
-            "url": self.get_secret("turso_arshademad_stockdataarchive_mirror_1_db_url"),
-            "token": self.get_secret("turso_arshademad_stockdataarchive_mirror_1_auth_token")
+            "url": self.get_secret("turso_hamzaarshadalam_stockdataarchivemirror1_db_url"),
+            "token": self.get_secret("turso_hamzarshadalam_stockdataarchivemirror1_auth_token")
         }
