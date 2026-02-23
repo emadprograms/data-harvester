@@ -43,3 +43,6 @@ buy_cash/
 # Agent/Gemini folders
 .agent/
 .gemini/
+
+# Pytest cache
+.pytest_cache/
