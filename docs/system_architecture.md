@@ -12,7 +12,7 @@ Architecture Highlights:
 ## 2. Directory Structure
 
 ```text
-├── harvest_cli.py             # Main Entry Point & Orchestrator
+├── main.py             # Main Entry Point & Orchestrator
 ├── .github/workflows/         # Automation Layer
 ├── scripts/                   # System Maintenance & Migration
 ├── tools/                     # Core Utility Tools (Migration, Repair)
@@ -44,7 +44,7 @@ graph TD
 ### A. Harvester Controller (`src/data/harvester.py`)
 Orchestrates parallel workers via `ThreadPoolExecutor`. Manages provider-specific rate limiting and handles session roll-overs.
 
-### B. Ephemeral Data Manager (`harvest_cli.py`)
+### B. Ephemeral Data Manager (`main.py`)
 Manages the lifecycle of the transient database buffer. Ensures connections are explicitly closed to prevent session leaks and wipes local data at exit.
 
 ### C. Self-Healing Engine (`tools/migrate_historical_turso.py`)

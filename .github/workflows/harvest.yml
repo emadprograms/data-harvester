@@ -41,7 +41,7 @@ jobs:
         INFISICAL_PROJECT_ID: ${{ secrets.INFISICAL_PROJECT_ID }}
       run: |
         if [ -n "${{ github.event.inputs.target_date }}" ]; then
-          python harvest_cli.py --date "${{ github.event.inputs.target_date }}"
+          python main.py --date "${{ github.event.inputs.target_date }}"
         else
-          python harvest_cli.py
+          python main.py
         fi

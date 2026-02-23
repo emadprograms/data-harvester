@@ -5,11 +5,11 @@ from src.config import US_EASTERN
 import logging
 
 # We need to test the logic directly or encapsulate it. 
-# Since it's inside main() in harvest_cli.py, let's create a functional test 
+# Since it's inside main() in main.py, let's create a functional test 
 # that validates the core calculation logic directly here to ensure correctness.
 
 def get_target_date(simulated_now_et: datetime) -> date:
-    """Extracts the exact date logic from harvest_cli.py for testing."""
+    """Extracts the exact date logic from main.py for testing."""
     if simulated_now_et.hour < 4:
         target_date = (simulated_now_et - timedelta(days=1)).date()
     else:

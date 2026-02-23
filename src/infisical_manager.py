@@ -87,11 +87,39 @@ class InfisicalManager:
         except Exception:
             return None
 
-
     def get_capital_credentials(self) -> dict:
         """Retrieves Capital.com credentials."""
         return {
             "api_key": self.get_secret("capital_com_x_cap_api_key"),
             "identifier": self.get_secret("capital_com_identifier"),
             "password": self.get_secret("capital_com_password")
+        }
+
+
+    def get_massive_keys(self) -> list:
+        """Retrieves the 8 Polygon/Massive API keys."""
+        keys = []
+        for i in range(1, 9):
+            key = self.get_secret(f"massive_api_key_{i}")
+            if key:
+                keys.append(key)
+        # Fallback to a single key if numbered keys don't exist
+        if not keys:
+            main_key = self.get_secret("massive_api_key")
+            if main_key:
+                keys.append(main_key)
+        return keys
+
+    def get_turso_archive_creds(self) -> dict:
+        """Retrieves Turso Stock Data Archive credentials."""
+        return {
+            "url": self.get_secret("turso_arshademad_stockdataarchive_db_url"),
+            "token": self.get_secret("turso_arshademad_stockdataarchive_auth_token")
+        }
+
+    def get_turso_mirror_creds(self) -> dict:
+        """Retrieves Turso Stock Data Archive Mirror 1 credentials."""
+        return {
+            "url": self.get_secret("turso_arshademad_stockdataarchive_mirror_1_db_url"),
+            "token": self.get_secret("turso_arshademad_stockdataarchive_mirror_1_auth_token")
         }

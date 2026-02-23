@@ -23,7 +23,7 @@ For a deep dive into the system's design, dual-layer persistence, and Google Dri
 
 ## 📁 Repository Structure
 
-- `harvest_cli.py`: The stateless entry point for the daily automated harvest.
+- `main.py`: The stateless entry point for the daily automated harvest.
 - `src/api/`: Optimized clients for Massive (Polygon), Yahoo, and Binance with robust retry logic.
 - `src/data/`: Normalization logic and the parallel harvesting engine.
 - `src/database/`: Dual-layer persistence logic (Turso/libsql).
@@ -43,7 +43,7 @@ The harvester is triggered automatically via GitHub Actions (`Daily Harvest`). F
 1. Ensure your `.env` contains Infisical credentials (`INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, `INFISICAL_PROJECT_ID`).
 2. Run:
 ```bash
-python3 harvest_cli.py
+python3 main.py
 ```
 
 ---
