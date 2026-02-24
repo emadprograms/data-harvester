@@ -97,7 +97,14 @@ def main():
         logger.log(f"🌍 Running Harvest at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
         logger.log(f"🎯 Target Market Date: {target_date}")
 
-        # 1. Fetch Inventory
+        # 1. Pre-Harvest Parity Check & Repair
+        from src.utils.integrity import ensure_database_parity
+        logger.log(f"🔍 Pre-Harvest Parity Check for {target_date}...")
+        ok_pre, msg_pre = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
+        if not ok_pre:
+            critical_errors += f"- Pre-Harvest Parity Failure: {msg_pre}\n"
+
+        # 2. Fetch Inventory
         symbol_map = get_symbol_map_from_db(archive_client)
         inventory_list = list(symbol_map.keys())
         
@@ -107,7 +114,7 @@ def main():
             critical_errors += f"- {msg}\n"
             return
             
-        # 2. Harvest
+        # 3. Harvest
         logger.log(f"🚀 Starting Harvest for {len(inventory_list)} symbols...")
         massive_provider = MassiveProvider(logger)
         final_df, report_df = run_harvest_logic(
@@ -118,18 +125,17 @@ def main():
             massive_provider=massive_provider
         )
         
-        # 3. Dual Write & Integrity
+        # 4. Dual Write & Post-Harvest Parity
         if final_df is not None and not final_df.empty:
             if save_data_to_storage(final_df, logger, archive_client=archive_client, mirror_client=mirror_client):
                 logger.log(f"✅ Data written to Archive & Mirror. Rows: {len(final_df)}")
                 
-                from src.utils.integrity import verify_db_md5
-                ok_a, msg_a = verify_db_md5(archive_client, final_df, str(target_date), logger)
-                ok_m, msg_m = verify_db_md5(mirror_client, final_df, str(target_date), logger)
+                logger.log(f"🔍 Post-Harvest Parity Check for {target_date}...")
+                ok_post, msg_post = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
+                integrity_msg = f"Parity: {msg_post}"
                 
-                integrity_msg = f"Archive: {msg_a} | Mirror: {msg_m}"
-                if not (ok_a and ok_m):
-                    critical_errors += "- Integrity Check Failed.\n"
+                if not ok_post:
+                    critical_errors += f"- Post-Harvest Parity Failure: {msg_post}\n"
             else:
                 msg = "❌ Failed to save data to dual storage."
                 logger.log(msg)

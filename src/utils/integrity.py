@@ -1,5 +1,7 @@
 import hashlib
 import pandas as pd
+import time
+from src.config import SCHEMA_COLS
 
 def compute_fingerprint(client, date_str):
     """
@@ -30,6 +32,12 @@ def calculate_df_md5(df: pd.DataFrame) -> str:
     
     # Target columns for hash consistency
     target_cols = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume']
+    
+    # Ensure all target columns exist
+    for col in target_cols:
+        if col not in df.columns:
+            df[col] = 0.0 if col in ['open', 'high', 'low', 'close', 'volume'] else ""
+
     # Sort and convert to string for stable hashing
     df_sorted = df[target_cols].sort_values(['timestamp', 'symbol'])
     
@@ -53,7 +61,6 @@ def verify_db_md5(client, df: pd.DataFrame, date_str: str, logger=None) -> tuple
         df_md5 = calculate_df_md5(df)
         
         # Read back from DB
-        # We only read the rows we expect (target date)
         res = client.execute(
             "SELECT timestamp, symbol, open, high, low, close, volume FROM market_data WHERE timestamp LIKE ?",
             [f"{date_str}%"]
@@ -73,4 +80,48 @@ def verify_db_md5(client, df: pd.DataFrame, date_str: str, logger=None) -> tuple
     except Exception as e:
         msg = f"⚠️ MD5 Verification Error: {e}"
         if logger: logger.log(msg)
+        return False, msg
+
+def ensure_database_parity(archive_client, mirror_client, date_str: str, logger=None) -> tuple[bool, str]:
+    """
+    Compares Archive and Mirror for a specific date and repairs Mirror if they differ.
+    Returns (Success, Message).
+    """
+    try:
+        # 1. Fetch from Archive
+        res_a = archive_client.execute(
+            "SELECT timestamp, symbol, open, high, low, close, volume, session FROM market_data WHERE timestamp LIKE ?",
+            [f"{date_str}%"]
+        )
+        df_a = pd.DataFrame([list(row) for row in res_a.rows], columns=SCHEMA_COLS)
+        md5_a = calculate_df_md5(df_a)
+
+        # 2. Fetch from Mirror
+        res_m = mirror_client.execute(
+            "SELECT timestamp, symbol, open, high, low, close, volume, session FROM market_data WHERE timestamp LIKE ?",
+            [f"{date_str}%"]
+        )
+        df_m = pd.DataFrame([list(row) for row in res_m.rows], columns=SCHEMA_COLS)
+        md5_m = calculate_df_md5(df_m)
+
+        if md5_a == md5_m:
+            return True, f"✅ PARITY MATCH ({md5_a[:8]})"
+
+        # 3. Repair if different
+        if logger: logger.log(f"   ⚠️ Desync detected for {date_str}. Repairing Mirror from Archive...")
+        
+        # Delete existing data for that date in Mirror
+        mirror_client.execute("DELETE FROM market_data WHERE timestamp LIKE ?", [f"{date_str}%"])
+        
+        if not df_a.empty:
+            # Batch Insert into Mirror
+            rows_to_insert = [tuple(row) for row in df_a.itertuples(index=False)]
+            from src.database.operations import _save_to_client
+            _save_to_client(mirror_client, rows_to_insert, logger, "Mirror-Repair")
+            
+        return True, f"🛠 REPAIRED ({md5_a[:8]})"
+
+    except Exception as e:
+        msg = f"❌ Parity Check/Repair Failed: {e}"
+        if logger: logger.log(f"   {msg}")
         return False, msg

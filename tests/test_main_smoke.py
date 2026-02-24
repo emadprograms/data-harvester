@@ -48,7 +48,7 @@ class TestMainSmoke:
         assert mock_logger.log.called
         assert any("CRITICAL" in str(c) for c in mock_logger.log.call_args_list)
 
-    @patch("src.utils.integrity.verify_db_md5")
+    @patch("src.utils.integrity.ensure_database_parity")
     @patch("src.utils.discord.send_discord_harvest_report")
     @patch("src.data.harvester.run_harvest_logic")
     @patch("src.database.operations.save_data_to_storage")
@@ -71,7 +71,7 @@ class TestMainSmoke:
         mock_save_storage,
         mock_run_harvest,
         mock_discord_report,
-        mock_verify_md5,
+        mock_parity,
         safe_test_date_str
     ):
         """Standard main() flow with full mocks to ensure wiring is correct."""
@@ -95,7 +95,7 @@ class TestMainSmoke:
         mock_run_harvest.return_value = (mock_df, mock_report)
         
         mock_save_storage.return_value = True
-        mock_verify_md5.return_value = (True, "✅ MD5 MATCH")
+        mock_parity.return_value = (True, "✅ PARITY MATCH")
         mock_discord_report.return_value = True
 
         # 2. Run Main
