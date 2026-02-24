@@ -59,9 +59,20 @@ def _init_client(client):
                 close REAL, 
                 volume REAL, 
                 session TEXT,
+                source TEXT,
                 PRIMARY KEY (symbol, timestamp)
             )
         """)
+        
+        # --- MIGRATION: Add 'source' column if missing ---
+        try:
+            columns_res = client.execute("PRAGMA table_info(market_data)")
+            existing_columns = [row[1] for row in columns_res.rows] # name is at index 1
+            if 'source' not in existing_columns:
+                print("⚠️ Migrating schema: Adding 'source' column to market_data...")
+                client.execute("ALTER TABLE market_data ADD COLUMN source TEXT")
+        except Exception as e:
+            print(f"⚠️ Migration warning: {e}")
                 
     except Exception as e:
         print(f"❌ DB Init Error: {e}")
