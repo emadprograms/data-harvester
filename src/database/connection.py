@@ -37,3 +37,17 @@ def get_mirror_db_connection():
     except Exception as e:
         print(f"❌ Turso Mirror Connection Error: {e}")
         return None
+
+
+def get_db_connection():
+    """Backward-compatible default DB connection alias."""
+    return get_archive_db_connection()
+
+
+def get_local_db_connection():
+    """Backward-compatible local DB alias.
+
+    This project currently uses a remote mirror instead of a local sqlite file,
+    so we return mirror connection for compatibility.
+    """
+    return get_mirror_db_connection()

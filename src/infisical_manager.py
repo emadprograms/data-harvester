@@ -87,15 +87,6 @@ class InfisicalManager:
         except Exception:
             return None
 
-    def get_capital_credentials(self) -> dict:
-        """Retrieves Capital.com credentials."""
-        return {
-            "api_key": self.get_secret("capital_com_x_cap_api_key"),
-            "identifier": self.get_secret("capital_com_identifier"),
-            "password": self.get_secret("capital_com_password")
-        }
-
-
     def get_massive_keys(self) -> list:
         """Retrieves all Polygon/Massive API keys matching the 'massive-' prefix."""
         if not self.is_connected:

@@ -1,10 +1,31 @@
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import pandas as pd
 from src.config import US_EASTERN, UTC, SCHEMA_COLS
 from src.api.massive import fetch_massive_data
 from src.api.yahoo import fetch_yahoo_market_data
 from src.api.binance import fetch_binance_daily
 from src.data.normalizer import normalize_yahoo_df
+
+
+def _session_from_timestamp(ts):
+    ts_et = ts.tz_convert(US_EASTERN)
+    et_time = ts_et.time()
+    if et_time < datetime.strptime("09:30", "%H:%M").time():
+        return "PRE"
+    if et_time > datetime.strptime("16:00", "%H:%M").time():
+        return "POST"
+    return "REG"
+
+
+def _apply_session_labels(df):
+    if df.empty:
+        return df
+    out = df.copy()
+    if out['timestamp'].dt.tz is None:
+        out['timestamp'] = out['timestamp'].dt.tz_localize(UTC)
+    out['session'] = out['timestamp'].apply(_session_from_timestamp)
+    return out
 
 def _validate_date_match(df, target_date, source_name, logger, ticker):
     """ Helper to ensure API didn't return rogue historical/future data. """
@@ -89,54 +110,65 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         t_y = rules.get('yahoo_ticker') or ticker
         t_b = rules.get('binance_ticker')
         t_m = rules.get('massive_ticker')
+        p1 = rules.get('p1')
+        p2 = rules.get('p2')
 
-        # DEFAULT PRIORITY LOGIC (Implemented in code as requested)
-        # 1. Crypto / Stablecoins
-        if ticker.endswith("USDT") and ticker != "GC=F":
+        # DEFAULT PRIORITY LOGIC
+        if p1 == "BINANCE" or (ticker.endswith("USDT") and ticker != "GC=F"):
             primary_src = "BINANCE"
             fallback_src = "YAHOO"
             primary_ticker = t_b or ticker
             fallback_ticker = t_y
+        elif p1 == "YAHOO" and p2 == "MASSIVE":
+            # Hybrid mode: PRE/POST from Massive, REG from Yahoo
+            m_df, m_msg = fetch_from_source("MASSIVE", t_m or t_y, target_date, logger)
+            y_df, y_msg = fetch_from_source("YAHOO", t_y, target_date, logger)
 
-        # 2. Gold Futures (PAXGUSDT on Binance preferred over GC=F on Yahoo)
-        elif ticker == "GC=F":
-            primary_src = "BINANCE" if t_b else "YAHOO"
-            fallback_src = "YAHOO" if t_b else "NONE"
-            primary_ticker = t_b if t_b else t_y
-            fallback_ticker = t_y if t_b else None
-
-        # 3. Specialized Assets (Yahoo Only)
-        elif ticker in ["CL=F", "VIX", "UUP", "XLC"]:
-            primary_src = "YAHOO"
-            fallback_src = "NONE"
-            primary_ticker = t_y
-            fallback_ticker = None
-
-        # 4. Standard Equities / ETFs
+            if not m_df.empty and not y_df.empty:
+                m_df = _apply_session_labels(m_df)
+                y_df = _apply_session_labels(y_df)
+                pre_post = m_df[m_df['session'].isin(["PRE", "POST"])].copy()
+                regular = y_df[y_df['session'] == "REG"].copy()
+                df = pd.concat([pre_post, regular], ignore_index=True)
+                source_label = "HYBRID"
+                msg = "✅ Hybrid"
+                return _post_process(ticker, df, msg, source_label)
+            elif not m_df.empty:
+                df = _apply_session_labels(m_df)
+                source_label = "MASSIVE-ONLY"
+                msg = m_msg
+                return _post_process(ticker, df, msg, source_label)
+            elif not y_df.empty:
+                df = _apply_session_labels(y_df)
+                source_label = "YAHOO-ONLY"
+                msg = y_msg
+                return _post_process(ticker, df, msg, source_label)
+            else:
+                return ticker, pd.DataFrame(), f"❌ Failed ({m_msg} | {y_msg})", "FAILED", 0
         else:
-            primary_src = "MASSIVE" if t_m else "YAHOO"
-            fallback_src = "YAHOO" if t_m else "NONE"
-            primary_ticker = t_m or t_y
-            fallback_ticker = t_y if t_m else None
+            primary_src = p1 or ("MASSIVE" if t_m else "YAHOO")
+            fallback_src = p2 or ("YAHOO" if primary_src == "MASSIVE" else "NONE")
+            primary_ticker = t_m if primary_src == "MASSIVE" else (t_b if primary_src == "BINANCE" else t_y)
+            fallback_ticker = t_y if fallback_src == "YAHOO" else (t_m if fallback_src == "MASSIVE" else None)
 
-        # Try Primary
+        # Execution
         df, msg = fetch_from_source(primary_src, primary_ticker, target_date, logger)
         source_label = primary_src
-
-        # Fallback if Primary fails
         if df.empty and fallback_src != "NONE":
-            logger.log(f"   ⚠️ {primary_src} failed for {ticker}. Attempting fallback {fallback_src}...")
             df, msg = fetch_from_source(fallback_src, fallback_ticker, target_date, logger)
             source_label = f"FB-{fallback_src}"
 
         if df.empty:
             return ticker, pd.DataFrame(), f"❌ Failed ({msg})", "FAILED", 0
 
-        # Post-process
+        return _post_process(ticker, df, msg, source_label)
+
+    def _post_process(ticker, df, msg, source_label):
+        df = df.copy()
         df['symbol'] = ticker
-        df['session'] = 'REG' # Simple label since splicing is removed
+        if 'session' not in df.columns:
+            df['session'] = 'REG'
         
-        # Ensure ET localization for consistent reporting if needed
         if df['timestamp'].dt.tz is None:
             df['timestamp'] = df['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
         else:
@@ -148,7 +180,6 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
     all_data = []
     report_cards = []
     
-    # Using 8 workers as per 8 massive keys for optimal throughput
     with ThreadPoolExecutor(max_workers=8) as executor:
         future_to_ticker = {executor.submit(harvest_single_ticker, t): t for t in tickers_to_harvest}
         

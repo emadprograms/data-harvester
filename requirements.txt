@@ -9,3 +9,4 @@ toml
 python-dotenv
 pytest
 polygon-api-client
+tzdata

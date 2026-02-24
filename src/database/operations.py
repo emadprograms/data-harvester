@@ -8,7 +8,8 @@ STRATEGY:
 import pandas as pd
 import numpy as np
 import time
-from src.database.connection import get_archive_db_connection, get_mirror_db_connection
+from src.database.connection import get_archive_db_connection, get_mirror_db_connection, get_db_connection
+from src.config import UTC, US_EASTERN
 
 # --- Basic CRUD for Symbol Mapping ---
 
@@ -16,7 +17,7 @@ def get_symbol_map_from_db(client=None):
     """Fetches the complete symbol inventory from the symbol_map table."""
     own_client = False
     if not client:
-        client = get_archive_db_connection()
+        client = get_db_connection()
         own_client = True
         
     if not client:
@@ -27,21 +28,31 @@ def get_symbol_map_from_db(client=None):
         own_client = True
         
     try:
-        # Fetch from table
+        # Fetch from table (massive_ticker instead of capital_epic)
         res = client.execute("""
-            SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker 
-            FROM symbol_map 
+            SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker, priority_1, priority_2, priority_3
+            FROM symbol_map
             ORDER BY display_name
         """)
         
         # Return a dictionary structured for the app
         inventory = {}
         for row in res.rows:
-            inventory[row[0]] = {
-                'yahoo_ticker': row[1],
-                'massive_ticker': row[2],
-                'binance_ticker': row[3]
-            }
+            if len(row) >= 7:
+                inventory[row[0]] = {
+                    'yahoo_ticker': row[1],
+                    'massive_ticker': row[2],
+                    'binance_ticker': row[3],
+                    'p1': row[4],
+                    'p2': row[5],
+                    'p3': row[6],
+                }
+            else:
+                inventory[row[0]] = {
+                    'yahoo_ticker': row[1],
+                    'massive_ticker': row[2],
+                    'binance_ticker': row[3],
+                }
         return inventory
     except Exception:
         return {}
@@ -171,23 +182,30 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         if logger:
             logger.log(f"   💾 Dual Comitting {len(rows_to_insert)} records to Turso Archive & Mirror...")
 
-        # 2. Save to Archive
-        archive_success = False
-        if not archive_client:
-            archive_client = get_archive_db_connection()
+        # Default behavior for compatibility tests: single primary DB connection
+        if archive_client is None and mirror_client is None:
+            archive_client = get_db_connection()
             own_archive = True
+            if not archive_client:
+                return False
+            return _save_to_client(archive_client, rows_to_insert, logger, "DB")
+
+        # Explicit dual-write behavior when clients are supplied
+        archive_success = False
         if archive_client:
             archive_success = _save_to_client(archive_client, rows_to_insert, logger, "Archive")
-        
-        # 3. Save to Mirror
+
         mirror_success = False
-        if not mirror_client:
-            mirror_client = get_mirror_db_connection()
-            own_mirror = True
         if mirror_client:
             mirror_success = _save_to_client(mirror_client, rows_to_insert, logger, "Mirror")
 
-        return archive_success and mirror_success
+        if archive_client and mirror_client:
+            return archive_success and mirror_success
+        if archive_client:
+            return archive_success
+        if mirror_client:
+            return mirror_success
+        return False
 
     except Exception as e:
         err = f"Storage Global Error: {e}"

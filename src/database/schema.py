@@ -35,37 +35,51 @@ def _init_client(client):
         return
     
     try:
+        # --- COMPATIBILITY TABLE ---
+        client.execute("""
+            CREATE TABLE IF NOT EXISTS symbol_map (
+                display_name TEXT PRIMARY KEY,
+                yahoo_ticker TEXT,
+                massive_ticker TEXT,
+                binance_ticker TEXT,
+                priority_1 TEXT,
+                priority_2 TEXT,
+                priority_3 TEXT
+            )
+        """)
+
         # --- NEW SCALABLE SCHEMA ---
         client.execute("""
             CREATE TABLE IF NOT EXISTS market_symbols (
                 display_name TEXT PRIMARY KEY,
                 yahoo_ticker TEXT,
-                capital_epic TEXT,
+                massive_ticker TEXT,
                 binance_ticker TEXT,
-                priority_1 TEXT, -- YAHOO, CAPITAL, BINANCE
-                priority_2 TEXT,  -- CAPITAL, YAHOO, NONE
+                priority_1 TEXT, -- MASSIVE, YAHOO, BINANCE
+                priority_2 TEXT, -- YAHOO, MASSIVE, NONE
                 priority_3 TEXT
             )
         """)
 
-        # --- MIGRATION: Rename massive_ticker to capital_epic if it exists ---
+        # --- MIGRATION: Rename capital_epic to massive_ticker if it exists ---
         try:
-            info = client.execute("PRAGMA table_info(market_symbols)")
-            cols = [row[1] for row in info.rows]
-            if "massive_ticker" in cols and "capital_epic" not in cols:
-                print("🔄 Migrating: Renaming massive_ticker to capital_epic...")
-                client.execute("ALTER TABLE market_symbols RENAME COLUMN massive_ticker TO capital_epic")
-                print("✅ Renamed massive_ticker to capital_epic.")
+            for table in ["symbol_map", "market_symbols"]:
+                info = client.execute(f"PRAGMA table_info({table})")
+                cols = [row[1] for row in info.rows]
+                if "capital_epic" in cols and "massive_ticker" not in cols:
+                    print(f"🔄 Migrating {table}: Renaming capital_epic to massive_ticker...")
+                    client.execute(f"ALTER TABLE {table} RENAME COLUMN capital_epic TO massive_ticker")
+                    print(f"✅ Renamed capital_epic to massive_ticker in {table}.")
         except Exception as e:
             print(f"⚠️ Column migration warning: {e}")
 
-        # --- MIGRATION & SEEDING ---
+        # --- SEEDING ---
         try:
             res_new = client.execute("SELECT count(*) FROM market_symbols")
             if res_new.rows and res_new.rows[0][0] == 0:
                 _seed_default_symbols(client)
         except Exception as e:
-            print(f"⚠️ Migration/Seeding warning: {e}")
+            print(f"⚠️ Seeding warning: {e}")
 
         # --- MARKET DATA TABLE ---
         client.execute("""
@@ -86,28 +100,29 @@ def _init_client(client):
         print(f"❌ DB Init Error: {e}")
 
 
-
-
 def _seed_default_symbols(client):
     """Seeds default symbols into an empty database."""
-    print("🌱 Seeding default symbols...")
-    hybrid_tickers = [
+    print("🌱 Seeding default symbols (Massive/Polygon Optimized)...")
+    tickers = [
         "SPY", "QQQ", "IWM", "DIA", "AMD", "AMZN", "AAPL", "NVDA", "TSLA",
         "BTCUSDT", "ETHUSDT", "CL=F", "GC=F", "VIX"
     ]
-    for t in hybrid_tickers:
-        p1 = "YAHOO"
-        p2 = "CAPITAL"
+    for t in tickers:
+        p1 = "MASSIVE"
+        p2 = "YAHOO"
         b_ticker = None
         y_ticker = t
-        c_ticker = t
+        m_ticker = t
+        
         if t.endswith("USDT"): 
             p1 = "BINANCE"; p2 = "YAHOO"; b_ticker = t
             y_ticker = t.replace("USDT", "-USD")
+        elif t in ["CL=F", "GC=F", "VIX"]:
+            p1 = "YAHOO"; p2 = "NONE"; m_ticker = None
         
         client.execute(
             """INSERT INTO market_symbols 
-               (display_name, yahoo_ticker, capital_epic, binance_ticker, priority_1, priority_2) 
+               (display_name, yahoo_ticker, massive_ticker, binance_ticker, priority_1, priority_2) 
                VALUES (?, ?, ?, ?, ?, ?)""",
-            [t, y_ticker, c_ticker, b_ticker, p1, p2]
+            [t, y_ticker, m_ticker, b_ticker, p1, p2]
         )
