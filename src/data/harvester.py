@@ -149,17 +149,28 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         # ---------------------------------------------------------------------
         
         # A. Try Primary
+        logger.log(f"   🔍 {ticker} - Trying {primary_src} ({primary_ticker})...")
         df, msg = fetch_from_source(primary_src, primary_ticker, target_date, logger, massive_provider)
-        source_label = primary_src
-
-        # B. Try Fallback (Yahoo)
-        if df.empty and fallback_src != "NONE":
-            logger.log(f"   ⚠️ {primary_src} failed for {ticker}. Attempting fallback {fallback_src}...")
-            df, msg = fetch_from_source(fallback_src, fallback_ticker, target_date, logger, massive_provider)
-            source_label = f"FB-{fallback_src}"
-
-        if df.empty:
-            return ticker, pd.DataFrame(), f"❌ Failed ({msg})", "FAILED", 0, {}
+        
+        if not df.empty:
+            logger.log(f"   ✅ {ticker} - {primary_src} Success ({len(df)} rows).")
+            source_label = primary_src
+        else:
+            logger.log(f"   ⚠️ {ticker} - {primary_src} Failed ({msg}).")
+            
+            # B. Try Fallback (Yahoo)
+            if fallback_src != "NONE":
+                logger.log(f"   🔄 {ticker} - Falling back to {fallback_src} ({fallback_ticker})...")
+                df, msg = fetch_from_source(fallback_src, fallback_ticker, target_date, logger, massive_provider)
+                
+                if not df.empty:
+                    logger.log(f"   ✅ {ticker} - {fallback_src} Success ({len(df)} rows).")
+                    source_label = f"FB-{fallback_src}"
+                else:
+                    logger.log(f"   ❌ {ticker} - {fallback_src} also failed ({msg}).")
+                    return ticker, pd.DataFrame(), f"❌ Failed ({msg})", "FAILED", 0, {}
+            else:
+                return ticker, pd.DataFrame(), f"❌ Failed ({msg})", "FAILED", 0, {}
 
         # ---------------------------------------------------------------------
         # POST-PROCESS (Unified for all sources)
@@ -220,10 +231,17 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                 })
 
     if not all_data:
-        return pd.DataFrame(), pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
+        report_df = pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
+        if not report_df.empty:
+            logger.log("\n" + "="*50 + "\nHARVEST SUMMARY (NO DATA)\n" + "="*50 + "\n" + report_df.to_string(index=False) + "\n" + "="*50)
+        return pd.DataFrame(), report_df
     
     final_df = pd.DataFrame()
     report_df = pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
+
+    # Log the summary table
+    if not report_df.empty:
+        logger.log("\n" + "="*50 + "\nHARVEST SUMMARY\n" + "="*50 + "\n" + report_df.to_string(index=False) + "\n" + "="*50)
 
     try:
         cleaned = []
