@@ -16,6 +16,7 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 - **Observability**: Discord Webhooks for health reports and alerts
 
 ### Architecture
+- **Database Parity Mandate**: **Maintaining absolute 1-on-1 consistency between the Archive and Mirror databases is the single most important objective of this application.** Every operation must be designed to verify and enforce this parity.
 - **Stateless/Ephemeral**: Designed to run in environments where local state is transient.
 - **Dual-Master Strategy**: Data is committed to two independent Turso databases (Archive and Mirror) to ensure high availability and data redundancy.
 - **Simplified Fetching**: Uses a strict **Primary -> Fallback** logic. No data splicing or hybrid merging.

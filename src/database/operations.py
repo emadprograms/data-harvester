@@ -56,8 +56,9 @@ def get_symbol_map_from_db(client=None):
 def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
     """Generic helper to save a batch of rows to a specific database client."""
     BATCH_SIZE = 100
+    total_rows = len(rows_to_insert)
     try:
-        for i in range(0, len(rows_to_insert), BATCH_SIZE):
+        for i in range(0, total_rows, BATCH_SIZE):
             batch = rows_to_insert[i : i + BATCH_SIZE]
             placeholders = ", ".join(["(?, ?, ?, ?, ?, ?, ?, ?)"] * len(batch))
             flat_values = [item for sublist in batch for item in sublist]
@@ -70,6 +71,11 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
             client.execute(query, flat_values)
             # Minimal delay for Turso reliability
             time.sleep(0.01)
+            
+            if logger and i % 500 == 0:
+                logger.log(f"      ➡️ {label}: Progress {min(i + BATCH_SIZE, total_rows)}/{total_rows}...")
+                
+        if logger: logger.log(f"   ✅ {label}: Successfully committed {total_rows} rows.")
         return True
     except Exception as e:
         err = f"{label} Save Error: {e}"
@@ -135,7 +141,9 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         if not archive_client:
             archive_client = get_archive_db_connection()
             own_archive = True
+        
         if archive_client:
+            if logger: logger.log("   ➡️ Committing to ARCHIVE...")
             archive_success = _save_to_client(archive_client, rows_to_insert, logger, "Archive")
 
         if not archive_success:
@@ -147,7 +155,9 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         if not mirror_client:
             mirror_client = get_mirror_db_connection()
             own_mirror = True
+        
         if mirror_client:
+            if logger: logger.log("   ➡️ Committing to MIRROR...")
             mirror_success = _save_to_client(mirror_client, rows_to_insert, logger, "Mirror")
 
         # C. Handle Desync (Mirror failed after Archive success)

@@ -95,6 +95,8 @@ def ensure_database_parity(archive_client, mirror_client, date_str: str, logger=
         )
         df_a = pd.DataFrame([list(row) for row in res_a.rows], columns=SCHEMA_COLS)
         md5_a = calculate_df_md5(df_a)
+        
+        if logger: logger.log(f"   📊 Archive: {len(df_a)} rows | MD5: {md5_a[:8]}")
 
         # 2. Fetch from Mirror
         res_m = mirror_client.execute(
@@ -103,8 +105,11 @@ def ensure_database_parity(archive_client, mirror_client, date_str: str, logger=
         )
         df_m = pd.DataFrame([list(row) for row in res_m.rows], columns=SCHEMA_COLS)
         md5_m = calculate_df_md5(df_m)
+        
+        if logger: logger.log(f"   📊 Mirror : {len(df_m)} rows | MD5: {md5_m[:8]}")
 
         if md5_a == md5_m:
+            if logger: logger.log(f"   ✅ Parity Confirmed for {date_str}.")
             return True, f"✅ PARITY MATCH ({md5_a[:8]})"
 
         # 3. Repair if different
