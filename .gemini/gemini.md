@@ -9,6 +9,7 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 - **Language**: Python 3.12+
 - **Data Processing**: `pandas`, `numpy`
 - **Concurrency**: `ThreadPoolExecutor` (8 parallel workers)
+- `USFederalHolidayCalendar`: For market holiday awareness
 - **Database**: Turso (libsql) with a Dual-Write strategy (Archive + Mirror)
 - **Secrets Management**: Infisical SDK (`infisicalsdk`)
 - **APIs**: Polygon.io (Massive), Yahoo Finance, Binance
@@ -75,6 +76,7 @@ The manager supports two distinct authentication flows via environment variables
 - **Type Safety**: Use type hints where possible for clarity.
 - **Logging**: Use the centralized `CLILogger` for all session-based logging.
 - **Timezones**: Strictly adhere to UTC for storage and US/Eastern for market session logic.
+- **Holiday Awareness**: Use `pandas.tseries.holiday.USFederalHolidayCalendar` to correctly identify and skip US Market Holidays during date rollover logic.
 - **Error Handling**: Implement robust retry logic (see `src/api/retry.py`) for all external API calls.
 
 ### Sourcing Priority (Implemented in `src/data/harvester.py`)
@@ -102,6 +104,7 @@ The following rules apply **EXCLUSIVELY** to the **Gemini CLI** agent (this inte
 1.  **Automatic Pushing**: Because all actions in the Gemini CLI are directed and approved by the user in real-time, the agent must **always** execute a `git push` immediately after completing a code modification or bug fix. 
 2.  **No Manual Staging Required**: The agent should assume that once a task is finished, the state is ready for the remote repository.
 3.  **Database Parity (Mirroring)**: The **Archive** and **Mirror** databases must remain 1-on-1 identical at all times for metadata and schema changes. Any modification made to the Archive database (e.g., updating `symbol_map`, renaming columns, or altering schema) MUST be immediately reflected in the Mirror database, whether explicitly requested or not.
+4.  **Mandatory Test-Driven Workflow**: After every code modification or bug fix, the agent MUST run the full test suite (`python3 -m pytest tests/`). If tests fail, the agent must fix the errors and re-run the tests until they pass before pushing the changes to GitHub.
 
 ---
 
