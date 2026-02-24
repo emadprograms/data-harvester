@@ -1,11 +1,11 @@
 # System Architecture: Data Harvester (Pure CLI)
 
 ## 1. High-Level Overview
-The **Data Harvester** is a decoupled, headless Python service optimized for **Stateless/Ephemeral** execution (GitHub Actions). It maintains data parity across two masters (Turso and Google Drive) using a high-performance parallel fetch core.
+The **Data Harvester** is a decoupled, headless Python service optimized for **Stateless/Ephemeral** execution (GitHub Actions). It maintains data parity across two masters (Turso Archive and Turso Mirror) using a high-performance parallel fetch core.
 
 Architecture Highlights:
 - **Stateless Design**: Optimized for GitHub Actions; local storage is treated as a transient buffer.
-- **Dual-Master strategy**: Data is synced to Turso (Remote SQL) and Google Drive (Master SQLite Backup).
+- **Dual-Master strategy**: Data is synced to Turso Archive (Primary) and Turso Mirror (Replica).
 - **Self-Healing**: Automatically repairs gaps in the local buffer from Turso before every harvest.
 - **Integrity Fingerprinting**: Uses lightweight statistical fingerprints to verify sync between cloud masters.
 
@@ -14,13 +14,12 @@ Architecture Highlights:
 ```text
 ├── main.py             # Main Entry Point & Orchestrator
 ├── .github/workflows/         # Automation Layer
-├── scripts/                   # System Maintenance & Migration
 ├── tools/                     # Core Utility Tools (Migration, Repair)
 ├── src/
-│   ├── api/                   # PROVIDER LAYER (Capital.com, Yahoo, Binance)
+│   ├── api/                   # PROVIDER LAYER (Massive, Yahoo, Binance)
 │   ├── data/                  # LOGIC LAYER (Harvester, Normalizer)
 │   ├── database/              # STORAGE LAYER (LibSQL/Turso/SQLite)
-│   └── utils/                 # CROSS-CUTTING (Discord, Integrity, GDrive)
+│   └── utils/                 # CROSS-CUTTING (Discord, Integrity)
 └── requirements.txt           # Environment Dependencies
 ```
 
@@ -29,13 +28,11 @@ Architecture Highlights:
 ```mermaid
 graph TD
     Trigger[GitHub Actions / CLI] --> Wipe[Pre-Run Local Wipe]
-    Wipe --> Download[GDrive Download]
-    Download --> Repair[Self-Healing: Fill Gaps from Turso]
+    Wipe --> Repair[Self-Healing: Fill Gaps from Turso]
     Repair --> Harvest[Parallel API Fetch]
-    Harvest --> Storage[Dual Write: Turso + Local SQLite]
-    Storage --> Integrity[Integrity Check: Turso vs Local]
-    Integrity --> Upload[GDrive Master Upload]
-    Upload --> Cleanup[Post-Run Local Wipe]
+    Harvest --> Storage[Dual Write: Archive + Mirror Turso]
+    Storage --> Integrity[Integrity Check: Archive vs Mirror]
+    Integrity --> Cleanup[Post-Run Local Wipe]
     Cleanup --> Notify[Discord Health & Sync Report]
 ```
 
@@ -47,12 +44,12 @@ Orchestrates parallel workers via `ThreadPoolExecutor`. Manages provider-specifi
 ### B. Ephemeral Data Manager (`main.py`)
 Manages the lifecycle of the transient database buffer. Ensures connections are explicitly closed to prevent session leaks and wipes local data at exit.
 
-### C. Self-Healing Engine (`tools/migrate_historical_turso.py`)
-Ensures no data gaps exist between runs by comparing row counts and timestamps between Turso and the local buffer, pulling missing data as needed.
+### C. Self-Healing Engine (`tools/sync_mirror_v5.py`)
+Ensures no data gaps exist between runs by comparing row counts and timestamps between Turso Archive and Mirror, pulling missing data as needed.
 
 ### D. Integrity & Health (`src/utils/`)
-- **Integrity**: Compares MD5-style fingerprints (statistical sums) to detect sync drift.
+- **Integrity**: Compares MD5-style fingerprints (statistical sums) to detect sync drift between Archive and Mirror.
 - **Discord**: Time-aware health dashboard flagging tickers with low candle counts based on the current market session (PRE/REG/POST).
 
 ---
-*Updated for Data Harvester v4.0 (Stateless & Self-Healing Architecture)*
+*Updated for Data Harvester v5.0 (Stateless & Self-Healing Architecture)*

@@ -6,9 +6,8 @@ A high-performance, stateless data harvesting engine designed for scheduled dail
 
 The harvester follows a strict **ephemeral run cycle** to ensure data integrity and avoid local state drift.
 
-For a deep dive into the system's design, dual-layer persistence, and Google Drive authentication:
+For a deep dive into the system's design and dual-layer persistence:
 👉 **[Read the System Architecture Guide](docs/system_architecture.md)**
-👉 **[Read the Google Drive Setup Guide](docs/GOOGLE_DRIVE_SETUP.md)**
 
 ## 🛠 Key Features
 
@@ -27,7 +26,9 @@ For a deep dive into the system's design, dual-layer persistence, and Google Dri
 - `src/api/`: Optimized clients for Massive (Polygon), Yahoo, and Binance with robust retry logic.
 - `src/data/`: Normalization logic and the parallel harvesting engine.
 - `src/database/`: Dual-layer persistence logic (Turso/libsql).
-- `src/utils/`: Integrity fingerprinting, GDrive sync, and Discord alerting.
+- `src/utils/`: Integrity fingerprinting and Discord alerting.
+- `discord_bot/`: Independent bot for real-time market data monitoring and alerts.
+- `tools/`: Administrative utilities for database migrations, historical repairs, and secret management.
 - `tests/`: Comprehensive test suite validating the entire pipeline.
 
 ## 🧪 Testing
