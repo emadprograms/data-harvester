@@ -17,6 +17,8 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 ### Architecture
 - **Stateless/Ephemeral**: Designed to run in environments where local state is transient.
 - **Dual-Master Strategy**: Data is committed to two independent Turso databases (Archive and Mirror) to ensure high availability and data redundancy.
+- **Simplified Fetching**: Uses a strict **Primary -> Fallback** logic. No data splicing or hybrid merging.
+- **Code-Based Priority**: All data sourcing priorities are defined in `src/data/harvester.py`, not in the database.
 - **Self-Healing**: The engine automatically repairs gaps in the local buffer from Turso before every harvest.
 - **Integrity Fingerprinting**: Uses optimized MD5-style fingerprints to verify sync parity between Archive and Mirror databases.
 
@@ -73,7 +75,13 @@ The manager supports two distinct authentication flows via environment variables
 - **Type Safety**: Use type hints where possible for clarity.
 - **Logging**: Use the centralized `CLILogger` for all session-based logging.
 - **Timezones**: Strictly adhere to UTC for storage and US/Eastern for market session logic.
-- **Error Handling**: Implement robust retry logic for all external API calls.
+- **Error Handling**: Implement robust retry logic (see `src/api/retry.py`) for all external API calls.
+
+### Sourcing Priority (Implemented in `src/data/harvester.py`)
+1.  **Gold (`GC=F`)**: Binance (`PAXGUSDT`) -> Fallback: Yahoo (`GC=F`).
+2.  **Crypto (`*USDT`)**: Binance -> Fallback: Yahoo.
+3.  **Equities/ETFs**: Massive (Polygon) -> Fallback: Yahoo.
+4.  **Specialized**: Yahoo only (if no other source available).
 
 ### Testing Practices
 - **Mocking**: External APIs (Polygon, Yahoo, Binance) should be mocked in unit tests.
@@ -113,19 +121,7 @@ When adding or updating commands to the Discord bot, always adhere to the **Inte
 - **`CustomDateModal`**: A modal triggered by the manual entry button that allows users to type a specific `YYYY-MM-DD` string.
 - **Action Callback**: Both the dropdown and modal should trigger a unified `action_callback` (e.g., `trigger_github_harvest`) to ensure consistent behavior across all input methods.
 
-### C. Example Implementation
-```python
-@bot.command()
-async def somecommand(ctx, date_indicator: str = None):
-    target_date = get_target_date(date_indicator)
-    if not target_date:
-        view = DateSelectionView(action_callback=my_action_callback)
-        await ctx.send("🗓️ **Select Date for Command:**", view=view)
-    else:
-        await my_action_callback(ctx, target_date)
-```
-
-### D. UX Guidelines
+### C. UX Guidelines
 - **Suppress Link Previews**: Always wrap URLs in masked links with angle brackets (e.g., `[Monitor Progress](<URL>)`) to prevent Discord from generating large link preview banners (embeds) that clutter the channel.
 
 ---
