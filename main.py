@@ -163,16 +163,19 @@ def main():
             now_et = datetime.now(US_EASTERN)
             health_alerts = build_health_alerts(report_df, now_et.hour)
             
-            send_discord_harvest_report(
-                report_df=report_df, 
-                target_date=target_date, 
-                total_rows=rows,
-                file_path=log_filename,
-                health_alerts=health_alerts,
-                integrity_pre=integrity_pre_msg,
-                integrity_post=integrity_post_msg,
-                critical_errors=critical_errors
-            )
+            if os.getenv("SKIP_DISCORD") == "true":
+                logger.log("📢 SKIP_DISCORD is true. Skipping Discord notification.")
+            else:
+                send_discord_harvest_report(
+                    report_df=report_df, 
+                    target_date=target_date, 
+                    total_rows=rows,
+                    file_path=log_filename,
+                    health_alerts=health_alerts,
+                    integrity_pre=integrity_pre_msg,
+                    integrity_post=integrity_post_msg,
+                    critical_errors=critical_errors
+                )
 
         if archive_client:
             try: archive_client.close()

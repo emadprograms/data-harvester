@@ -119,8 +119,28 @@ def ensure_database_parity(archive_client, mirror_client, date_str: str, logger=
         mirror_client.execute("DELETE FROM market_data WHERE timestamp LIKE ?", [f"{date_str}%"])
         
         if not df_a.empty:
+            # Sanitize for Turso (Replace NaN/Inf with None)
+            import numpy as np
+            import math
+            
+            # Clean up the dataframe before tuple conversion
+            numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+            for col in numeric_cols:
+                if col in df_a.columns:
+                    df_a[col] = df_a[col].replace([np.inf, -np.inf], np.nan)
+                    df_a[col] = df_a[col].where(df_a[col].notnull(), None)
+
             # Batch Insert into Mirror
-            rows_to_insert = [tuple(row) for row in df_a.itertuples(index=False)]
+            rows_to_insert = []
+            for row in df_a.itertuples(index=False):
+                sanitized_row = []
+                for item in row:
+                    if isinstance(item, float) and not math.isfinite(item):
+                        sanitized_row.append(None)
+                    else:
+                        sanitized_row.append(item)
+                rows_to_insert.append(tuple(sanitized_row))
+
             from src.database.operations import _save_to_client
             _save_to_client(mirror_client, rows_to_insert, logger, "Mirror-Repair")
             
