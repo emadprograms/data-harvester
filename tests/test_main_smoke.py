@@ -57,8 +57,10 @@ class TestMainSmoke(unittest.TestCase):
     @patch("src.database.connection.get_archive_db_connection")
     @patch("src.infisical_manager.InfisicalManager")
     @patch("src.utils.logger.CLILogger")
+    @patch("src.api.massive.MassiveProvider")
     def test_main_flow_with_mocked_harvest(
         self,
+        mock_massive_cls,
         mock_logger_cls,
         mock_infisical_cls,
         mock_archive_conn,

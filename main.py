@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from src.database.schema import init_db
 from src.database.operations import get_symbol_map_from_db, save_data_to_storage
 from src.data.harvester import run_harvest_logic
+from src.api.massive import MassiveProvider
 from src.config import US_EASTERN
 from src.utils.discord import send_discord_harvest_report, build_health_alerts
 from src.utils.logger import CLILogger
@@ -97,11 +98,13 @@ def main():
             
         # 2. Harvest
         logger.log(f"🚀 Starting Harvest for {len(inventory_list)} symbols...")
+        massive_provider = MassiveProvider(logger)
         final_df, report_df = run_harvest_logic(
             tickers_to_harvest=inventory_list,
             target_date=target_date,
             db_map=symbol_map,
-            logger=logger
+            logger=logger,
+            massive_provider=massive_provider
         )
         
         # 3. Dual Write & Integrity

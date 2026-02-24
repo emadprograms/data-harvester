@@ -94,7 +94,7 @@ class TestHarvestPipeline(unittest.TestCase):
     def test_primary_fallback_logic(self, mock_fetch):
         """If primary fails, it must try fallback."""
         
-        def side_effect(source, ticker, target_date, logger):
+        def side_effect(source, ticker, target_date, logger, massive_provider=None):
             if source == "MASSIVE":
                 return pd.DataFrame(), "❌ Empty"
             if source == "YAHOO":
@@ -110,7 +110,7 @@ class TestHarvestPipeline(unittest.TestCase):
         mock_fetch.side_effect = side_effect
         logger = MockLogger()
         
-        final_df, report = run_harvest_logic(["AAPL"], date(2025, 1, 15), self._make_inventory(), logger)
+        final_df, report = run_harvest_logic(["AAPL"], date(2025, 1, 15), self._make_inventory(), logger, massive_provider=MagicMock())
         
         self.assertFalse(final_df.empty)
         # Should be labeled as FB-YAHOO
@@ -124,7 +124,7 @@ class TestHarvestPipeline(unittest.TestCase):
         logger = MockLogger()
         
         # We just want to see if Binance was the first call for GC=F
-        run_harvest_logic(["GC=F"], date(2025, 1, 15), inventory, logger)
+        run_harvest_logic(["GC=F"], date(2025, 1, 15), inventory, logger, massive_provider=MagicMock())
         
         # First call for this ticker should be BINANCE
         first_call = mock_fetch.call_args_list[0]

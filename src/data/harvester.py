@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from src.config import US_EASTERN, UTC, SCHEMA_COLS
-from src.api.massive import fetch_massive_data
+from src.api.massive import fetch_massive_data, MassiveProvider
 from src.api.yahoo import fetch_yahoo_market_data
 from src.api.binance import fetch_binance_daily
 from src.data.normalizer import normalize_yahoo_df
@@ -54,7 +54,7 @@ def _validate_date_match(df, target_date, source_name, logger, ticker):
     return valid_df, f"✅ {source_name}"
     
 
-def fetch_from_source(source_name, specific_ticker, target_date, logger):
+def fetch_from_source(source_name, specific_ticker, target_date, logger, massive_provider=None):
     """
     Generic fetcher that routes to the correct API.
     """
@@ -70,7 +70,11 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger):
             return pd.DataFrame(), "❌ Yahoo Empty"
             
         elif source_name == "MASSIVE":
-            raw = fetch_massive_data(specific_ticker, target_date, logger)
+            if massive_provider:
+                raw = massive_provider.fetch_data(specific_ticker, target_date)
+            else:
+                raw = fetch_massive_data(specific_ticker, target_date, logger)
+            
             if not raw.empty:
                 return _validate_date_match(raw, target_date, "Massive", logger, specific_ticker)
             return pd.DataFrame(), "❌ Massive Empty"
@@ -87,7 +91,7 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger):
         
     return pd.DataFrame(), f"Unknown Source {source_name}"
 
-def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None):
+def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None, massive_provider=None):
     """
     Executes the simplified concurrent harvesting engine.
     Strategy: Strictly PRIMARY -> FALLBACK (Yahoo). No splicing.
@@ -98,6 +102,10 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
 
     total_tickers = len(tickers_to_harvest)
     completed_count = 0
+    
+    # Instantiate provider if not passed (Fallback for tests/legacy calls)
+    if not massive_provider:
+        massive_provider = MassiveProvider(logger)
 
     def harvest_single_ticker(ticker):
         nonlocal completed_count
@@ -141,13 +149,13 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         # ---------------------------------------------------------------------
         
         # A. Try Primary
-        df, msg = fetch_from_source(primary_src, primary_ticker, target_date, logger)
+        df, msg = fetch_from_source(primary_src, primary_ticker, target_date, logger, massive_provider)
         source_label = primary_src
 
         # B. Try Fallback (Yahoo)
         if df.empty and fallback_src != "NONE":
             logger.log(f"   ⚠️ {primary_src} failed for {ticker}. Attempting fallback {fallback_src}...")
-            df, msg = fetch_from_source(fallback_src, fallback_ticker, target_date, logger)
+            df, msg = fetch_from_source(fallback_src, fallback_ticker, target_date, logger, massive_provider)
             source_label = f"FB-{fallback_src}"
 
         if df.empty:
