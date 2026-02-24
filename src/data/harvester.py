@@ -29,39 +29,6 @@ def _apply_session_labels(df):
     out['session'] = out['timestamp'].apply(_session_from_timestamp)
     return out
 
-def _validate_date_match(df, target_date, source_name, logger, ticker):
-    """ Helper to ensure API didn't return rogue historical/future data. """
-    if df.empty:
-        return df, "Empty"
-        
-    temp_df = df.copy()
-    if temp_df['timestamp'].dt.tz is None:
-        temp_df['timestamp'] = temp_df['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
-    else:
-        temp_df['timestamp'] = temp_df['timestamp'].dt.tz_convert(US_EASTERN)
-        
-    target_date_str = target_date.strftime('%Y-%m-%d')
-    valid_mask = temp_df['timestamp'].dt.strftime('%Y-%m-%d') == target_date_str
-    
-    # Check for rows that don't match the target date
-    rogue_count = len(df) - valid_mask.sum()
-    
-    if rogue_count > 0:
-        # Special handling for Binance: Keep the rows (likely previous day data due to UTC/ET shift)
-        if source_name == "Binance":
-            logger.log(f"   ℹ️ {ticker} [Binance]: Found {rogue_count} rows from previous day. Adding them to dataset.")
-            return df, f"✅ {source_name}"
-        else:
-            # For others (Yahoo/Massive), strictly enforce the date boundary
-            valid_df = df[valid_mask].copy()
-            logger.log(f"   ⚠️ {ticker} [{source_name}]: Dropped {rogue_count} rogue rows not matching target date {target_date}.")
-            
-            if valid_df.empty:
-                return valid_df, f"❌ {source_name} Empty (Wrong date)"
-            return valid_df, f"✅ {source_name}"
-        
-    return df, f"✅ {source_name}"
-    
 
 def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, massive_provider=None, audit_trail=None):
     """
@@ -100,6 +67,14 @@ def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, ma
             return pd.DataFrame(), "❌ Binance Empty"
 
         elif source_name == "CAPITAL":
+            # --- 16 HOUR LOOKBACK GUARD ---
+            now_utc = datetime.now(timezone.utc)
+            lookback_limit = now_utc - timedelta(hours=16)
+            
+            if start_dt < lookback_limit:
+                log_event(f"⚠️ Skipping Capital.com: start_dt ({start_dt}) is older than 16h limit.")
+                return pd.DataFrame(), "❌ Beyond 16h Window"
+
             from src.api.capital import fetch_capital_data
             raw = fetch_capital_data(specific_ticker, start_dt, end_dt, logger)
             if not raw.empty:
@@ -112,7 +87,7 @@ def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, ma
         
     return pd.DataFrame(), f"Unknown Source {source_name}"
 
-def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None, massive_provider=None):
+def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None, massive_provider=None, session_status="ACTIVE"):
     """
     Executes the concurrent harvesting engine and logs a sequential "Story Book" for each ticker.
     """
@@ -141,16 +116,28 @@ def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harv
         t_m = rules.get('massive_ticker')
         t_c = rules.get('capital_ticker')
 
-        # v6.0 Sourcing Priority Selection
-        if t_c: # If it has a Capital EPIC, it's an Equity/ETF
-            primary_src, primary_ticker = "MASSIVE", t_m or ticker
-            fallback_src, fallback_ticker = "CAPITAL", t_c
-        elif ticker.endswith("USDT") or t_b: # Crypto / Gold
-            primary_src, primary_ticker = "BINANCE", t_b or ticker
-            fallback_src, fallback_ticker = "YAHOO", t_y or ticker
-        else: # Specials (VIX, Oil, etc.)
-            primary_src, primary_ticker = "YAHOO", t_y or ticker
-            fallback_src, fallback_ticker = "NONE", None
+        # --- SESSION-BASED SOURCE SELECTION ---
+        # 1. Crypto / Binance (Always Binance -> Yahoo)
+        if ticker.endswith("USDT") or t_b:
+             primary_src, primary_ticker = ("BINANCE", t_b or ticker)
+             fallback_src, fallback_ticker = ("YAHOO", t_y or ticker)
+
+        # 2. Equities / ETFs (Split by Session Status)
+        elif t_m or t_c:
+            if session_status == "COMPLETED":
+                # Previous Session -> Massive Only (Full Data)
+                primary_src, primary_ticker = ("MASSIVE", t_m or t_c)
+                fallback_src, fallback_ticker = ("NONE", None)
+            else:
+                # Active Session -> Capital Only (Live Data, No Volume)
+                # Note: Capital has 16h lookback limit; we accept the tail.
+                primary_src, primary_ticker = ("CAPITAL", t_c)
+                fallback_src, fallback_ticker = ("NONE", None)
+                
+        # 3. Specials (Yahoo Only)
+        else:
+            primary_src, primary_ticker = ("YAHOO", t_y or ticker)
+            fallback_src, fallback_ticker = ("NONE", None)
 
         audit.append(f"   🔍 Step 1: Trying Primary source {primary_src} ({primary_ticker})...")
         
@@ -178,7 +165,7 @@ def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harv
         # Post-Process
         df = df.copy()
         df['symbol'] = ticker
-        df['source'] = source_label # <--- ADD THIS
+        df['source'] = source_label
         df = _apply_session_labels(df)
         if df['timestamp'].dt.tz is None:
             df['timestamp'] = df['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
@@ -251,4 +238,3 @@ def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harv
         logger.log(f"❌ Error during final data merging: {e}")
 
     return pd.DataFrame(), report_df
-

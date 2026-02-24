@@ -1,20 +1,32 @@
-# Analyst Workbench: AI Instructions & System Architecture (v7.1)
+# Analyst Workbench: AI Instructions & System Architecture (v7.2)
 
 This document serves as the "System Knowledge Base" for the AI Agent (Antigravity) and human developers. It defines the core philosophy, infrastructure, and analytical rules engine.
 
 ## 🚀 Project Overview
 The **Stock Data Harvester** is a high-performance, stateless data harvesting engine designed for scheduled daily automation. It is optimized for resilience, integrity, and ephemeral execution environments.
 
-### Architecture & Integrity Rules
-- **Market Session Mandate**: Data is harvested and stored based on **Market Sessions**, defined as **8:01:00 PM ET (Previous Trading Day)** to **8:00:00 PM ET (Target Day)**. This ensures exactly 1,440 minutes of data for 24/7 assets and avoids "Midnight Spillover" overlaps.
-- **Source-Tiering Protection**: The database enforces a "Quality-First" overwrite policy via a **9-column schema** (including `source`):
-    - **Tier 1 (Authoritative)**: `MASSIVE`, `BINANCE`.
-    - **Tier 2 (Fallback)**: `YAHOO`, `CAPITAL`.
-    - **Rule**: Data from a Tier 1 source can NEVER be overwritten by data from a Tier 2 source for the same timestamp and symbol.
-- **Tiered Deletion (Source-Aware Cleaning)**: Before committing, the system only performs a `DELETE` if the **new data** is high-fidelity (Tier 1). Tier 2 data (Capital/Yahoo) is stacked incrementally without wiping existing records, preserving historical "tails."
-- **Adaptive Request Clamping**: The Capital.com client automatically clips requests to the last **16 hours** of minute data. If a full session is requested, it fetches only the available "tail" to prevent API errors and "wrong-date" pollution.
-- **Database Parity Mandate**: **Maintaining absolute 1-on-1 consistency between the Archive and Mirror databases is foundational.** Any operation modifying the Archive (schema or metadata) must be immediately reflected in the Mirror.
-- **Self-Healing**: The engine automatically repairs the Mirror database from the Archive for the target date before every harvest if a desync is detected.
+### Key Technologies
+- **Language**: Python 3.12+
+- **Data Processing**: `pandas`, `numpy`
+- **Concurrency**: `ThreadPoolExecutor` (8 parallel workers)
+- `USFederalHolidayCalendar`: For market holiday awareness
+- **Database**: Turso (libsql) with a Dual-Write strategy (Archive + Mirror)
+- **Secrets Management**: Infisical SDK (`infisicalsdk`)
+- **APIs**: Polygon.io (Massive), Capital.com, Binance, Yahoo Finance
+- **Observability**: Discord Webhooks for health reports and alerts
+
+### Architecture
+- **Market Session Mandate**: Data is harvested based on a strict **Market Session** definition:
+    - **Start**: 8:00 PM ET of the *Previous Trading Day* (Exclusive).
+    - **End**: 8:00 PM ET of the *Target Trading Day* (Inclusive).
+    - **Scope**: Captures all Pre-Market, Regular, and Post-Market activity in one continuous block, regardless of calendar days.
+- **Session-Based Sourcing**:
+    - **Current Session (Active)**: Uses **Capital.com** (Live Data). No volume. **Append/Update Strategy** (No clear) to preserve early-session data.
+    - **Previous Session (Completed)**: Uses **Massive** (Polygon.io). Full Data. **Surgical Clean & Replace Strategy** to ensure a perfect, non-spliced record.
+- **Strict UTC Definition**: All internal logic, API requests, and database storage use pure **UTC**.
+- **Database Parity Mandate**: **Maintaining absolute 1-on-1 consistency between the Archive and Mirror databases is the single most important objective.** Every operation must verify and enforce this parity.
+- **Dual-Master Strategy**: Data is committed to two independent Turso databases (Archive and Mirror) to ensure high availability and data redundancy.
+- **Self-Healing**: The engine automatically performs a surgical parity check/repair (MD5) for the target date before and after every harvest.
 
 ---
 
@@ -35,7 +47,7 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 ## ⚖️ 4. Development Conventions
 
 ### Sourcing Priority (Implemented in `src/data/harvester.py`)
-1.  **Equities & ETFs**: Massive (Polygon) -> Fallback: Yahoo Finance.
+1.  **Equities & ETFs**: Massive (Polygon) -> Fallback: Capital.com (Active Session) / None (Completed).
 2.  **Gold**: Binance (`PAXGUSDT`) -> Fallback: Yahoo Finance (`GC=F`).
 3.  **Crypto**: Binance (`*USDT`) -> Fallback: Yahoo Finance.
 4.  **Specials**: Yahoo Finance Only (e.g., `CL=F` Oil, `VIX`).

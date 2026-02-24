@@ -66,6 +66,7 @@ def main():
 
         now_et = datetime.now(US_EASTERN)
 
+        # --- 1. DETERMINE TARGET DATE ---
         if args.date:
             try:
                 target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
@@ -75,33 +76,54 @@ def main():
                 critical_errors += f"- {msg}\n"
                 return
         else:
-            # Default to today's date in ET
-            target_date = now_et.date()
+            # Automatic Date Logic:
+            # If it is AFTER 20:00 ET, we are already in the "Next Day's" session.
+            cutoff_time = datetime.strptime("20:00", "%H:%M").time()
+            if now_et.time() > cutoff_time:
+                target_date = now_et.date() + timedelta(days=1)
+            else:
+                target_date = now_et.date()
 
-        # --- CALCULATE SESSION BOUNDARIES (ET -> UTC) ---
-        # 1. Find the PREVIOUS trading day to determine session start
+        # --- 2. CALCULATE SESSION BOUNDARIES (ET -> UTC) ---
+        # The session is defined as:
+        # Start: Previous Trading Day @ 20:00 ET (The boundary)
+        # End:   Target Trading Day @ 20:00 ET (The boundary)
+        
         cal = USFederalHolidayCalendar()
+        # Find previous trading day
+        prev_trading_day = target_date - timedelta(days=1)
         # Look back up to 10 days to find a valid trading day
         search_start = target_date - timedelta(days=10)
         search_end = target_date - timedelta(days=1)
         holidays = cal.holidays(start=search_start, end=search_end).date
         
-        prev_trading_day = target_date - timedelta(days=1)
         while prev_trading_day.weekday() > 4 or prev_trading_day in holidays:
             prev_trading_day -= timedelta(days=1)
 
-        # Session Start: 8:01:00 PM ET of previous trading day
-        session_start_et = US_EASTERN.localize(datetime.combine(prev_trading_day, datetime.strptime("20:01:00", "%H:%M:%S").time()))
-        # Session End: 8:00:00 PM ET of target trading day
-        session_end_et = US_EASTERN.localize(datetime.combine(target_date, datetime.strptime("20:00:00", "%H:%M:%S").time()))
+        # Session Start: 20:00 ET of prev trading day
+        session_start_et = US_EASTERN.localize(datetime.combine(prev_trading_day, datetime.strptime("20:00", "%H:%M").time()))
+        # Session End: 20:00 ET of target trading day
+        session_end_et = US_EASTERN.localize(datetime.combine(target_date, datetime.strptime("20:00", "%H:%M").time()))
 
         # Convert to UTC for logic
         session_start_utc = session_start_et.astimezone(timezone.utc)
         session_end_utc = session_end_et.astimezone(timezone.utc)
 
-        logger.log(f"🎯 Market Date: {target_date}")
-        logger.log(f"⏰ Session Range (ET) : {session_start_et.strftime('%Y-%m-%d %H:%M:%S')} to {session_end_et.strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.log(f"🌍 Session Range (UTC): {session_start_utc.strftime('%Y-%m-%d %H:%M:%S')} to {session_end_utc.strftime('%Y-%m-%d %H:%M:%S')}")
+        # --- 3. DETERMINE SESSION STATUS (ACTIVE vs COMPLETED) ---
+        # If NOW is past the session end, the session is COMPLETED (Past).
+        # If NOW is before the session end, the session is ACTIVE (Current).
+        
+        if now_et > session_end_et:
+            session_status = "COMPLETED"
+            harvest_mode_label = "🏁 Previous Session (Massive)"
+        else:
+            session_status = "ACTIVE"
+            harvest_mode_label = "⚡ Current Session (Capital)"
+
+        logger.log(f"🎯 Market Date: {target_date} ({session_status})")
+        logger.log(f"⏰ Session Range (ET) : {session_start_et.strftime('%Y-%m-%d %H:%M')} to {session_end_et.strftime('%Y-%m-%d %H:%M')}")
+        logger.log(f"🌍 Session Range (UTC): {session_start_utc.strftime('%Y-%m-%d %H:%M')} to {session_end_utc.strftime('%Y-%m-%d %H:%M')}")
+        logger.log(f"⚙️  Harvest Mode: {harvest_mode_label}")
 
         # 1. Pre-Harvest Parity Check (Using target_date for reference)
         from src.utils.integrity import ensure_database_parity
@@ -124,36 +146,42 @@ def main():
         # 3. Harvest
         logger.log(f"🚀 Starting Harvest for {len(inventory_list)} symbols...")
         massive_provider = MassiveProvider(logger)
+        
+        # Pass session_status to harvest logic to control source switching
         final_df, report_df = run_harvest_logic(
             tickers_to_harvest=inventory_list,
             start_dt=session_start_utc,
             end_dt=session_end_utc,
             db_map=symbol_map,
             logger=logger,
-            massive_provider=massive_provider
+            massive_provider=massive_provider,
+            session_status=session_status
         )
         
         # 4. Dual Write & Post-Harvest Parity
         if final_df is not None and not final_df.empty:
-            # --- SOURCE-AWARE CLEANING (TIERED DELETION) ---
-            # Rule: Only wipe symbols if we have a fresh Tier-1 (Authoritative) replacement.
-            # AND only if we actually found rows for that symbol.
-            tier_1_data = final_df[final_df['source'].isin(['MASSIVE', 'BINANCE'])]
-            tier_1_symbols = tier_1_data['symbol'].unique().tolist() if not tier_1_data.empty else []
-            
-            if tier_1_symbols:
+            # CLEAN RANGE logic depends on Session Status
+            if session_status == "COMPLETED":
+                # For a COMPLETED session (Massive), we want to strictly overwrite the entire session
+                # to ensure no splicing. We clear the range first.
                 from src.database.operations import clear_market_data_for_range
-                logger.log(f"🧹 Tier-1 Upgrade: Clearing {len(tier_1_symbols)} symbols to ensure high-fidelity replacement...")
-                clear_market_data_for_range(archive_client, session_start_utc, session_end_utc, logger, "Archive", symbols=tier_1_symbols)
-                clear_market_data_for_range(mirror_client, session_start_utc, session_end_utc, logger, "Mirror", symbols=tier_1_symbols)
+                logger.log(f"🧹 [COMPLETED] Clearing existing data for full session range before Massive commit...")
+                clear_market_data_for_range(archive_client, session_start_utc, session_end_utc, logger, "Archive")
+                clear_market_data_for_range(mirror_client, session_start_utc, session_end_utc, logger, "Mirror")
             else:
-                logger.log("🔹 Incremental Mode: Only Tier-2 data found. Skipping Clean to allow data stacking.")
+                # For an ACTIVE session (Capital), we are likely fetching the "tail" (recent 16h).
+                # We should NOT clear the whole range, as we might lose the "head" of the session 
+                # fetched earlier. We just Upsert/Replace.
+                logger.log(f"⤵️  [ACTIVE] Skipping clear. Appending/Updating Capital.com data...")
 
             if save_data_to_storage(final_df, logger, archive_client=archive_client, mirror_client=mirror_client):
                 logger.log(f"✅ Session data written to Archive & Mirror. Rows: {len(final_df)}")
                 
                 # Visual Density Summary
-                logger.print_density_summary(final_df, session_start_utc, session_end_utc)
+                try:
+                    logger.print_density_summary(final_df, session_start_utc, session_end_utc)
+                except AttributeError:
+                    pass # Fallback if logger doesn't have this method yet
 
                 logger.log(f"🔍 Post-Harvest Parity Check for {target_date}...")
                 ok_post, msg_post = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)

@@ -5,7 +5,7 @@ Uses mocking to avoid real API calls.
 import pytest
 from unittest.mock import patch, MagicMock
 import pandas as pd
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from src.data.harvester import fetch_from_source, run_harvest_logic
 from src.config import US_EASTERN, UTC
 
@@ -18,27 +18,32 @@ class MockLogger:
 
 
 class TestFetchFromSource:
+    
+    @pytest.fixture
+    def safe_range(self, safe_test_date):
+        start = datetime.combine(safe_test_date - timedelta(days=1), datetime.min.time()).replace(hour=20).astimezone(UTC)
+        end = datetime.combine(safe_test_date, datetime.min.time()).replace(hour=20).astimezone(UTC)
+        return start, end
 
-    def test_unknown_source_returns_empty(self, safe_test_range):
+    def test_unknown_source_returns_empty(self, safe_test_date, safe_range):
         """Unknown source name must return empty DF."""
-        start_dt, end_dt = safe_test_range
         logger = MockLogger()
-        df, msg = fetch_from_source("UNKNOWN_API", "AAPL", start_dt, end_dt, logger)
+        start, end = safe_range
+        df, msg = fetch_from_source("UNKNOWN_API", "AAPL", start, end, logger)
         assert df.empty
         assert "Unknown" in msg
 
-    def test_none_source_returns_empty(self, safe_test_range):
+    def test_none_source_returns_empty(self, safe_test_date, safe_range):
         """NONE source must return empty DF without error."""
-        start_dt, end_dt = safe_test_range
         logger = MockLogger()
-        df, msg = fetch_from_source("NONE", "AAPL", start_dt, end_dt, logger)
+        start, end = safe_range
+        df, msg = fetch_from_source("NONE", "AAPL", start, end, logger)
         assert df.empty
         assert msg == "No Source"
 
     @patch("src.data.harvester.fetch_yahoo_market_data")
-    def test_yahoo_source_success(self, mock_yahoo, safe_test_range, safe_test_date_str):
+    def test_yahoo_source_success(self, mock_yahoo, safe_test_date, safe_test_date_str, safe_range):
         """YAHOO source must call fetch_yahoo_market_data and normalize."""
-        start_dt, end_dt = safe_test_range
         idx = pd.DatetimeIndex(
             pd.date_range(f"{safe_test_date_str} 09:30", periods=2, freq="1min", tz="US/Eastern"),
             name="Datetime"
@@ -50,14 +55,14 @@ class TestFetchFromSource:
         }, index=idx)
         
         logger = MockLogger()
-        df, msg = fetch_from_source("YAHOO", "AAPL", start_dt, end_dt, logger)
+        start, end = safe_range
+        df, msg = fetch_from_source("YAHOO", "AAPL", start, end, logger)
         assert not df.empty
         assert "Yahoo" in msg
 
     @patch("src.data.harvester.fetch_massive_data")
-    def test_massive_source_success(self, mock_massive, safe_test_range, safe_test_date_str):
+    def test_massive_source_success(self, mock_massive, safe_test_date, safe_test_date_str, safe_range):
         """MASSIVE source must call fetch_massive_data and return data."""
-        start_dt, end_dt = safe_test_range
         mock_massive.return_value = pd.DataFrame({
             "timestamp": pd.to_datetime([f"{safe_test_date_str} 15:00:00"]).tz_localize("UTC"),
             "open": [150.0], "high": [151.0], "low": [149.0],
@@ -65,14 +70,14 @@ class TestFetchFromSource:
         })
 
         logger = MockLogger()
-        df, msg = fetch_from_source("MASSIVE", "AAPL", start_dt, end_dt, logger)
+        start, end = safe_range
+        df, msg = fetch_from_source("MASSIVE", "AAPL", start, end, logger)
         assert not df.empty
         assert "Massive" in msg
 
     @patch("src.data.harvester.fetch_binance_range")
-    def test_binance_source_success(self, mock_binance, safe_test_range, safe_test_date_str):
+    def test_binance_source_success(self, mock_binance, safe_test_date, safe_test_date_str, safe_range):
         """BINANCE source must call fetch_binance_range."""
-        start_dt, end_dt = safe_test_range
         mock_binance.return_value = pd.DataFrame({
             "timestamp": pd.to_datetime([f"{safe_test_date_str} 15:00:00"]).tz_localize("UTC"),
             "symbol": ["BTCUSDT"], "open": [40000.0], "high": [41000.0],
@@ -81,7 +86,8 @@ class TestFetchFromSource:
         })
         
         logger = MockLogger()
-        df, msg = fetch_from_source("BINANCE", "BTCUSDT", start_dt, end_dt, logger)
+        start, end = safe_range
+        df, msg = fetch_from_source("BINANCE", "BTCUSDT", start, end, logger)
         assert not df.empty
         assert "Binance" in msg
 
@@ -94,43 +100,54 @@ class TestHarvestPipeline:
             "BTCUSDT": {"yahoo_ticker": "BTC-USD", "massive_ticker": None, "binance_ticker": "BTCUSDT", "capital_ticker": None},
             "GC=F": {"yahoo_ticker": "GC=F", "massive_ticker": None, "binance_ticker": "PAXGUSDT", "capital_ticker": None}
         }
+        
+    @pytest.fixture
+    def safe_range(self, safe_test_date):
+        start = datetime.combine(safe_test_date - timedelta(days=1), datetime.min.time()).replace(hour=20).astimezone(UTC)
+        end = datetime.combine(safe_test_date, datetime.min.time()).replace(hour=20).astimezone(UTC)
+        return start, end
 
     @patch("src.data.harvester.fetch_from_source")
-    def test_primary_fallback_logic(self, mock_fetch, safe_test_range, safe_test_date_str):
-        """If primary fails, it must try fallback."""
-        start_dt, end_dt = safe_test_range
+    def test_primary_fallback_logic(self, mock_fetch, safe_test_date, safe_test_date_str, safe_range):
+        """
+        Verify source selection logic.
+        NOTE: With the new Session logic, there is NO FALLBACK for equities.
+        Massive and Capital are mutually exclusive based on session_status.
+        """
         
-        def side_effect(source, ticker, s_dt, e_dt, logger, massive_provider=None, audit_trail=None):
-            if source == "MASSIVE":
-                return pd.DataFrame(), "❌ Empty"
+        # Test Case 1: Active Session -> Capital
+        def side_effect_active(source, ticker, start, end, logger, massive_provider=None, audit_trail=None):
             if source == "CAPITAL":
-                # Must provide valid columns for post-processing
                 return pd.DataFrame({
                     "timestamp": pd.to_datetime([f"{safe_test_date_str} 15:00:00"]).tz_localize("UTC"),
-                    "symbol": [ticker],
-                    "close": [150.0],
-                    "session": ["REG"]
+                    "symbol": [ticker], "close": [150.0], "session": ["REG"]
                 }), "✅ Capital"
             return pd.DataFrame(), "Error"
             
-        mock_fetch.side_effect = side_effect
+        mock_fetch.side_effect = side_effect_active
         logger = MockLogger()
+        start, end = safe_range
         
-        final_df, report = run_harvest_logic(["AAPL"], start_dt, end_dt, self._make_inventory(), logger, massive_provider=MagicMock())
+        # Run in ACTIVE mode
+        final_df, report = run_harvest_logic(
+            ["AAPL"], start, end, self._make_inventory(), logger, 
+            massive_provider=MagicMock(), session_status="ACTIVE"
+        )
         
         assert not final_df.empty
-        # Should be labeled as FB-CAPITAL
-        assert any("FB-CAPITAL" in str(row) for _, row in report.iterrows())
-
+        assert any("CAPITAL" in str(row) for _, row in report.iterrows())
+        # Ensure Massive was NOT called (implied by side_effect returning Error if not Capital, or checking mocks)
+        
     @patch("src.data.harvester.fetch_from_source")
-    def test_gold_priority(self, mock_fetch, safe_test_range):
+    def test_gold_priority(self, mock_fetch, safe_test_date, safe_range):
         """GC=F should try Binance (PAXGUSDT) first."""
-        start_dt, end_dt = safe_test_range
+        
         inventory = self._make_inventory()
         logger = MockLogger()
+        start, end = safe_range
         
         # We just want to see if Binance was the first call for GC=F
-        run_harvest_logic(["GC=F"], start_dt, end_dt, inventory, logger, massive_provider=MagicMock())
+        run_harvest_logic(["GC=F"], start, end, inventory, logger, massive_provider=MagicMock())
         
         # First call for this ticker should be BINANCE
         first_call = mock_fetch.call_args_list[0]
