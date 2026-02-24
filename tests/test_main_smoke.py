@@ -40,7 +40,9 @@ class TestMainSmoke(unittest.TestCase):
 
         import main
         with patch.object(sys, 'argv', ['main.py']):
-            main.main()
+            with self.assertRaises(SystemExit) as cm:
+                main.main()
+            self.assertEqual(cm.exception.code, 1)
 
         self.assertTrue(mock_logger.log.called)
         self.assertTrue(any("CRITICAL" in str(c) for c in mock_logger.log.call_args_list))

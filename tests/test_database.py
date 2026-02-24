@@ -36,7 +36,8 @@ class TestDatabaseSchema(unittest.TestCase):
 class TestDatabaseOperations(unittest.TestCase):
 
     @patch("src.database.operations.get_archive_db_connection", return_value=None)
-    def test_get_symbol_map_no_connection(self, mock_conn):
+    @patch("src.database.operations.get_mirror_db_connection", return_value=None)
+    def test_get_symbol_map_no_connection(self, mock_mirror, mock_archive):
         """get_symbol_map_from_db must return empty dict if connection fails."""
         res = ops_module.get_symbol_map_from_db()
         self.assertEqual(res, {})
