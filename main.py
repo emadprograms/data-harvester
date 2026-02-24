@@ -7,7 +7,7 @@ import argparse
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 from src.database.schema import init_db
-from src.database.operations import get_symbol_map_from_db, save_data_to_storage, clear_market_data_for_dates
+from src.database.operations import get_symbol_map_from_db, save_data_to_storage
 from src.data.harvester import run_harvest_logic
 from src.api.massive import MassiveProvider
 from src.config import US_EASTERN

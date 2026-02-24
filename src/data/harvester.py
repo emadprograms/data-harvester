@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from src.config import US_EASTERN, UTC, SCHEMA_COLS
@@ -63,10 +63,13 @@ def _validate_date_match(df, target_date, source_name, logger, ticker):
     return df, f"✅ {source_name}"
     
 
-def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, massive_provider=None):
+def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, massive_provider=None, audit_trail=None):
     """
     Generic fetcher that routes to the correct API using a datetime range.
     """
+    def log_event(msg):
+        if audit_trail is not None: audit_trail.append(msg)
+
     if not source_name or source_name == "NONE":
         return pd.DataFrame(), "No Source"
 
@@ -97,6 +100,14 @@ def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, ma
             return pd.DataFrame(), "❌ Binance Empty"
 
         elif source_name == "CAPITAL":
+            # --- 16 HOUR LOOKBACK GUARD ---
+            now_utc = datetime.now(timezone.utc)
+            lookback_limit = now_utc - timedelta(hours=16)
+            
+            if start_dt < lookback_limit:
+                log_event(f"⚠️ Skipping Capital.com: start_dt ({start_dt}) is older than 16h limit.")
+                return pd.DataFrame(), "❌ Beyond 16h Window"
+
             from src.api.capital import fetch_capital_data
             raw = fetch_capital_data(specific_ticker, start_dt, end_dt, logger)
             if not raw.empty:
@@ -104,14 +115,14 @@ def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, ma
             return pd.DataFrame(), "❌ Capital Empty"
 
     except Exception as e:
-        logger.log(f"   ⚠️ Error fetching {source_name}: {e}")
+        log_event(f"Error fetching {source_name}: {e}")
         return pd.DataFrame(), f"❌ Error {source_name}"
         
     return pd.DataFrame(), f"Unknown Source {source_name}"
 
 def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None, massive_provider=None):
     """
-    Executes the simplified concurrent harvesting engine using UTC ranges.
+    Executes the concurrent harvesting engine and logs a sequential "Story Book" for each ticker.
     """
     def update_ui(ticker, col, val):
         if progress_callback:
@@ -126,9 +137,11 @@ def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harv
     def harvest_single_ticker(ticker):
         nonlocal completed_count
         update_ui(ticker, "Status", "🔄 Harvesting...")
+        audit = [f"🏁 Starting story for {ticker}"]
         
         if ticker not in db_map:
-            return ticker, pd.DataFrame(), "⚠️ Not in Inventory", "NONE", 0, {}
+            audit.append("❌ Ticker not found in database map.")
+            return ticker, pd.DataFrame(), "⚠️ Not in Inventory", "NONE", 0, {}, audit
         
         rules = db_map[ticker]
         t_y = rules.get('yahoo_ticker')
@@ -136,102 +149,86 @@ def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harv
         t_m = rules.get('massive_ticker')
         t_c = rules.get('capital_ticker')
 
-        # ---------------------------------------------------------------------
-        # PRIORITY LOGIC
-        # ---------------------------------------------------------------------
-        
+        # Priority Selection
         if t_c:
-            primary_src = "MASSIVE" if t_m else "CAPITAL"
-            primary_ticker = t_m or t_c
-            fallback_src = "CAPITAL" if primary_src == "MASSIVE" else "NONE"
-            fallback_ticker = t_c if fallback_src == "CAPITAL" else None
+            primary_src, primary_ticker = ("MASSIVE", t_m or t_c) if t_m else ("CAPITAL", t_c)
+            fallback_src, fallback_ticker = ("CAPITAL", t_c) if primary_src == "MASSIVE" else ("NONE", None)
         elif ticker.endswith("USDT") or t_b:
-            primary_src = "BINANCE"
-            primary_ticker = t_b or ticker
-            fallback_src = "YAHOO"
-            fallback_ticker = t_y or ticker
+            primary_src, primary_ticker = ("BINANCE", t_b or ticker)
+            fallback_src, fallback_ticker = ("YAHOO", t_y or ticker)
         else:
-            primary_src = "YAHOO"
-            primary_ticker = t_y or ticker
-            fallback_src = "NONE"
-            fallback_ticker = None
+            primary_src, primary_ticker = ("YAHOO", t_y or ticker)
+            fallback_src, fallback_ticker = ("NONE", None)
 
-        # ---------------------------------------------------------------------
-        # EXECUTION
-        # ---------------------------------------------------------------------
+        audit.append(f"   🔍 Step 1: Trying Primary source {primary_src} ({primary_ticker})...")
         
-        logger.log(f"   🔍 {ticker} - Trying {primary_src} ({primary_ticker})...")
-        df, msg = fetch_from_source(primary_src, primary_ticker, start_dt, end_dt, logger, massive_provider)
+        # A. Try Primary
+        df, msg = fetch_from_source(primary_src, primary_ticker, start_dt, end_dt, logger, massive_provider, audit_trail=audit)
         
         if not df.empty:
-            logger.log(f"   ✅ {ticker} - {primary_src} Success ({len(df)} rows).")
+            audit.append(f"   ✅ Success! {primary_src} returned {len(df)} rows.")
             source_label = primary_src
         else:
-            logger.log(f"   ⚠️ {ticker} - {primary_src} Failed ({msg}).")
+            audit.append(f"   ⚠️ Primary Failed: {msg}")
             if fallback_src != "NONE":
-                logger.log(f"   🔄 {ticker} - Falling back to {fallback_src} ({fallback_ticker})...")
-                df, msg = fetch_from_source(fallback_src, fallback_ticker, start_dt, end_dt, logger, massive_provider)
+                audit.append(f"   🔄 Step 2: Falling back to {fallback_src} ({fallback_ticker})...")
+                df, msg = fetch_from_source(fallback_src, fallback_ticker, start_dt, end_dt, logger, massive_provider, audit_trail=audit)
                 if not df.empty:
-                    logger.log(f"   ✅ {ticker} - {fallback_src} Success ({len(df)} rows).")
+                    audit.append(f"   ✅ Success on Fallback! {fallback_src} returned {len(df)} rows.")
                     source_label = f"FB-{fallback_src}"
                 else:
-                    logger.log(f"   ❌ {ticker} - {fallback_src} also failed ({msg}).")
-                    return ticker, pd.DataFrame(), f"❌ Failed ({msg})", "FAILED", 0, {}
+                    audit.append(f"   ❌ Final Failure: Both sources failed ({msg}).")
+                    return ticker, pd.DataFrame(), f"❌ Failed", "FAILED", 0, {}, audit
             else:
-                return ticker, pd.DataFrame(), f"❌ Failed ({msg})", "FAILED", 0, {}
+                audit.append(f"   ❌ Final Failure: No fallback configured.")
+                return ticker, pd.DataFrame(), f"❌ Failed", "FAILED", 0, {}, audit
 
-        # ---------------------------------------------------------------------
-        # POST-PROCESS
-        # ---------------------------------------------------------------------
+        # Post-Process
         df = df.copy()
         df['symbol'] = ticker
         df = _apply_session_labels(df)
-        
         if df['timestamp'].dt.tz is None:
             df['timestamp'] = df['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
         else:
             df['timestamp'] = df['timestamp'].dt.tz_convert(US_EASTERN)
 
         session_counts = df['session'].value_counts().to_dict()
-        return ticker, df, f"✅ {source_label}", source_label, len(df), session_counts
+        audit.append(f"   📦 Summary: {len(df)} total rows. Sessions: {session_counts}")
+        return ticker, df, f"✅ {source_label}", source_label, len(df), session_counts, audit
 
     # Execute in Parallel
     all_data = []
     report_cards = []
+    all_audits = []
     
     with ThreadPoolExecutor(max_workers=8) as executor:
         future_to_ticker = {executor.submit(harvest_single_ticker, t): t for t in tickers_to_harvest}
-        
         for future in as_completed(future_to_ticker):
             try:
-                ticker, df, status, source, total_rows, s_counts = future.result()
+                ticker, df, status, source, total_rows, s_counts, audit = future.result()
                 completed_count += 1
-                
                 if progress_callback:
                     progress_callback(None, "PROG", (completed_count, total_tickers, f"Processed {ticker}"))
-                
                 update_ui(ticker, "Status", status)
                 if not df.empty:
                     update_ui(ticker, "Total Rows", total_rows)
                     all_data.append(df)
                 
-                card = {
-                    "Ticker": ticker, "Source": source, 
-                    "Total": total_rows, "Status": status,
-                    "Pre": s_counts.get("PRE", 0),
-                    "Reg": s_counts.get("REG", 0),
-                    "Post": s_counts.get("POST", 0)
-                }
-                report_cards.append(card)
-                
+                report_cards.append({
+                    "Ticker": ticker, "Source": source, "Total": total_rows, "Status": status,
+                    "Pre": s_counts.get("PRE", 0), "Reg": s_counts.get("REG", 0), "Post": s_counts.get("POST", 0)
+                })
+                all_audits.append((ticker, audit))
             except Exception as e:
                 ticker_err = future_to_ticker[future]
                 logger.log(f"   ❌ Thread Error for {ticker_err}: {e}")
-                report_cards.append({
-                    "Ticker": ticker_err, "Source": "FAILED", 
-                    "Total": 0, "Status": f"❌ Error",
-                    "Pre": 0, "Reg": 0, "Post": 0
-                })
+
+    # --- PRINT THE STORY BOOK ---
+    logger.log("\n" + "📖 " + "--- TICKER AUDIT STORIES ---" + " 📖")
+    for ticker, audit in sorted(all_audits):
+        for line in audit:
+            logger.log(line)
+        logger.log("-------------------------------------------")
 
     if not all_data:
         report_df = pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
@@ -239,33 +236,26 @@ def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harv
             logger.log("\n" + "="*50 + "\nHARVEST SUMMARY (NO DATA)\n" + "="*50 + "\n" + report_df.to_string(index=False) + "\n" + "="*50)
         return pd.DataFrame(), report_df
     
-    final_df = pd.DataFrame()
-    report_df = pd.DataFrame(report_cards).sort_values("Ticker") if report_cards else pd.DataFrame()
+    report_df = pd.DataFrame(report_cards).sort_values("Ticker")
+    logger.log("\n" + "="*50 + "\nHARVEST SUMMARY\n" + "="*50 + "\n" + report_df.to_string(index=False) + "\n" + "="*50)
 
-    # Log the summary table
-    if not report_df.empty:
-        logger.log("\n" + "="*50 + "\nHARVEST SUMMARY\n" + "="*50 + "\n" + report_df.to_string(index=False) + "\n" + "="*50)
-
+    # Final Merging
     try:
         cleaned = []
         for df in all_data:
             if not df.empty:
                 df = df.copy()
                 df.columns = [str(c).lower() for c in df.columns]
-                df = df.loc[:, ~df.columns.duplicated()]
-                df = df.reset_index(drop=True)
-                
+                df = df.loc[:, ~df.columns.duplicated()].reset_index(drop=True)
                 for col in SCHEMA_COLS:
                     if col not in df.columns:
                         df[col] = 0.0 if col in ['open', 'high', 'low', 'close', 'volume'] else None
-                
-                df = df[SCHEMA_COLS].copy()
-                cleaned.append(df)
-        
+                cleaned.append(df[SCHEMA_COLS])
         if cleaned:
-            final_df = pd.concat(cleaned, ignore_index=True)
-            final_df = final_df.drop_duplicates(subset=['timestamp', 'symbol'])
+            final_df = pd.concat(cleaned, ignore_index=True).drop_duplicates(subset=['timestamp', 'symbol'])
+            return final_df, report_df
     except Exception as e:
         logger.log(f"❌ Error during final data merging: {e}")
 
-    return final_df, report_df
+    return pd.DataFrame(), report_df
+
