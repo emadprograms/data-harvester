@@ -81,6 +81,8 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
 def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mirror_client=None):
     """
     Saves market data to BOTH Turso Archive and Turso Mirror.
+    Implements a compensating rollback if the mirror write fails after archive success
+    to ensure 1-on-1 parity.
     """
     if df.empty:
         return False
@@ -126,7 +128,9 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         if logger:
             logger.log(f"   💾 Dual Comitting {len(rows_to_insert)} records to Turso Archive & Mirror...")
 
-        # Explicit dual-write behavior
+        # --- Dual-Write with Compensating Rollback ---
+        
+        # A. Try Archive First
         archive_success = False
         if not archive_client:
             archive_client = get_archive_db_connection()
@@ -134,6 +138,11 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         if archive_client:
             archive_success = _save_to_client(archive_client, rows_to_insert, logger, "Archive")
 
+        if not archive_success:
+            if logger: logger.log("   ❌ Archive write failed. Aborting dual-write to prevent desync.")
+            return False
+
+        # B. Try Mirror Second
         mirror_success = False
         if not mirror_client:
             mirror_client = get_mirror_db_connection()
@@ -141,7 +150,26 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         if mirror_client:
             mirror_success = _save_to_client(mirror_client, rows_to_insert, logger, "Mirror")
 
-        return archive_success and mirror_success
+        # C. Handle Desync (Mirror failed after Archive success)
+        if not mirror_success:
+            if logger: logger.log("   🚨 CRITICAL: Mirror write failed after Archive success. Performing compensating ROLLBACK on Archive to maintain parity...")
+            try:
+                # Target the specific symbols and the date range involved in this batch
+                symbols = df['symbol'].unique().tolist()
+                placeholders = ",".join("?" * len(symbols))
+                # Identify the date from the first row of data
+                target_date_str = rows_to_insert[0][0].split(" ")[0]
+                
+                archive_client.execute(
+                    f"DELETE FROM market_data WHERE symbol IN ({placeholders}) AND timestamp LIKE ?",
+                    symbols + [f"{target_date_str}%"]
+                )
+                if logger: logger.log(f"   ✅ Archive Rollback successful. Parity maintained (Both databases missing {target_date_str} data).")
+            except Exception as e:
+                if logger: logger.log(f"   ❌ FATAL: Archive rollback FAILED: {e}. Databases are now DESYNCED.")
+            return False
+
+        return True
 
     except Exception as e:
         err = f"Storage Global Error: {e}"

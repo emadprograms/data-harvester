@@ -12,6 +12,7 @@ from src.api.massive import MassiveProvider
 from src.config import US_EASTERN
 from src.utils.discord import send_discord_harvest_report, build_health_alerts
 from src.utils.logger import CLILogger
+from pandas.tseries.holiday import USFederalHolidayCalendar
 
 # -----------------------------------------------------------------------------
 # Main Execution
@@ -82,9 +83,16 @@ def main():
                 target_date = now_et.date()
                 logger.log(f"🕒 Time is after 8 PM ET. Targeting today's harvest.")
                 
-            while target_date.weekday() > 4:
+            # Rollback for Weekends and US Market Holidays
+            cal = USFederalHolidayCalendar()
+            holidays = cal.holidays(start=f"{target_date.year-1}-01-01", end=f"{target_date.year+1}-12-31").date
+            
+            while target_date.weekday() > 4 or target_date in holidays:
+                reason = "Weekend" if target_date.weekday() > 4 else "Market Holiday"
+                logger.log(f"⚠️ {reason} detected ({target_date}). Rolling back Target Date...")
                 target_date -= timedelta(days=1)
-                logger.log(f"⚠️ Weekend detected. Rolling back Target Date to last trading day => {target_date}")
+            
+            logger.log(f"🎯 Final Target Market Date: {target_date}")
         
         logger.log(f"🌍 Running Harvest at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
         logger.log(f"🎯 Target Market Date: {target_date}")

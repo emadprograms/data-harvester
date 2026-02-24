@@ -2,6 +2,7 @@
 Massive (Polygon.io) API implementation for market data.
 """
 import pandas as pd
+import threading
 from datetime import datetime, timedelta
 from polygon import RESTClient
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +12,7 @@ from src.config import SCHEMA_COLS, UTC, US_EASTERN
 class MassiveProvider:
     def __init__(self, logger):
         self.logger = logger
+        self._lock = threading.Lock()
         mgr = InfisicalManager()
         self.api_keys = mgr.get_massive_keys()
         if not self.api_keys:
@@ -19,11 +21,12 @@ class MassiveProvider:
         self._key_index = 0
 
     def _get_next_client(self):
-        if not self.clients:
-            return None
-        client = self.clients[self._key_index]
-        self._key_index = (self._key_index + 1) % len(self.clients)
-        return client
+        with self._lock:
+            if not self.clients:
+                return None
+            client = self.clients[self._key_index]
+            self._key_index = (self._key_index + 1) % len(self.clients)
+            return client
 
     def fetch_data(self, ticker: str, target_date) -> pd.DataFrame:
         """
