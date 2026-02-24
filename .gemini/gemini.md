@@ -1,4 +1,4 @@
-# Data Harvester: AI Instructions & System Architecture (v5.0)
+# Analyst Workbench: AI Instructions & System Architecture (v5.0)
 
 This document serves as the "System Knowledge Base" for the AI Agent (Antigravity) and human developers. It defines the core philosophy, infrastructure, and analytical rules engine.
 
@@ -40,31 +40,6 @@ The manager supports two distinct authentication flows via environment variables
     *   Requires: `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`.
     *   Auth Call: `client.auth.universal_auth.login(client_id=..., client_secret=...)`.
 *   **Required for both**: `INFISICAL_PROJECT_ID`.
-
-### C. Secret Retrieval Flow
-To fetch a secret, the manager uses:
-```python
-secret = client.secrets.get_secret_by_name(
-    secret_name="NAME",
-    project_id=PROJECT_ID,
-    environment_slug="dev",
-    secret_path="/"
-)
-```
-*   **Environment**: Defaults to `dev`.
-*   **Fallback Logic**: The system is designed with a "Waterfall Fallback":
-    1. Try Infisical (Exact Name).
-    2. Try Infisical (Simplified Name).
-    3. Try local Environment Variables (`os.getenv`).
-
-### D. GitHub Actions Integration
-Secrets must be passed to the runner via the `env` block in the workflow YAML.
-```yaml
-env:
-  INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
-  INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-  INFISICAL_PROJECT_ID: ${{ secrets.INFISICAL_PROJECT_ID }}
-```
 
 ---
 
@@ -119,6 +94,36 @@ The following rules apply **EXCLUSIVELY** to the **Gemini CLI** agent (this inte
 1.  **Automatic Pushing**: Because all actions in the Gemini CLI are directed and approved by the user in real-time, the agent must **always** execute a `git push` immediately after completing a code modification or bug fix. 
 2.  **No Manual Staging Required**: The agent should assume that once a task is finished, the state is ready for the remote repository.
 3.  **Database Parity (Mirroring)**: The **Archive** and **Mirror** databases must remain 1-on-1 identical at all times for metadata and schema changes. Any modification made to the Archive database (e.g., updating `symbol_map`, renaming columns, or altering schema) MUST be immediately reflected in the Mirror database, whether explicitly requested or not.
+
+---
+
+## 📅 6. Discord Bot Design Pattern
+
+When adding or updating commands to the Discord bot, always adhere to the **Interactive-First** design pattern:
+
+### A. Command Flow Strategy
+1.  **Argument Support**: Commands should accept an optional `date_indicator` string.
+    *   `0` → Today
+    *   `-1`, `-2`... → Relative days
+    *   `YYYY-MM-DD` → Exact date
+2.  **Interactive Fallback**: If no argument is provided, the command **MUST** present a `DateSelectionView` to the user.
+
+### B. Reusable UI Components
+- **`DateSelectionView`**: A view containing a dropdown (`DateDropdown`) with the last 14 days and a "Manual Date Entry" button.
+- **`CustomDateModal`**: A modal triggered by the manual entry button that allows users to type a specific `YYYY-MM-DD` string.
+- **Action Callback**: Both the dropdown and modal should trigger a unified `action_callback` (e.g., `trigger_github_harvest`) to ensure consistent behavior across all input methods.
+
+### C. Example Implementation
+```python
+@bot.command()
+async def somecommand(ctx, date_indicator: str = None):
+    target_date = get_target_date(date_indicator)
+    if not target_date:
+        view = DateSelectionView(action_callback=my_action_callback)
+        await ctx.send("🗓️ **Select Date for Command:**", view=view)
+    else:
+        await my_action_callback(ctx, target_date)
+```
 
 ---
 *Updated: 2026-02-24*

@@ -15,6 +15,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GITHUB_TOKEN = os.getenv("GITHUB_PAT")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "emadprograms/data-harvester")
 WORKFLOW_FILENAME = os.getenv("WORKFLOW_FILENAME", "harvest.yml")
+ACTIONS_URL = f"https://github.com/{GITHUB_REPO}/actions"
 
 # Setup intents for message reading
 intents = discord.Intents.default()
@@ -24,67 +25,62 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # -----------------------------------------------------------------------------
-# Validation Helpers
+# Internal Logic Helpers
 # -----------------------------------------------------------------------------
 
-def validate_date(date_str: str):
+def get_target_date(date_input: str = None) -> str | None:
     """
-    Validates a date string and returns (is_valid, error_message, formatted_date).
+    Parses date input. Supports:
+    - None -> Returns None (Forces picker)
+    - "0" -> Today (UTC)
+    - "-1", "-2", etc. -> Days relative to today
+    - "YYYY-MM-DD" -> Specific date
     """
-    try:
-        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        now_utc = datetime.now(timezone.utc).date()
-        
-        # Safety Check 1: No Future Dates
-        if target_date > now_utc:
-            return False, f"❌ **Future Date Error:** `{date_str}` hasn't happened yet! I can't harvest data from the future.", None
-            
-        # Safety Check 2: API Historical Limits (90 Days)
-        oldest_allowed = now_utc - timedelta(days=90)
-        if target_date < oldest_allowed:
-            return False, f"❌ **Historical Limit:** `{date_str}` is too old. API limits restrict harvests to the last 90 days.", None
-            
-        return True, None, target_date.strftime("%Y-%m-%d")
-    except ValueError:
-        return False, f"❌ **Format Error:** `{date_str}` is not a valid date. Please use `YYYY-MM-DD`.", None
+    today = datetime.now(timezone.utc)
+    if not date_input:
+        return None
+    
+    if date_input == "0":
+        return today.strftime("%Y-%m-%d")
+    
+    # Handle relative dates (e.g. -1, -5)
+    if date_input.startswith("-") and date_input[1:].isdigit():
+        try:
+            days_back = int(date_input[1:])
+            target = today - timedelta(days=days_back)
+            return target.strftime("%Y-%m-%d")
+        except: pass
 
-def get_help_embed():
-    """Returns a nicely formatted help embed for the !updatedata command."""
-    embed = discord.Embed(
-        title="🚜 Harvester Command Guide",
-        description="Trigger a manual data harvest for specific dates.",
-        color=discord.Color.blue()
-    )
-    embed.add_field(
-        name="Usage", 
-        value="`!updatedata` (Opens interactive picker)\n`!updatedata 0` (Today)\n`!updatedata -1` (Yesterday)\n`!updatedata YYYY-MM-DD` (Specific Date)", 
-        inline=False
-    )
-    embed.add_field(
-        name="Examples", 
-        value="`!updatedata -5`\n`!updatedata 2026-02-10`", 
-        inline=False
-    )
-    embed.add_field(
-        name="Constraints", 
-        value="• No future dates allowed.\n• Maximum 90 days in the past.", 
-        inline=False
-    )
-    return embed
-
-# -----------------------------------------------------------------------------
-# GitHub Trigger Helper
-# -----------------------------------------------------------------------------
+    return date_input # Return as-is for validation later
 
 async def trigger_github_harvest(interaction_or_ctx, date_str: str):
     """Triggers the GitHub Actions workflow."""
+    # Validate date first
+    try:
+        target_dt = datetime.strptime(date_str, "%Y-%m-%d").date()
+        now_utc = datetime.now(timezone.utc).date()
+        if target_dt > now_utc:
+            msg = f"❌ **Future Date Error:** `{date_str}` hasn't happened yet!"
+            if isinstance(interaction_or_ctx, discord.Interaction):
+                await interaction_or_ctx.response.send_message(msg, ephemeral=True)
+            else:
+                await interaction_or_ctx.send(msg)
+            return
+    except ValueError:
+        msg = f"❌ **Format Error:** `{date_str}` is not YYYY-MM-DD."
+        if isinstance(interaction_or_ctx, discord.Interaction):
+            await interaction_or_ctx.response.send_message(msg, ephemeral=True)
+        else:
+            await interaction_or_ctx.send(msg)
+        return
+
     # Send initial status
     if isinstance(interaction_or_ctx, discord.Interaction):
         if not interaction_or_ctx.response.is_done():
-            await interaction_or_ctx.response.send_message(f"⏳ **Initializing harvest for `{date_str}`...**")
+            await interaction_or_ctx.response.send_message(f"⏳ **Starting the harvest for {date_str}...** 🚀")
         status_msg = await interaction_or_ctx.original_response()
     else:
-        status_msg = await interaction_or_ctx.send(f"⏳ **Initializing harvest for `{date_str}`...**")
+        status_msg = await interaction_or_ctx.send(f"⏳ **Starting the harvest for {date_str}...** 🚀")
 
     # Prepare GitHub API request
     url = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/{WORKFLOW_FILENAME}/dispatches"
@@ -113,8 +109,8 @@ async def trigger_github_harvest(interaction_or_ctx, date_str: str):
                             break
                 except: pass
 
-            link = f"\n\n🔗 **Live Progress:**\n{run_url}" if run_url else "\n\n⚠️ Workflow started. Check GitHub Actions for progress."
-            await status_msg.edit(content=f"✅ **Harvest Triggered for `{date_str}`!**{link}")
+            link = f"\n\n🔗 [Monitor Progress]({run_url or ACTIONS_URL}) 📡⏱️"
+            await status_msg.edit(content=f"✅ **Harvest Triggered for {date_str}!**{link}")
         else:
             err = response.json().get("message", response.text)
             await status_msg.edit(content=f"❌ **GitHub API Error:** `{err}`")
@@ -125,68 +121,84 @@ async def trigger_github_harvest(interaction_or_ctx, date_str: str):
 # UI Components
 # -----------------------------------------------------------------------------
 
-class DateSelectionModal(ui.Modal, title='Manual Data Harvest'):
-    date_input = ui.TextInput(
-        label='Target Date (YYYY-MM-DD)',
-        placeholder='e.g. 2026-02-18',
+class CustomDateModal(ui.Modal, title='Enter Custom Date'):
+    def __init__(self, action_callback, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.action_callback = action_callback
+
+    date_val = ui.TextInput(
+        label='Date (YYYY-MM-DD)',
+        placeholder='2026-02-22',
+        required=True,
         min_length=10,
-        max_length=10,
-        default=datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        max_length=10
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        valid, error, date_str = validate_date(self.date_input.value)
-        if not valid:
-            await interaction.response.send_message(error, ephemeral=True)
-            return
-        await trigger_github_harvest(interaction, date_str)
+        await self.action_callback(interaction, self.date_val.value)
 
-class DatePickerView(ui.View):
-    def __init__(self):
-        super().__init__(timeout=60)
+class DateSelectionView(ui.View):
+    def __init__(self, action_callback):
+        super().__init__(timeout=180)
+        self.action_callback = action_callback
+        
+        options = []
+        today = datetime.now(timezone.utc)
+        for i in range(14):
+            target = today - timedelta(days=i)
+            date_str = target.strftime("%Y-%m-%d")
+            if i == 0:
+                label = "Today (0)"
+            elif i == 1:
+                label = "Yesterday (-1)"
+            else:
+                day_name = target.strftime("%A")
+                label = f"{day_name} (-{i})"
+            
+            options.append(discord.SelectOption(label=label, description=date_str, value=date_str))
+        
+        self.add_item(DateDropdown(options, action_callback))
 
-    @ui.button(label="Open Date Picker Modal", style=discord.ButtonStyle.primary, emoji="📅")
-    async def open_modal(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_modal(DateSelectionModal())
+    @ui.button(label="⌨️ Manual Date Entry", style=discord.ButtonStyle.secondary)
+    async def manual_date(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.send_modal(CustomDateModal(self.action_callback))
+
+class DateDropdown(ui.Select):
+    def __init__(self, options, action_callback):
+        super().__init__(placeholder="📅 Select a date...", min_values=1, max_values=1, options=options)
+        self.action_callback = action_callback
+
+    async def callback(self, interaction: discord.Interaction):
+        # Edit original message to show progress and remove the view
+        await interaction.response.edit_message(content=f"🗓️ **Selected Date:** {self.values[0]}\nInitializing harvest... 🚀", view=None)
+        await self.action_callback(interaction, self.values[0])
 
 # -----------------------------------------------------------------------------
-# Commands
+# Bot Commands
 # -----------------------------------------------------------------------------
 
 @bot.event
 async def on_ready():
-    print(f'✅ Bot online as {bot.user}')
+    print(f'✅ Harvester Bot Online | Logged in as: {bot.user.name}')
 
 @bot.command(name="updatedata")
-async def update_data(ctx, arg: str = None):
+async def update_data(ctx, date_indicator: str = None):
     """
-    Triggers a data harvest. Supports offsets, dates, or interactive picker.
+    Triggers a data harvest.
+    !updatedata        -> Opens interactive date picker
+    !updatedata 0      -> Today
+    !updatedata -1     -> Yesterday
+    !updatedata YYYY-MM-DD -> Specific Date
     """
-    # 1. No Argument -> Show help and picker button
-    if arg is None:
-        await ctx.send(embed=get_help_embed(), view=DatePickerView())
-        return
+    target_date = get_target_date(date_indicator)
 
-    # 2. Check for Offset (Integer)
-    try:
-        offset = int(arg)
-        target_date = datetime.now(timezone.utc).date() + timedelta(days=offset)
-        arg = target_date.strftime("%Y-%m-%d")
-    except ValueError:
-        pass # Not an integer, treat as date string
-
-    # 3. Validate and Trigger
-    is_valid, error_msg, final_date = validate_date(arg)
-    if not is_valid:
-        await ctx.send(content=error_msg, embed=get_help_embed())
-        return
-
-    await trigger_github_harvest(ctx, final_date)
-
-@update_data.error
-async def update_data_error(ctx, error):
-    """Global error handler for !updatedata."""
-    await ctx.send(f"⚠️ **Command Error:** {str(error)}", embed=get_help_embed())
+    if not target_date:
+        # Show interactive picker
+        view = DateSelectionView(action_callback=trigger_github_harvest)
+        await ctx.send("🗓️ **Select Date for Data Harvest:**", view=view)
+    else:
+        # Direct trigger with validation
+        await trigger_github_harvest(ctx, target_date)
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN or not GITHUB_TOKEN:
