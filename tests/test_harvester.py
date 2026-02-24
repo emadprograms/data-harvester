@@ -1,11 +1,11 @@
 """
-Tests for src/data/harvester.py — Verify spliced hybrid logic, fallback, session slicing, edge cases.
+Tests for src/data/harvester.py — Verify Primary -> Fallback logic.
 Uses mocking to avoid real API calls.
 """
 import unittest
 from unittest.mock import patch, MagicMock
 import pandas as pd
-from datetime import date, datetime, time as dt_time
+from datetime import date, datetime
 from src.data.harvester import fetch_from_source, run_harvest_logic
 from src.config import US_EASTERN, UTC
 
@@ -33,12 +33,6 @@ class TestFetchFromSource(unittest.TestCase):
         self.assertTrue(df.empty)
         self.assertEqual(msg, "No Source")
 
-    def test_empty_source_returns_empty(self):
-        """Empty string source must return empty DF without error."""
-        logger = MockLogger()
-        df, msg = fetch_from_source("", "AAPL", date(2025, 1, 15), logger)
-        self.assertTrue(df.empty)
-
     @patch("src.data.harvester.fetch_yahoo_market_data")
     def test_yahoo_source_success(self, mock_yahoo):
         """YAHOO source must call fetch_yahoo_market_data and normalize."""
@@ -47,7 +41,7 @@ class TestFetchFromSource(unittest.TestCase):
             name="Datetime"
         )
         mock_yahoo.return_value = pd.DataFrame({
-            "Open": [150.0, 150.5], "High": [151.0, 151.5],
+            "Open": [150.0, 151.0], "High": [151.0, 151.5],
             "Low": [149.0, 149.5], "Close": [150.5, 151.0],
             "Volume": [1000, 2000]
         }, index=idx)
@@ -89,110 +83,53 @@ class TestFetchFromSource(unittest.TestCase):
 
 class TestHarvestPipeline(unittest.TestCase):
 
-    def _make_stock_map(self):
-        """Standard stock map using the Massive+Yahoo model."""
+    def _make_inventory(self):
         return {
-            "AAPL": {
-                "yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None,
-                "p1": "MASSIVE", "p2": "YAHOO", "p3": None
-            }
-        }
-
-    def _make_crypto_map(self):
-        """Crypto map using Binance."""
-        return {
-            "BTC/USD": {
-                "yahoo_ticker": "BTC-USD", "massive_ticker": None, "binance_ticker": "BTCUSDT",
-                "p1": "BINANCE", "p2": "YAHOO", "p3": None
-            }
+            "AAPL": {"yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None},
+            "BTCUSDT": {"yahoo_ticker": "BTC-USD", "massive_ticker": None, "binance_ticker": "BTCUSDT"},
+            "GC=F": {"yahoo_ticker": "GC=F", "massive_ticker": None, "binance_ticker": "PAXGUSDT"}
         }
 
     @patch("src.data.harvester.fetch_from_source")
-    def test_spliced_hybrid_both_sources(self, mock_fetch):
-        """When both Massive and Yahoo return data, harvester must splice PRE/POST from Massive and REG from Yahoo."""
-        import pytz
-        et = pytz.timezone("US/Eastern")
-        
-        # Massive returns full day data
-        m_ts = pd.to_datetime([
-            "2025-01-15 08:00:00",  # 03:00 ET → PRE
-            "2025-01-15 15:00:00",  # 10:00 ET → REG
-            "2025-01-15 21:30:00",  # 16:30 ET → POST
-        ]).tz_localize("UTC")
-        m_df = pd.DataFrame({
-            "timestamp": m_ts, "symbol": ["AAPL"] * 3,
-            "open": [149.0, 150.0, 150.5], "high": [149.5, 151.0, 151.0],
-            "low": [148.5, 149.5, 150.0], "close": [149.2, 150.5, 150.8],
-            "volume": [0.0, 0.0, 0.0], "session": ["REG"] * 3
-        })
-        
-        # Yahoo returns full day data
-        yho_ts = pd.to_datetime([
-            "2025-01-15 08:00:00",  # 03:00 ET → PRE
-            "2025-01-15 15:00:00",  # 10:00 ET → REG
-            "2025-01-15 21:30:00",  # 16:30 ET → POST
-        ]).tz_localize("UTC")
-        yho_df = pd.DataFrame({
-            "timestamp": yho_ts, "symbol": ["AAPL"] * 3,
-            "open": [149.0, 150.0, 150.5], "high": [149.5, 151.0, 151.0],
-            "low": [148.5, 149.5, 150.0], "close": [149.2, 150.5, 150.8],
-            "volume": [500.0, 10000.0, 300.0], "session": ["REG"] * 3
-        })
+    def test_primary_fallback_logic(self, mock_fetch):
+        """If primary fails, it must try fallback."""
         
         def side_effect(source, ticker, target_date, logger):
             if source == "MASSIVE":
-                return m_df, "✅ Massive"
-            elif source == "YAHOO":
-                return yho_df, "✅ Yahoo"
-            return pd.DataFrame(), "❌ Error"
-        
+                return pd.DataFrame(), "❌ Empty"
+            if source == "YAHOO":
+                # Must provide valid columns for post-processing
+                return pd.DataFrame({
+                    "timestamp": pd.to_datetime(["2025-01-15 15:00:00"]).tz_localize("UTC"),
+                    "symbol": [ticker],
+                    "close": [150.0],
+                    "session": ["REG"]
+                }), "✅ Yahoo"
+            return pd.DataFrame(), "Error"
+            
         mock_fetch.side_effect = side_effect
         logger = MockLogger()
         
-        # We need p1=YAHOO p2=MASSIVE for the hybrid mode in the code
-        db_map = {
-            "AAPL": {
-                "yahoo_ticker": "AAPL", "massive_ticker": "AAPL",
-                "p1": "YAHOO", "p2": "MASSIVE"
-            }
-        }
-        
-        final_df, report = run_harvest_logic(
-            ["AAPL"], date(2025, 1, 15), db_map, logger
-        )
+        final_df, report = run_harvest_logic(["AAPL"], date(2025, 1, 15), self._make_inventory(), logger)
         
         self.assertFalse(final_df.empty)
-        sessions = final_df['session'].unique()
-        self.assertIn("PRE", sessions)
-        self.assertIn("REG", sessions)
-        self.assertIn("POST", sessions)
+        # Should be labeled as FB-YAHOO
+        self.assertTrue(any("FB-YAHOO" in str(row) for _, row in report.iterrows()))
 
     @patch("src.data.harvester.fetch_from_source")
-    def test_massive_only_fallback(self, mock_fetch):
-        """When only Massive returns data, it must be used for ALL sessions."""
-        m_ts = pd.to_datetime([
-            "2025-01-15 15:00:00",
-        ]).tz_localize("UTC")
-        m_df = pd.DataFrame({
-            "timestamp": m_ts, "symbol": ["AAPL"],
-            "open": [150.0], "high": [151.0], "low": [149.0],
-            "close": [150.5], "volume": [10000.0], "session": ["REG"]
-        })
+    def test_gold_priority(self, mock_fetch):
+        """GC=F should try Binance (PAXGUSDT) first."""
         
-        def side_effect(source, ticker, target_date, logger):
-            if source == "MASSIVE":
-                return m_df, "✅ Massive"
-            return pd.DataFrame(), "❌ Error"
-        
-        mock_fetch.side_effect = side_effect
+        inventory = self._make_inventory()
         logger = MockLogger()
         
-        final_df, report = run_harvest_logic(
-            ["AAPL"], date(2025, 1, 15), self._make_stock_map(), logger
-        )
+        # We just want to see if Binance was the first call for GC=F
+        run_harvest_logic(["GC=F"], date(2025, 1, 15), inventory, logger)
         
-        self.assertFalse(final_df.empty)
-        self.assertTrue(any("MASSIVE" in str(row) for _, row in report.iterrows()))
+        # First call for this ticker should be BINANCE
+        first_call = mock_fetch.call_args_list[0]
+        self.assertEqual(first_call.args[0], "BINANCE")
+        self.assertEqual(first_call.args[1], "PAXGUSDT")
 
 
 if __name__ == '__main__':

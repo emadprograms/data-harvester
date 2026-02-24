@@ -8,7 +8,7 @@ STRATEGY:
 import pandas as pd
 import numpy as np
 import time
-from src.database.connection import get_archive_db_connection, get_mirror_db_connection, get_db_connection
+from src.database.connection import get_archive_db_connection, get_mirror_db_connection
 from src.config import UTC, US_EASTERN
 
 # --- Basic CRUD for Symbol Mapping ---
@@ -17,7 +17,7 @@ def get_symbol_map_from_db(client=None):
     """Fetches the complete symbol inventory from the symbol_map table."""
     own_client = False
     if not client:
-        client = get_db_connection()
+        client = get_archive_db_connection()
         own_client = True
         
     if not client:
@@ -28,9 +28,9 @@ def get_symbol_map_from_db(client=None):
         own_client = True
         
     try:
-        # Fetch from table (massive_ticker instead of capital_epic)
+        # Fetch from table (Strictly Tickers)
         res = client.execute("""
-            SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker, priority_1, priority_2, priority_3
+            SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker
             FROM symbol_map
             ORDER BY display_name
         """)
@@ -38,21 +38,11 @@ def get_symbol_map_from_db(client=None):
         # Return a dictionary structured for the app
         inventory = {}
         for row in res.rows:
-            if len(row) >= 7:
-                inventory[row[0]] = {
-                    'yahoo_ticker': row[1],
-                    'massive_ticker': row[2],
-                    'binance_ticker': row[3],
-                    'p1': row[4],
-                    'p2': row[5],
-                    'p3': row[6],
-                }
-            else:
-                inventory[row[0]] = {
-                    'yahoo_ticker': row[1],
-                    'massive_ticker': row[2],
-                    'binance_ticker': row[3],
-                }
+            inventory[row[0]] = {
+                'yahoo_ticker': row[1],
+                'massive_ticker': row[2],
+                'binance_ticker': row[3]
+            }
         return inventory
     except Exception:
         return {}
@@ -165,8 +155,6 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         rows_to_insert = []
         for row in batch_df.itertuples(index=False):
             sanitized_row = []
-            # itertuples labels might vary if columns change, so we use indexed access or explicit names
-            # Based on DataFrame structure from Massive/Yahoo
             for item in [
                 row.timestamp_str, row.symbol, 
                 row.open, row.high, row.low, row.close, row.volume, 
@@ -182,30 +170,22 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         if logger:
             logger.log(f"   💾 Dual Comitting {len(rows_to_insert)} records to Turso Archive & Mirror...")
 
-        # Default behavior for compatibility tests: single primary DB connection
-        if archive_client is None and mirror_client is None:
-            archive_client = get_db_connection()
-            own_archive = True
-            if not archive_client:
-                return False
-            return _save_to_client(archive_client, rows_to_insert, logger, "DB")
-
-        # Explicit dual-write behavior when clients are supplied
+        # Explicit dual-write behavior
         archive_success = False
+        if not archive_client:
+            archive_client = get_archive_db_connection()
+            own_archive = True
         if archive_client:
             archive_success = _save_to_client(archive_client, rows_to_insert, logger, "Archive")
 
         mirror_success = False
+        if not mirror_client:
+            mirror_client = get_mirror_db_connection()
+            own_mirror = True
         if mirror_client:
             mirror_success = _save_to_client(mirror_client, rows_to_insert, logger, "Mirror")
 
-        if archive_client and mirror_client:
-            return archive_success and mirror_success
-        if archive_client:
-            return archive_success
-        if mirror_client:
-            return mirror_success
-        return False
+        return archive_success and mirror_success
 
     except Exception as e:
         err = f"Storage Global Error: {e}"
@@ -221,16 +201,12 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
 def fetch_data_health_matrix(tickers: list, start_date, end_date, session_filter="Total"):
     """
     Fetches data, CONVERTS TO US/EASTERN, and then groups by day.
-    This solves the issue where post-market data (8 PM ET) looks like tomorrow in UTC.
     """
     client = get_archive_db_connection()
     if not client:
         return pd.DataFrame()
 
-    # Fetch slightly wider range to account for TZ shifts
-    # We fetch the Raw UTC data first
     start_str = f"{start_date} 00:00:00" 
-    # End date + 1 day to catch the UTC spillover
     end_dt_buffer = end_date + pd.Timedelta(days=1)
     end_str = f"{end_dt_buffer} 23:59:59"
 
@@ -249,30 +225,19 @@ def fetch_data_health_matrix(tickers: list, start_date, end_date, session_filter
         if not res.rows:
             return pd.DataFrame()
             
-        # Convert to Pandas
         df = pd.DataFrame([list(row) for row in res.rows], columns=['timestamp', 'symbol', 'session'])
-        
-        # 1. Parse UTC String
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(UTC)
-        
-        # 2. Convert to US Eastern (The "Trading View")
         df['timestamp_et'] = df['timestamp'].dt.tz_convert(US_EASTERN)
-        
-        # 3. Extract the Date from the EASTERN time
-        # This ensures 8 PM ET stays on "Today"
         df['day'] = df['timestamp_et'].dt.date
         
-        # 4. Apply Session Filter
         if session_filter != "Total":
             df = df[df['session'] == session_filter]
             
-        # 5. Filter strictly for requested date range (based on ET date)
         df = df[(df['day'] >= start_date) & (df['day'] <= end_date)]
         
         if df.empty:
             return pd.DataFrame()
 
-        # 6. Group and Pivot
         grouped = df.groupby(['symbol', 'day']).size().reset_index(name='candle_count')
         pivot_df = grouped.pivot(index='symbol', columns='day', values='candle_count')
         

@@ -36,13 +36,12 @@ def build_health_alerts(report_df, now_et_hour):
         return ""
 
     # Determine which sessions should have data
-    # We want to check Pre, Reg, Post based on what time it is currently
     applicable = []
     if now_et_hour >= 4:
         applicable.append("Pre")
-    if now_et_hour >= 10:  # By 10 AM ET, Reg should have started
+    if now_et_hour >= 10: 
         applicable.append("Reg")
-    if now_et_hour >= 16:  # By 4 PM ET, Post should have started
+    if now_et_hour >= 16:
         applicable.append("Post")
 
     alerts = []
@@ -60,8 +59,6 @@ def build_health_alerts(report_df, now_et_hour):
             count = row.get(session, 0)
             threshold = HEALTH_THRESHOLDS.get(session, 0)
             
-            # Since Capital.com is only past 16hrs, if it's skipped we might get 0 for PRE/POST
-            # But REG should ALWAYS have data
             if count == 0:
                 issues.append(f"{session}=0❌")
             elif count < threshold:
@@ -85,11 +82,11 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
                                 file_path=None, health_alerts="", integrity_status="", 
                                 critical_errors=""):
     """
-    Sends a compact ticker table to Discord, split across messages if needed.
-    Attaches a file (e.g., local DB) if provided.
+    Sends a complete harvest report to Discord, including the ticker summary table.
     """
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
     if not webhook_url:
+        print("⚠️ DISCORD_WEBHOOK_URL not set. Skipping notification.")
         return False
 
     try:
@@ -105,22 +102,35 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
             _post(webhook_url, msg + "No data harvested.")
             return True
 
-        # Simplified message without the detailed table
+        # Metadata
         msg += f"📊 **Total Rows Harvested**: `{total_rows:,}`\n"
-        msg += "📄 *Full details are available in the attached log.*"
+        
+        # --- Harvest Summary Table (The Dashboard) ---
+        if not report_df.empty:
+            # We assume report_df has: Ticker, Source, Total, Status
+            # If it has session columns (Pre, Reg, Post), we include those too
+            summary_cols = ["Ticker", "Source", "Total"]
+            # Dynamically check for session columns
+            for s in ["Pre", "Reg", "Post"]:
+                if s in report_df.columns:
+                    summary_cols.append(s)
+            
+            # Format as a code block table
+            table_str = report_df[summary_cols].to_string(index=False)
+            msg += f"```\n{table_str}\n```"
 
-        # Post the message with attachment
+        # Alerts and Integrity
         if health_alerts:
-            msg += f"\n\n{health_alerts}"
+            msg += f"\n{health_alerts}"
             
         if integrity_status:
-            msg += f"\n\n🔒 **Integrity** | {integrity_status}"
+            msg += f"\n🔒 **Integrity** | {integrity_status}"
 
         # Truncate to avoid 2000-character Discord limit
         if len(msg) > 1950:
             msg = msg[:1950] + "\n... (truncated)"
 
-        # Post the single combined message
+        # Post the message with the log file attachment
         all_ok = _post(webhook_url, msg, file_path)
 
         return all_ok
@@ -136,6 +146,7 @@ def _post(webhook_url, content, file_path=None):
         if file_path and os.path.exists(file_path):
             with open(file_path, 'rb') as f:
                 files = {'file': (os.path.basename(file_path), f)}
+                # Note: When sending files, the content goes into the 'content' field of data
                 resp = requests.post(webhook_url, data={'content': content}, files=files, timeout=30)
         else:
             resp = requests.post(webhook_url, json={'content': content}, timeout=10)
@@ -147,4 +158,3 @@ def _post(webhook_url, content, file_path=None):
     except Exception as e:
         print(f"❌ Discord Post Error: {e}")
         return False
-

@@ -82,7 +82,7 @@ class TestMainSmoke(unittest.TestCase):
         mock_mirror = MagicMock()
         mock_mirror_conn.return_value = mock_mirror
         
-        mock_get_map.return_value = {"AAPL": {"yahoo_ticker": "AAPL", "massive_ticker": "AAPL"}}
+        mock_get_map.return_value = {"AAPL": {"yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None}}
         
         mock_df = pd.DataFrame([{"timestamp": "2025-01-15 10:00:00", "symbol": "AAPL", "close": 150.0}])
         mock_report = pd.DataFrame([{"Ticker": "AAPL", "Status": "✅ Massive", "Total": 1}])
@@ -94,7 +94,6 @@ class TestMainSmoke(unittest.TestCase):
 
         # 2. Run Main
         import main
-        # Force re-importing main inside the test so it picks up the patched module-level imports
         importlib.reload(main)
         
         with patch.object(sys, 'argv', ['main.py']):

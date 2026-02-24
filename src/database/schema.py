@@ -3,7 +3,7 @@ Database schema initialization and table creation.
 Includes strict PRIMARY KEY constraints to prevent duplication.
 """
 
-from src.database.connection import get_db_connection, get_local_db_connection
+from src.database.connection import get_archive_db_connection, get_mirror_db_connection
 
 
 def init_db(client=None):
@@ -11,22 +11,22 @@ def init_db(client=None):
     if client:
         _init_client(client)
     else:
-        # Initialize both Turso and Local
-        turso_client = get_db_connection()
+        # Initialize both Turso Archive and Mirror
+        archive_client = get_archive_db_connection()
         try:
-            if turso_client:
-                _init_client(turso_client)
+            if archive_client:
+                _init_client(archive_client)
         finally:
-            if turso_client:
-                turso_client.close()
+            if archive_client:
+                archive_client.close()
         
-        local_client = get_local_db_connection()
+        mirror_client = get_mirror_db_connection()
         try:
-            if local_client:
-                _init_client(local_client)
+            if mirror_client:
+                _init_client(mirror_client)
         finally:
-            if local_client:
-                local_client.close()
+            if mirror_client:
+                mirror_client.close()
 
 
 def _init_client(client):
@@ -35,48 +35,21 @@ def _init_client(client):
         return
     
     try:
-        # --- COMPATIBILITY TABLE ---
+        # --- SYMBOL INVENTORY TABLE ---
+        # Strictly limited to ticker mapping. Priority is handled in code.
         client.execute("""
             CREATE TABLE IF NOT EXISTS symbol_map (
                 display_name TEXT PRIMARY KEY,
                 yahoo_ticker TEXT,
                 massive_ticker TEXT,
-                binance_ticker TEXT,
-                priority_1 TEXT,
-                priority_2 TEXT,
-                priority_3 TEXT
+                binance_ticker TEXT
             )
         """)
-
-        # --- NEW SCALABLE SCHEMA ---
-        client.execute("""
-            CREATE TABLE IF NOT EXISTS market_symbols (
-                display_name TEXT PRIMARY KEY,
-                yahoo_ticker TEXT,
-                massive_ticker TEXT,
-                binance_ticker TEXT,
-                priority_1 TEXT, -- MASSIVE, YAHOO, BINANCE
-                priority_2 TEXT, -- YAHOO, MASSIVE, NONE
-                priority_3 TEXT
-            )
-        """)
-
-        # --- MIGRATION: Rename capital_epic to massive_ticker if it exists ---
-        try:
-            for table in ["symbol_map", "market_symbols"]:
-                info = client.execute(f"PRAGMA table_info({table})")
-                cols = [row[1] for row in info.rows]
-                if "capital_epic" in cols and "massive_ticker" not in cols:
-                    print(f"🔄 Migrating {table}: Renaming capital_epic to massive_ticker...")
-                    client.execute(f"ALTER TABLE {table} RENAME COLUMN capital_epic TO massive_ticker")
-                    print(f"✅ Renamed capital_epic to massive_ticker in {table}.")
-        except Exception as e:
-            print(f"⚠️ Column migration warning: {e}")
 
         # --- SEEDING ---
         try:
-            res_new = client.execute("SELECT count(*) FROM market_symbols")
-            if res_new.rows and res_new.rows[0][0] == 0:
+            res = client.execute("SELECT count(*) FROM symbol_map")
+            if res.rows and res.rows[0][0] == 0:
                 _seed_default_symbols(client)
         except Exception as e:
             print(f"⚠️ Seeding warning: {e}")
@@ -102,27 +75,31 @@ def _init_client(client):
 
 def _seed_default_symbols(client):
     """Seeds default symbols into an empty database."""
-    print("🌱 Seeding default symbols (Massive/Polygon Optimized)...")
+    print("🌱 Seeding default symbols...")
     tickers = [
-        "SPY", "QQQ", "IWM", "DIA", "AMD", "AMZN", "AAPL", "NVDA", "TSLA",
-        "BTCUSDT", "ETHUSDT", "CL=F", "GC=F", "VIX"
+        # Equities/ETFs
+        ("SPY", "SPY", "SPY", None),
+        ("QQQ", "QQQ", "QQQ", None),
+        ("IWM", "IWM", "IWM", None),
+        ("DIA", "DIA", "DIA", None),
+        ("AMD", "AMD", "AMD", None),
+        ("AMZN", "AMZN", "AMZN", None),
+        ("AAPL", "AAPL", "AAPL", None),
+        ("NVDA", "NVDA", "NVDA", None),
+        ("TSLA", "TSLA", "TSLA", None),
+        # Crypto
+        ("BTCUSDT", "BTC-USD", None, "BTCUSDT"),
+        ("ETHUSDT", "ETH-USD", None, "ETHUSDT"),
+        # Specialized
+        ("CL=F", "CL=F", None, None),
+        ("GC=F", "GC=F", None, None),
+        ("VIX", "^VIX", None, None),
+        ("UUP", "UUP", None, None)
     ]
-    for t in tickers:
-        p1 = "MASSIVE"
-        p2 = "YAHOO"
-        b_ticker = None
-        y_ticker = t
-        m_ticker = t
-        
-        if t.endswith("USDT"): 
-            p1 = "BINANCE"; p2 = "YAHOO"; b_ticker = t
-            y_ticker = t.replace("USDT", "-USD")
-        elif t in ["CL=F", "GC=F", "VIX"]:
-            p1 = "YAHOO"; p2 = "NONE"; m_ticker = None
-        
+    for disp, y, m, b in tickers:
         client.execute(
-            """INSERT INTO market_symbols 
-               (display_name, yahoo_ticker, massive_ticker, binance_ticker, priority_1, priority_2) 
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            [t, y_ticker, m_ticker, b_ticker, p1, p2]
+            """INSERT INTO symbol_map 
+               (display_name, yahoo_ticker, massive_ticker, binance_ticker) 
+               VALUES (?, ?, ?, ?)""",
+            [disp, y, m, b]
         )

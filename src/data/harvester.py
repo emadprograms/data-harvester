@@ -9,6 +9,7 @@ from src.data.normalizer import normalize_yahoo_df
 
 
 def _session_from_timestamp(ts):
+    """Calculates market session (PRE/REG/POST) based on ET time."""
     ts_et = ts.tz_convert(US_EASTERN)
     et_time = ts_et.time()
     if et_time < datetime.strptime("09:30", "%H:%M").time():
@@ -19,6 +20,7 @@ def _session_from_timestamp(ts):
 
 
 def _apply_session_labels(df):
+    """Applies session labels to a dataframe based on timestamps."""
     if df.empty:
         return df
     out = df.copy()
@@ -87,10 +89,8 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger):
 
 def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None):
     """
-    Executes the concurrent harvesting engine.
-    
-    Primary source is MASSIVE (Polygon.io), fallback is YAHOO.
-    Crypto assets use BINANCE.
+    Executes the simplified concurrent harvesting engine.
+    Strategy: Strictly PRIMARY -> FALLBACK (Yahoo). No splicing.
     """
     def update_ui(ticker, col, val):
         if progress_callback:
@@ -104,77 +104,74 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         update_ui(ticker, "Status", "🔄 Harvesting...")
         
         if ticker not in db_map:
-            return ticker, pd.DataFrame(), "⚠️ Not in Inventory", "NONE", 0
+            return ticker, pd.DataFrame(), "⚠️ Not in Inventory", "NONE", 0, {}
         
         rules = db_map[ticker]
         t_y = rules.get('yahoo_ticker') or ticker
         t_b = rules.get('binance_ticker')
         t_m = rules.get('massive_ticker')
-        p1 = rules.get('p1')
-        p2 = rules.get('p2')
 
-        # DEFAULT PRIORITY LOGIC
-        if p1 == "BINANCE" or (ticker.endswith("USDT") and ticker != "GC=F"):
+        # ---------------------------------------------------------------------
+        # PRIORITY LOGIC (Pure Code Based)
+        # ---------------------------------------------------------------------
+        
+        # 1. Gold Specific (PAXGUSDT Binance -> GC=F Yahoo)
+        if ticker == "GC=F":
             primary_src = "BINANCE"
+            primary_ticker = t_b or "PAXGUSDT"
             fallback_src = "YAHOO"
-            primary_ticker = t_b or ticker
             fallback_ticker = t_y
-        elif p1 == "YAHOO" and p2 == "MASSIVE":
-            # Hybrid mode: PRE/POST from Massive, REG from Yahoo
-            m_df, m_msg = fetch_from_source("MASSIVE", t_m or t_y, target_date, logger)
-            y_df, y_msg = fetch_from_source("YAHOO", t_y, target_date, logger)
-
-            if not m_df.empty and not y_df.empty:
-                m_df = _apply_session_labels(m_df)
-                y_df = _apply_session_labels(y_df)
-                pre_post = m_df[m_df['session'].isin(["PRE", "POST"])].copy()
-                regular = y_df[y_df['session'] == "REG"].copy()
-                df = pd.concat([pre_post, regular], ignore_index=True)
-                source_label = "HYBRID"
-                msg = "✅ Hybrid"
-                return _post_process(ticker, df, msg, source_label)
-            elif not m_df.empty:
-                df = _apply_session_labels(m_df)
-                source_label = "MASSIVE-ONLY"
-                msg = m_msg
-                return _post_process(ticker, df, msg, source_label)
-            elif not y_df.empty:
-                df = _apply_session_labels(y_df)
-                source_label = "YAHOO-ONLY"
-                msg = y_msg
-                return _post_process(ticker, df, msg, source_label)
-            else:
-                return ticker, pd.DataFrame(), f"❌ Failed ({m_msg} | {y_msg})", "FAILED", 0
+            
+        # 2. Crypto (Binance -> Yahoo)
+        elif ticker.endswith("USDT") or t_b:
+            primary_src = "BINANCE"
+            primary_ticker = t_b or ticker
+            fallback_src = "YAHOO"
+            fallback_ticker = t_y
+            
+        # 3. Equities / Specialized (Massive -> Yahoo)
         else:
-            primary_src = p1 or ("MASSIVE" if t_m else "YAHOO")
-            fallback_src = p2 or ("YAHOO" if primary_src == "MASSIVE" else "NONE")
-            primary_ticker = t_m if primary_src == "MASSIVE" else (t_b if primary_src == "BINANCE" else t_y)
-            fallback_ticker = t_y if fallback_src == "YAHOO" else (t_m if fallback_src == "MASSIVE" else None)
+            primary_src = "MASSIVE" if t_m else "YAHOO"
+            primary_ticker = t_m or t_y
+            fallback_src = "YAHOO" if primary_src == "MASSIVE" else "NONE"
+            fallback_ticker = t_y if fallback_src == "YAHOO" else None
 
-        # Execution
+        # ---------------------------------------------------------------------
+        # EXECUTION (Strict Primary -> Fallback)
+        # ---------------------------------------------------------------------
+        
+        # A. Try Primary
         df, msg = fetch_from_source(primary_src, primary_ticker, target_date, logger)
         source_label = primary_src
+
+        # B. Try Fallback (Yahoo)
         if df.empty and fallback_src != "NONE":
+            logger.log(f"   ⚠️ {primary_src} failed for {ticker}. Attempting fallback {fallback_src}...")
             df, msg = fetch_from_source(fallback_src, fallback_ticker, target_date, logger)
             source_label = f"FB-{fallback_src}"
 
         if df.empty:
-            return ticker, pd.DataFrame(), f"❌ Failed ({msg})", "FAILED", 0
+            return ticker, pd.DataFrame(), f"❌ Failed ({msg})", "FAILED", 0, {}
 
-        return _post_process(ticker, df, msg, source_label)
-
-    def _post_process(ticker, df, msg, source_label):
+        # ---------------------------------------------------------------------
+        # POST-PROCESS (Unified for all sources)
+        # ---------------------------------------------------------------------
         df = df.copy()
         df['symbol'] = ticker
-        if 'session' not in df.columns:
-            df['session'] = 'REG'
         
+        # Standardize session labels
+        if 'session' not in df.columns:
+            df = _apply_session_labels(df)
+        
+        # Ensure consistent Timezone
         if df['timestamp'].dt.tz is None:
             df['timestamp'] = df['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
         else:
             df['timestamp'] = df['timestamp'].dt.tz_convert(US_EASTERN)
 
-        return ticker, df, f"✅ {source_label}", source_label, len(df)
+        session_counts = df['session'].value_counts().to_dict()
+        
+        return ticker, df, f"✅ {source_label}", source_label, len(df), session_counts
 
     # Execute in Parallel
     all_data = []
@@ -185,7 +182,7 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         
         for future in as_completed(future_to_ticker):
             try:
-                ticker, df, status, source, total_rows = future.result()
+                ticker, df, status, source, total_rows, s_counts = future.result()
                 completed_count += 1
                 
                 if progress_callback:
@@ -196,16 +193,22 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                     update_ui(ticker, "Total Rows", total_rows)
                     all_data.append(df)
                 
-                report_cards.append({
+                card = {
                     "Ticker": ticker, "Source": source, 
-                    "Total": total_rows, "Status": status
-                })
+                    "Total": total_rows, "Status": status,
+                    "Pre": s_counts.get("PRE", 0),
+                    "Reg": s_counts.get("REG", 0),
+                    "Post": s_counts.get("POST", 0)
+                }
+                report_cards.append(card)
+                
             except Exception as e:
                 ticker_err = future_to_ticker[future]
                 logger.log(f"   ❌ Thread Error for {ticker_err}: {e}")
                 report_cards.append({
                     "Ticker": ticker_err, "Source": "FAILED", 
-                    "Total": 0, "Status": f"❌ Error"
+                    "Total": 0, "Status": f"❌ Error",
+                    "Pre": 0, "Reg": 0, "Post": 0
                 })
 
     if not all_data:
