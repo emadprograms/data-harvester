@@ -88,7 +88,7 @@ class TestMainSmoke(unittest.TestCase):
         
         mock_get_map.return_value = {"AAPL": {"yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None}}
         
-        mock_df = pd.DataFrame([{"timestamp": "2025-01-15 10:00:00", "symbol": "AAPL", "close": 150.0}])
+        mock_df = pd.DataFrame([{"timestamp": "2026-02-18 10:00:00", "symbol": "AAPL", "close": 150.0}])
         mock_report = pd.DataFrame([{"Ticker": "AAPL", "Status": "✅ Massive", "Total": 1}])
         mock_run_harvest.return_value = (mock_df, mock_report)
         

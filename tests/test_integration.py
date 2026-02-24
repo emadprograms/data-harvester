@@ -41,7 +41,7 @@ class TestIntegrationPipeline(unittest.TestCase):
         return client
 
     @patch("src.data.harvester.fetch_binance_daily")
-    @patch("src.api.yahoo.fetch_yahoo_market_data")
+    @patch("src.data.harvester.fetch_yahoo_market_data")
     @patch("src.data.harvester.fetch_massive_data")
     @patch("src.database.connection.get_archive_db_connection")
     @patch("src.database.connection.get_mirror_db_connection")
@@ -56,7 +56,7 @@ class TestIntegrationPipeline(unittest.TestCase):
         
         # Mock Massive success
         massive_df = pd.DataFrame({
-            "timestamp": pd.to_datetime(["2025-01-15 10:00:00"]).tz_localize("UTC"),
+            "timestamp": pd.to_datetime(["2026-02-18 10:00:00"]).tz_localize("UTC"),
             "symbol": ["AAPL"],
             "open": [150.0], "high": [150.5], "low": [149.5],
             "close": [150.2], "volume": [1000.0]
@@ -65,7 +65,7 @@ class TestIntegrationPipeline(unittest.TestCase):
 
         # Mock Binance success
         mock_binance.return_value = pd.DataFrame({
-            "timestamp": pd.to_datetime(["2025-01-15 12:00:00"]).tz_localize("UTC"),
+            "timestamp": pd.to_datetime(["2026-02-18 12:00:00"]).tz_localize("UTC"),
             "symbol": ["BTCUSDT"], "open": [40000.0], "high": [41000.0], "low": [39000.0],
             "close": [40500.0], "volume": [100.0]
         })
@@ -82,7 +82,7 @@ class TestIntegrationPipeline(unittest.TestCase):
 
         # 2. Execution logic
         symbol_map = get_symbol_map_from_db(mem_client)
-        target_date = date(2025, 1, 15)
+        target_date = date(2026, 2, 18)
         logger = MagicMock()
         
         final_df, report = run_harvest_logic(

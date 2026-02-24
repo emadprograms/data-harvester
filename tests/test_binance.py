@@ -36,7 +36,7 @@ class TestBinanceFetch(unittest.TestCase):
         
         from src.api.binance import fetch_binance_daily
         logger = MockLogger()
-        df = fetch_binance_daily("BTCUSDT", date(2025, 1, 15), logger)
+        df = fetch_binance_daily("BTCUSDT", date(2026, 2, 18), logger)
         self.assertFalse(df.empty)
         self.assertIn("timestamp", df.columns)
         self.assertIn("close", df.columns)
@@ -51,7 +51,7 @@ class TestBinanceFetch(unittest.TestCase):
         
         from src.api.binance import fetch_binance_daily
         logger = MockLogger()
-        df = fetch_binance_daily("INVALIDXYZ", date(2025, 1, 15), logger)
+        df = fetch_binance_daily("INVALIDXYZ", date(2026, 2, 18), logger)
         self.assertTrue(df.empty)
         # Should have logged the comprehensive error report
         self.assertTrue(any("All Binance domains failed" in m for m in logger.messages))
@@ -79,7 +79,7 @@ class TestBinanceFetch(unittest.TestCase):
         
         from src.api.binance import fetch_binance_daily
         logger = MockLogger()
-        df = fetch_binance_daily("BTCUSDT", date(2025, 1, 15), logger)
+        df = fetch_binance_daily("BTCUSDT", date(2026, 2, 18), logger)
         # Should have tried at least 2 domains
         self.assertGreaterEqual(mock_get.call_count, 2)
 
@@ -90,7 +90,7 @@ class TestBinanceFetch(unittest.TestCase):
         
         from src.api.binance import fetch_binance_daily
         logger = MockLogger()
-        df = fetch_binance_daily("BTCUSDT", date(2025, 1, 15), logger)
+        df = fetch_binance_daily("BTCUSDT", date(2026, 2, 18), logger)
         self.assertTrue(df.empty)
         self.assertTrue(any("All Binance domains failed" in m for m in logger.messages))
 
@@ -101,7 +101,7 @@ class TestBinanceFetch(unittest.TestCase):
         
         from src.api.binance import fetch_binance_daily
         # Must NOT crash when logger=None
-        df = fetch_binance_daily("BTCUSDT", date(2025, 1, 15))
+        df = fetch_binance_daily("BTCUSDT", date(2026, 2, 18))
         self.assertTrue(df.empty)
 
 

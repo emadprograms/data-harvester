@@ -64,7 +64,7 @@ class TestDatabaseOperations(unittest.TestCase):
     @patch("src.database.operations.get_mirror_db_connection", return_value=None)
     def test_save_data_no_connection(self, mock_mirror, mock_archive):
         """save_data_to_storage must return False if connections fail."""
-        df = pd.DataFrame([{"timestamp": "2025-01-15", "symbol": "AAPL"}])
+        df = pd.DataFrame([{"timestamp": "2026-02-18", "symbol": "AAPL"}])
         res = ops_module.save_data_to_storage(df)
         self.assertFalse(res)
 
@@ -81,7 +81,7 @@ class TestDatabaseOperations(unittest.TestCase):
         mock_mirror.return_value = MagicMock()
         
         df = pd.DataFrame({
-            "timestamp": ["2025-01-15 10:00:00"],
+            "timestamp": ["2026-02-18 10:00:00"],
             "symbol": ["AAPL"],
             "open": [150.0], "high": [151.0], "low": [149.0], 
             "close": [150.5], "volume": [1000.0], "session": ["REG"]
@@ -98,7 +98,7 @@ class TestDatabaseOperations(unittest.TestCase):
         mock_client.execute.side_effect = Exception("DB Error")
         mock_archive.return_value = mock_client
         
-        df = pd.DataFrame([{"timestamp": "2025-01-15 10:00:00", "symbol": "AAPL"}])
+        df = pd.DataFrame([{"timestamp": "2026-02-18 10:00:00", "symbol": "AAPL"}])
         res = ops_module.save_data_to_storage(df)
         self.assertFalse(res)
 

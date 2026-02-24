@@ -19,7 +19,7 @@ class TestNormalizeYahoo(unittest.TestCase):
     def test_standard_yahoo_data(self):
         """Standard Yahoo data with timezone-aware index must normalize correctly."""
         idx = pd.DatetimeIndex(
-            pd.date_range("2025-01-15 09:30", periods=3, freq="1min", tz="US/Eastern"),
+            pd.date_range("2026-02-18 09:30", periods=3, freq="1min", tz="US/Eastern"),
             name="Datetime"
         )
         df = pd.DataFrame({
@@ -40,7 +40,7 @@ class TestNormalizeYahoo(unittest.TestCase):
     def test_yahoo_missing_volume(self):
         """VIX and similar indices may have no Volume column — must fill with 0."""
         idx = pd.DatetimeIndex(
-            pd.date_range("2025-01-15 09:30", periods=2, freq="1min", tz="US/Eastern"),
+            pd.date_range("2026-02-18 09:30", periods=2, freq="1min", tz="US/Eastern"),
             name="Datetime"
         )
         df = pd.DataFrame({
@@ -59,7 +59,7 @@ class TestNormalizeYahoo(unittest.TestCase):
     def test_yahoo_nan_volume(self):
         """Volume with NaN values must be filled with 0."""
         idx = pd.DatetimeIndex(
-            pd.date_range("2025-01-15 09:30", periods=2, freq="1min", tz="US/Eastern"),
+            pd.date_range("2026-02-18 09:30", periods=2, freq="1min", tz="US/Eastern"),
             name="Datetime"
         )
         df = pd.DataFrame({
@@ -76,7 +76,7 @@ class TestNormalizeYahoo(unittest.TestCase):
     def test_yahoo_naive_timestamps(self):
         """Naive (no timezone) timestamps must be localized to US/Eastern then converted to UTC."""
         idx = pd.DatetimeIndex(
-            pd.date_range("2025-01-15 09:30", periods=2, freq="1min"),
+            pd.date_range("2026-02-18 09:30", periods=2, freq="1min"),
             name="Datetime"
         )
         df = pd.DataFrame({
@@ -93,7 +93,7 @@ class TestNormalizeYahoo(unittest.TestCase):
     def test_yahoo_multiindex_columns(self):
         """Yahoo sometimes returns MultiIndex columns — must flatten them."""
         idx = pd.DatetimeIndex(
-            pd.date_range("2025-01-15 09:30", periods=2, freq="1min", tz="US/Eastern"),
+            pd.date_range("2026-02-18 09:30", periods=2, freq="1min", tz="US/Eastern"),
             name="Datetime"
         )
         arrays = [["Open", "High", "Low", "Close", "Volume"], 
