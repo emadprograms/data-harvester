@@ -127,7 +127,7 @@ class InfisicalManager:
     def get_capital_credentials(self) -> dict:
         """Retrieves Capital.com API credentials."""
         return {
-            "api_key": self.get_secret("capital_api_key"),
-            "identifier": self.get_secret("capital_identifier"),
-            "password": self.get_secret("capital_password")
+            "api_key": self.get_secret("capital_com_x_cap_api_key"),
+            "identifier": self.get_secret("capital_com_identifier"),
+            "password": self.get_secret("capital_com_password")
         }
