@@ -94,6 +94,13 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger, massive
                 return _validate_date_match(raw, target_date, "Binance", logger, specific_ticker)
             return pd.DataFrame(), "❌ Binance Empty"
 
+        elif source_name == "CAPITAL":
+            from src.api.capital import fetch_capital_data
+            raw = fetch_capital_data(specific_ticker, target_date, logger)
+            if not raw.empty:
+                return _validate_date_match(raw, target_date, "Capital", logger, specific_ticker)
+            return pd.DataFrame(), "❌ Capital Empty"
+
     except Exception as e:
         logger.log(f"   ⚠️ Error fetching {source_name}: {e}")
         return pd.DataFrame(), f"❌ Error {source_name}"
@@ -103,7 +110,7 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger, massive
 def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None, massive_provider=None):
     """
     Executes the simplified concurrent harvesting engine.
-    Strategy: Strictly PRIMARY -> FALLBACK (Yahoo). No splicing.
+    Strategy: Stocks (Massive -> Capital), Crypto (Binance -> Yahoo), Specialized (Yahoo).
     """
     def update_ui(ticker, col, val):
         if progress_callback:
@@ -124,34 +131,42 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
             return ticker, pd.DataFrame(), "⚠️ Not in Inventory", "NONE", 0, {}
         
         rules = db_map[ticker]
-        t_y = rules.get('yahoo_ticker') or ticker
+        t_y = rules.get('yahoo_ticker')
         t_b = rules.get('binance_ticker')
         t_m = rules.get('massive_ticker')
+        t_c = rules.get('capital_ticker')
 
         # ---------------------------------------------------------------------
         # PRIORITY LOGIC (Pure Code Based)
         # ---------------------------------------------------------------------
         
-        # 1. Gold Specific (PAXGUSDT Binance -> GC=F Yahoo)
-        if ticker == "GC=F":
+        # 1. Stocks/ETFs (Identified by presence of Capital ticker)
+        if t_c:
+            primary_src = "MASSIVE" if t_m else "CAPITAL"
+            primary_ticker = t_m or t_c
+            fallback_src = "CAPITAL" if primary_src == "MASSIVE" else "NONE"
+            fallback_ticker = t_c if fallback_src == "CAPITAL" else None
+
+        # 2. Gold Specific (PAXGUSDT Binance -> GC=F Yahoo)
+        elif ticker == "GC=F":
             primary_src = "BINANCE"
             primary_ticker = t_b or "PAXGUSDT"
             fallback_src = "YAHOO"
-            fallback_ticker = t_y
+            fallback_ticker = t_y or "GC=F"
             
-        # 2. Crypto (Binance -> Yahoo)
+        # 3. Crypto (Binance -> Yahoo)
         elif ticker.endswith("USDT") or t_b:
             primary_src = "BINANCE"
             primary_ticker = t_b or ticker
             fallback_src = "YAHOO"
-            fallback_ticker = t_y
+            fallback_ticker = t_y or ticker
             
-        # 3. Equities / Specialized (Massive -> Yahoo)
+        # 4. Specialized (Yahoo only)
         else:
-            primary_src = "MASSIVE" if t_m else "YAHOO"
-            primary_ticker = t_m or t_y
-            fallback_src = "YAHOO" if primary_src == "MASSIVE" else "NONE"
-            fallback_ticker = t_y if fallback_src == "YAHOO" else None
+            primary_src = "YAHOO"
+            primary_ticker = t_y or ticker
+            fallback_src = "NONE"
+            fallback_ticker = None
 
         # ---------------------------------------------------------------------
         # EXECUTION (Strict Primary -> Fallback)

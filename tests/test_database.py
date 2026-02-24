@@ -51,14 +51,15 @@ class TestDatabaseOperations:
         # Mocking the ResultSet object from libsql-client
         mock_res = MagicMock()
         mock_res.rows = [
-            ("AAPL", "AAPL", "AAPL", None),
-            ("BTCUSDT", "BTC-USD", None, "BTCUSDT")
+            ("AAPL", None, "AAPL", None, "AAPL"),
+            ("BTCUSDT", "BTC-USD", None, "BTCUSDT", None)
         ]
         mock_client.execute.return_value = mock_res
         
         res = ops_module.get_symbol_map_from_db()
         assert "AAPL" in res
         assert res["AAPL"]["massive_ticker"] == "AAPL"
+        assert res["AAPL"]["capital_ticker"] == "AAPL"
 
     @patch("src.database.operations.get_archive_db_connection", return_value=None)
     @patch("src.database.operations.get_mirror_db_connection", return_value=None)

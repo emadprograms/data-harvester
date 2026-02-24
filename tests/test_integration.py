@@ -74,12 +74,12 @@ class TestIntegrationPipeline:
 
         # 1. Seed the DB (Using REPLACE to handle auto-seeded defaults)
         mem_client.execute(
-            "INSERT OR REPLACE INTO symbol_map (display_name, yahoo_ticker, massive_ticker, binance_ticker) VALUES (?, ?, ?, ?)",
-            ["AAPL", "AAPL", "AAPL", None]
+            "INSERT OR REPLACE INTO symbol_map (display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker) VALUES (?, ?, ?, ?, ?)",
+            ["AAPL", None, "AAPL", None, "AAPL"]
         )
         mem_client.execute(
-            "INSERT OR REPLACE INTO symbol_map (display_name, yahoo_ticker, massive_ticker, binance_ticker) VALUES (?, ?, ?, ?)",
-            ["BTCUSDT", "BTC-USD", None, "BTCUSDT"]
+            "INSERT OR REPLACE INTO symbol_map (display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker) VALUES (?, ?, ?, ?, ?)",
+            ["BTCUSDT", "BTC-USD", None, "BTCUSDT", None]
         )
 
         # 2. Execution logic

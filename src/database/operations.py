@@ -31,7 +31,7 @@ def get_symbol_map_from_db(client=None):
     try:
         # Fetch from table (Strictly Tickers)
         res = client.execute("""
-            SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker
+            SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker
             FROM symbol_map
             ORDER BY display_name
         """)
@@ -42,7 +42,8 @@ def get_symbol_map_from_db(client=None):
             inventory[row[0]] = {
                 'yahoo_ticker': row[1],
                 'massive_ticker': row[2],
-                'binance_ticker': row[3]
+                'binance_ticker': row[3],
+                'capital_ticker': row[4]
             }
         return inventory
     except Exception:

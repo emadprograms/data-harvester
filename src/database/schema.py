@@ -35,7 +35,8 @@ def _init_client(client):
                 display_name TEXT PRIMARY KEY,
                 yahoo_ticker TEXT,
                 massive_ticker TEXT,
-                binance_ticker TEXT
+                binance_ticker TEXT,
+                capital_ticker TEXT
             )
         """)
 
@@ -70,30 +71,30 @@ def _seed_default_symbols(client):
     """Seeds default symbols into an empty database."""
     print("🌱 Seeding default symbols...")
     tickers = [
-        # Equities/ETFs
-        ("SPY", "SPY", "SPY", None),
-        ("QQQ", "QQQ", "QQQ", None),
-        ("IWM", "IWM", "IWM", None),
-        ("DIA", "DIA", "DIA", None),
-        ("AMD", "AMD", "AMD", None),
-        ("AMZN", "AMZN", "AMZN", None),
-        ("AAPL", "AAPL", "AAPL", None),
-        ("NVDA", "NVDA", "NVDA", None),
-        ("TSLA", "TSLA", "TSLA", None),
+        # Equities/ETFs (Fallback changed from Yahoo -> Capital)
+        ("SPY", None, "SPY", None, "SPY"),
+        ("QQQ", None, "QQQ", None, "QQQ"),
+        ("IWM", None, "IWM", None, "IWM"),
+        ("DIA", None, "DIA", None, "DIA"),
+        ("AMD", None, "AMD", None, "AMD"),
+        ("AMZN", None, "AMZN", None, "AMZN"),
+        ("AAPL", None, "AAPL", None, "AAPL"),
+        ("NVDA", None, "NVDA", None, "NVDA"),
+        ("TSLA", None, "TSLA", None, "TSLA"),
         # Crypto
-        ("BTCUSDT", "BTC-USD", None, "BTCUSDT"),
-        ("ETHUSDT", "ETH-USD", None, "ETHUSDT"),
-        ("PAXGUSDT", "PAXG-USD", None, "PAXGUSDT"),
+        ("BTCUSDT", "BTC-USD", None, "BTCUSDT", None),
+        ("ETHUSDT", "ETH-USD", None, "ETHUSDT", None),
+        ("PAXGUSDT", "PAXG-USD", None, "PAXGUSDT", None),
         # Specialized
-        ("CL=F", "CL=F", None, None),
-        ("GC=F", "GC=F", None, None),
-        ("VIX", "^VIX", None, None),
-        ("UUP", "UUP", None, None)
+        ("CL=F", "CL=F", None, None, None),
+        ("GC=F", "GC=F", None, None, None),
+        ("VIX", "^VIX", None, None, None),
+        ("UUP", "UUP", None, None, None)
     ]
-    for disp, y, m, b in tickers:
+    for disp, y, m, b, c in tickers:
         client.execute(
             """INSERT INTO symbol_map 
-               (display_name, yahoo_ticker, massive_ticker, binance_ticker) 
-               VALUES (?, ?, ?, ?)""",
-            [disp, y, m, b]
+               (display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker) 
+               VALUES (?, ?, ?, ?, ?)""",
+            [disp, y, m, b, c]
         )

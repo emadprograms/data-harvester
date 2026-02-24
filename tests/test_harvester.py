@@ -85,9 +85,9 @@ class TestHarvestPipeline:
 
     def _make_inventory(self):
         return {
-            "AAPL": {"yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None},
-            "BTCUSDT": {"yahoo_ticker": "BTC-USD", "massive_ticker": None, "binance_ticker": "BTCUSDT"},
-            "GC=F": {"yahoo_ticker": "GC=F", "massive_ticker": None, "binance_ticker": "PAXGUSDT"}
+            "AAPL": {"yahoo_ticker": None, "massive_ticker": "AAPL", "binance_ticker": None, "capital_ticker": "AAPL"},
+            "BTCUSDT": {"yahoo_ticker": "BTC-USD", "massive_ticker": None, "binance_ticker": "BTCUSDT", "capital_ticker": None},
+            "GC=F": {"yahoo_ticker": "GC=F", "massive_ticker": None, "binance_ticker": "PAXGUSDT", "capital_ticker": None}
         }
 
     @patch("src.data.harvester.fetch_from_source")
@@ -97,14 +97,14 @@ class TestHarvestPipeline:
         def side_effect(source, ticker, target_date, logger, massive_provider=None):
             if source == "MASSIVE":
                 return pd.DataFrame(), "❌ Empty"
-            if source == "YAHOO":
+            if source == "CAPITAL":
                 # Must provide valid columns for post-processing
                 return pd.DataFrame({
                     "timestamp": pd.to_datetime([f"{safe_test_date_str} 15:00:00"]).tz_localize("UTC"),
                     "symbol": [ticker],
                     "close": [150.0],
                     "session": ["REG"]
-                }), "✅ Yahoo"
+                }), "✅ Capital"
             return pd.DataFrame(), "Error"
             
         mock_fetch.side_effect = side_effect
@@ -113,8 +113,8 @@ class TestHarvestPipeline:
         final_df, report = run_harvest_logic(["AAPL"], safe_test_date, self._make_inventory(), logger, massive_provider=MagicMock())
         
         assert not final_df.empty
-        # Should be labeled as FB-YAHOO
-        assert any("FB-YAHOO" in str(row) for _, row in report.iterrows())
+        # Should be labeled as FB-CAPITAL
+        assert any("FB-CAPITAL" in str(row) for _, row in report.iterrows())
 
     @patch("src.data.harvester.fetch_from_source")
     def test_gold_priority(self, mock_fetch, safe_test_date):

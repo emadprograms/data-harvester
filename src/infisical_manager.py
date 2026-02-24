@@ -123,3 +123,11 @@ class InfisicalManager:
             "url": self.get_secret("turso_hamzaarshadalam_stockdataarchivemirror1_db_url"),
             "token": self.get_secret("turso_hamzarshadalam_stockdataarchivemirror1_auth_token")
         }
+
+    def get_capital_credentials(self) -> dict:
+        """Retrieves Capital.com API credentials."""
+        return {
+            "api_key": self.get_secret("capital_api_key"),
+            "identifier": self.get_secret("capital_identifier"),
+            "password": self.get_secret("capital_password")
+        }
