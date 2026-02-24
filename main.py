@@ -130,29 +130,40 @@ def main():
         
         # 4. Dual Write & Post-Harvest Parity
         if final_df is not None and not final_df.empty:
-            # Clean up existing data for the target dates to prevent splicing/overlap
+            # Split data into Target Date vs Rogue Rows (Previous/Other days)
             if not pd.api.types.is_datetime64_any_dtype(final_df['timestamp']):
                 final_df['timestamp'] = pd.to_datetime(final_df['timestamp'], utc=True)
             
-            unique_dates = final_df['timestamp'].dt.date.unique().tolist()
-            if unique_dates:
-                logger.log(f"🧹 Clearing existing data for {len(unique_dates)} dates before commit...")
-                clear_market_data_for_dates(archive_client, unique_dates, logger, "Archive")
-                clear_market_data_for_dates(mirror_client, unique_dates, logger, "Mirror")
+            target_mask = final_df['timestamp'].dt.date == target_date
+            target_df = final_df[target_mask].copy()
+            rogue_df = final_df[~target_mask].copy()
 
-            if save_data_to_storage(final_df, logger, archive_client=archive_client, mirror_client=mirror_client):
-                logger.log(f"✅ Data written to Archive & Mirror. Rows: {len(final_df)}")
+            # A. Clean & Replace for TARGET DATE
+            if not target_df.empty:
+                logger.log(f"🧹 Clearing existing data for {target_date} before commit...")
+                clear_market_data_for_dates(archive_client, [target_date], logger, "Archive")
+                clear_market_data_for_dates(mirror_client, [target_date], logger, "Mirror")
                 
-                logger.log(f"🔍 Post-Harvest Parity Check for {target_date}...")
-                ok_post, msg_post = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
-                integrity_post_msg = msg_post
-                
-                if not ok_post:
-                    critical_errors += f"- Post-Harvest Parity Failure: {msg_post}\n"
-            else:
-                msg = "❌ Failed to save data to dual storage."
-                logger.log(msg)
-                critical_errors += f"- {msg}\n"
+                if save_data_to_storage(target_df, logger, archive_client=archive_client, mirror_client=mirror_client, mode="REPLACE"):
+                    logger.log(f"✅ Target data ({target_date}) written to Archive & Mirror. Rows: {len(target_df)}")
+                else:
+                    msg = f"❌ Failed to save target data for {target_date}."
+                    logger.log(msg)
+                    critical_errors += f"- {msg}\n"
+
+            # B. Fill Gaps for ROGUE ROWS (Previous days) - Use mode="IGNORE"
+            if not rogue_df.empty:
+                logger.log(f"📥 Filling gaps for {len(rogue_df)} rogue rows from other dates using IGNORE mode...")
+                save_data_to_storage(rogue_df, logger, archive_client=archive_client, mirror_client=mirror_client, mode="IGNORE")
+
+            # C. Verification (Parity check targets the explicitly requested date)
+            logger.log(f"🔍 Post-Harvest Parity Check for {target_date}...")
+            from src.utils.integrity import ensure_database_parity
+            ok_post, msg_post = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
+            integrity_post_msg = msg_post
+            
+            if not ok_post:
+                critical_errors += f"- Post-Harvest Parity Failure: {msg_post}\n"
         else:
             logger.log("⚠️ No data harvested.")
 

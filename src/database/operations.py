@@ -66,11 +66,13 @@ def clear_market_data_for_dates(client, dates: list, logger=None, label="DB"):
         for d in dates:
             d_str = str(d)
             client.execute("DELETE FROM market_data WHERE timestamp LIKE ?", [f"{d_str}%"])
-        if logger: logger.log(f"   ✅ {label}: Cleaned existing records for {len(dates)} dates.")
+        if logger:
+            date_str = ", ".join(map(str, dates))
+            logger.log(f"   ✅ {label}: Cleaned existing records for: {date_str}")
     except Exception as e:
         if logger: logger.log(f"   ⚠️ {label} Clean-up warning: {e}")
 
-def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
+def _save_to_client(client, rows_to_insert, logger=None, label="DB", mode="REPLACE"):
     """Generic helper to save a batch of rows to a specific database client."""
     BATCH_SIZE = 100
     total_rows = len(rows_to_insert)
@@ -81,7 +83,7 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
             flat_values = [item for sublist in batch for item in sublist]
             
             query = f"""
-                INSERT OR REPLACE INTO market_data 
+                INSERT OR {mode} INTO market_data 
                 (timestamp, symbol, open, high, low, close, volume, session) 
                 VALUES {placeholders}
             """
@@ -101,7 +103,7 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
         return False
 
 
-def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mirror_client=None):
+def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mirror_client=None, mode="REPLACE"):
     """
     Saves market data to BOTH Turso Archive and Turso Mirror.
     Implements a compensating rollback if the mirror write fails after archive success
@@ -149,7 +151,7 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
             rows_to_insert.append(tuple(sanitized_row))
 
         if logger:
-            logger.log(f"   💾 Dual Comitting {len(rows_to_insert)} records to Turso Archive & Mirror...")
+            logger.log(f"   💾 Dual Comitting {len(rows_to_insert)} records to Turso Archive & Mirror (Mode: {mode})...")
 
         # --- Dual-Write with Compensating Rollback ---
         
@@ -161,7 +163,7 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         
         if archive_client:
             if logger: logger.log("   ➡️ Committing to ARCHIVE...")
-            archive_success = _save_to_client(archive_client, rows_to_insert, logger, "Archive")
+            archive_success = _save_to_client(archive_client, rows_to_insert, logger, "Archive", mode=mode)
 
         if not archive_success:
             if logger: logger.log("   ❌ Archive write failed. Aborting dual-write to prevent desync.")
@@ -175,7 +177,7 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         
         if mirror_client:
             if logger: logger.log("   ➡️ Committing to MIRROR...")
-            mirror_success = _save_to_client(mirror_client, rows_to_insert, logger, "Mirror")
+            mirror_success = _save_to_client(mirror_client, rows_to_insert, logger, "Mirror", mode=mode)
 
         # C. Handle Desync (Mirror failed after Archive success)
         if not mirror_success:
