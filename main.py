@@ -135,33 +135,18 @@ def main():
         
         # 4. Dual Write & Post-Harvest Parity
         if final_df is not None and not final_df.empty:
-            # TARGETED CLEANING: Only wipe symbols that we just successfully harvested
-            harvested_symbols = final_df['symbol'].unique().tolist()
+            # --- SOURCE-AWARE CLEANING (TIERED DELETION) ---
+            # Rule: Only wipe symbols if we have a fresh Tier-1 (Authoritative) replacement.
+            # Tier-2 data (Capital/Yahoo) is stacked incrementally without deleting morning data.
+            tier_1_symbols = final_df[final_df['source'].isin(['MASSIVE', 'BINANCE'])]['symbol'].unique().tolist()
             
-            # Filter: Skip cleaning for tickers with ONLY one source (no risk of pollution)
-            symbols_to_clean = []
-            for s in harvested_symbols:
-                rules = symbol_map.get(s, {})
-                # Count non-empty sources
-                sources = [
-                    rules.get('yahoo_ticker'), 
-                    rules.get('massive_ticker'), 
-                    rules.get('binance_ticker'), 
-                    rules.get('capital_ticker')
-                ]
-                active_sources = [src for src in sources if src]
-                
-                if len(active_sources) > 1:
-                    symbols_to_clean.append(s)
-                else:
-                    logger.log(f"🔹 Skipping Clean for {s} (Single Source: {active_sources[0] if active_sources else 'None'})")
-
-            if symbols_to_clean:
+            if tier_1_symbols:
                 from src.database.operations import clear_market_data_for_range
-                logger.log(f"🧹 Targeted Clean for {len(symbols_to_clean)} multi-source symbols...")
-                # Use a slightly wider range for safety in cleaning (inclusive)
-                clear_market_data_for_range(archive_client, session_start_utc, session_end_utc, logger, "Archive", symbols=symbols_to_clean)
-                clear_market_data_for_range(mirror_client, session_start_utc, session_end_utc, logger, "Mirror", symbols=symbols_to_clean)
+                logger.log(f"🧹 Tier-1 Upgrade: Clearing {len(tier_1_symbols)} symbols to ensure high-fidelity replacement...")
+                clear_market_data_for_range(archive_client, session_start_utc, session_end_utc, logger, "Archive", symbols=tier_1_symbols)
+                clear_market_data_for_range(mirror_client, session_start_utc, session_end_utc, logger, "Mirror", symbols=tier_1_symbols)
+            else:
+                logger.log("🔹 Incremental Mode: Only Tier-2 data found. Skipping Clean to allow data stacking.")
 
             if save_data_to_storage(final_df, logger, archive_client=archive_client, mirror_client=mirror_client):
                 logger.log(f"✅ Session data written to Archive & Mirror. Rows: {len(final_df)}")

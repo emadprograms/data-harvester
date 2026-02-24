@@ -63,11 +63,24 @@ def fetch_capital_data(epic: str, start_dt: datetime, end_dt: datetime, logger) 
         return pd.DataFrame()
 
     session = get_retry_session()
-    chunk_start = start_dt
-    all_rows = []
+    
+    # --- 16 HOUR LOOKBACK CLAMP ---
+    # Capital.com only provides the last 16 hours of minute data.
+    # We clip the start_dt to this limit to prevent the API from returning current data for old dates.
+    now_utc = datetime.now(timezone.utc if start_dt.tzinfo else None)
+    lookback_limit = now_utc - timedelta(hours=15, minutes=50) # 10m buffer for safety
+    
+    effective_start = max(start_dt, lookback_limit)
+    
+    if effective_start >= end_dt:
+        logger.log(f"   ℹ️ {epic}: Requested range is beyond Capital.com 16h window. Skipping.")
+        return pd.DataFrame()
+        
+    if effective_start > start_dt:
+        logger.log(f"   ℹ️ {epic}: Clipping Capital.com request to 16h window (Start: {effective_start.strftime('%H:%M')} UTC)")
 
-    # CLAMP: Ensure we don't request future data
-    now_utc = datetime.now(UTC)
+    chunk_start = effective_start
+    all_rows = []
 
     while chunk_start < end_dt:
         if chunk_start >= now_utc:
