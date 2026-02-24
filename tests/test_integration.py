@@ -20,14 +20,25 @@ class TestIntegrationPipeline(unittest.TestCase):
 
     def setUp(self):
         self.db_files = ["memdb1.db", "memdb2.db"]
+        self._clients = []
         for f in self.db_files:
             if os.path.exists(f):
                 os.remove(f)
 
     def tearDown(self):
+        for client in self._clients:
+            try:
+                client.close()
+            except Exception:
+                pass
         for f in self.db_files:
             if os.path.exists(f):
                 os.remove(f)
+
+    def _new_client(self, db_path: str):
+        client = create_client_sync(url=f"file:{db_path}")
+        self._clients.append(client)
+        return client
 
     @patch("src.data.harvester.fetch_binance_daily")
     @patch("src.api.yahoo.fetch_yahoo_market_data")
@@ -38,7 +49,7 @@ class TestIntegrationPipeline(unittest.TestCase):
         """Pipeline should correctly handle a mix of crypto, stock, and fallback scenarios."""
         
         # 0. Setup Mock DB (Local file for libSQL driver consistency)
-        mem_client = create_client_sync(url="file:memdb1.db")
+        mem_client = self._new_client("memdb1.db")
         init_db(mem_client)
         mock_archive.return_value = mem_client
         mock_mirror.return_value = mem_client
@@ -109,7 +120,7 @@ class TestIntegrationPipeline(unittest.TestCase):
     @patch("src.database.connection.get_mirror_db_connection")
     def test_broken_inventory_exits_cleanly(self, mock_mirror, mock_archive):
         """Pipeline must handle empty inventory without crashing."""
-        mem_client = create_client_sync(url="file:memdb2.db")
+        mem_client = self._new_client("memdb2.db")
         init_db(mem_client)
         mock_archive.return_value = mem_client
         mock_mirror.return_value = mem_client
