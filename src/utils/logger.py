@@ -18,3 +18,36 @@ class CLILogger:
         if self.log_path:
             with open(self.log_path, 'a', encoding='utf-8') as f:
                 f.write(f"{datetime.now(timezone.utc).isoformat()} | {message}\n")
+
+    def print_density_summary(self, df, start_utc, end_utc):
+        """Prints a visual density bar for each symbol in the dataframe."""
+        if df.empty:
+            return
+
+        import pandas as pd
+        from datetime import timedelta
+        
+        self.log("\n📊 SESSION DATA DENSITY (8:01 PM ET -> 8:00 PM ET)")
+        self.log("Each bar represents 24 hours (48 slots, 30m each)")
+        
+        symbols = sorted(df['symbol'].unique())
+        total_minutes = 1440
+        num_slots = 48
+        mins_per_slot = total_minutes // num_slots
+
+        for symbol in symbols:
+            symbol_df = df[df['symbol'] == symbol]
+            found_ts = pd.to_datetime(symbol_df['timestamp']).dt.tz_localize(None)
+            
+            # Remove TZ from start/end for comparison
+            s_utc = start_utc.replace(tzinfo=None)
+            
+            bar = ""
+            for i in range(num_slots):
+                slot_start = s_utc + timedelta(minutes=i * mins_per_slot)
+                slot_end = slot_start + timedelta(minutes=mins_per_slot)
+                has_data = any((found_ts >= slot_start) & (found_ts < slot_end))
+                bar += "█" if has_data else "░"
+            
+            row_count = len(symbol_df)
+            self.log(f"{symbol.ljust(8)} [{bar}] {row_count}/1440")

@@ -151,8 +151,10 @@ def main():
 
             if save_data_to_storage(final_df, logger, archive_client=archive_client, mirror_client=mirror_client):
                 logger.log(f"✅ Session data written to Archive & Mirror. Rows: {len(final_df)}")
-                logger.log(f"✅ Session data written to Archive & Mirror. Rows: {len(final_df)}")
                 
+                # Visual Density Summary
+                logger.print_density_summary(final_df, session_start_utc, session_end_utc)
+
                 logger.log(f"🔍 Post-Harvest Parity Check for {target_date}...")
                 ok_post, msg_post = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
                 integrity_post_msg = msg_post
