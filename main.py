@@ -66,38 +66,51 @@ def main():
 
         now_et = datetime.now(US_EASTERN)
 
-        # --- 1. DETERMINE TARGET DATE ---
+        # --- 1. DETERMINE TARGET DATE (SESSION END) ---
+        # The Target Date represents the "Closing Day" of the session.
+        # If today is a weekend or holiday, the "Session" belongs to the NEXT trading day.
+        
+        cal = USFederalHolidayCalendar()
+        
         if args.date:
             try:
-                target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+                initial_date = datetime.strptime(args.date, "%Y-%m-%d").date()
             except ValueError:
                 msg = f"❌ Invalid date format provided: {args.date}."
                 logger.log(msg)
                 critical_errors += f"- {msg}\n"
                 return
         else:
-            # Automatic Date Logic:
-            # If it is AFTER 20:00 ET, we are already in the "Next Day's" session.
+            # Automatic: If > 20:00 ET, we are technically in the start of the *next* day's session.
             cutoff_time = datetime.strptime("20:00", "%H:%M").time()
             if now_et.time() > cutoff_time:
-                target_date = now_et.date() + timedelta(days=1)
+                initial_date = now_et.date() + timedelta(days=1)
             else:
-                target_date = now_et.date()
+                initial_date = now_et.date()
 
-        # --- 2. CALCULATE SESSION BOUNDARIES (ET -> UTC) ---
-        # The session is defined as:
-        # Start: Previous Trading Day @ 20:00 ET (The boundary)
-        # End:   Target Trading Day @ 20:00 ET (The boundary)
-        
-        cal = USFederalHolidayCalendar()
-        # Find previous trading day
-        prev_trading_day = target_date - timedelta(days=1)
-        # Look back up to 10 days to find a valid trading day
-        search_start = target_date - timedelta(days=10)
-        search_end = target_date - timedelta(days=1)
+        # ROLL FORWARD: Ensure target_date is a valid trading day
+        # (e.g., If Saturday, Target = Monday. If Holiday, Target = Next Day)
+        target_date = initial_date
+        # Look ahead up to 10 days
+        search_start = target_date
+        search_end = target_date + timedelta(days=10)
         holidays = cal.holidays(start=search_start, end=search_end).date
         
-        while prev_trading_day.weekday() > 4 or prev_trading_day in holidays:
+        while target_date.weekday() > 4 or target_date in holidays:
+            target_date += timedelta(days=1)
+
+        # --- 2. CALCULATE SESSION BOUNDARIES (ET -> UTC) ---
+        # Session Start: Previous Trading Day @ 20:00 ET (The boundary)
+        # Session End:   Target Trading Day @ 20:00 ET (The boundary)
+        
+        # Find PREVIOUS trading day relative to the VALID target_date
+        # (e.g. If Target=Monday, Prev=Friday)
+        prev_trading_day = target_date - timedelta(days=1)
+        
+        # We need a fresh holiday search for the lookback
+        back_holidays = cal.holidays(start=prev_trading_day - timedelta(days=10), end=prev_trading_day).date
+        
+        while prev_trading_day.weekday() > 4 or prev_trading_day in back_holidays:
             prev_trading_day -= timedelta(days=1)
 
         # Session Start: 20:00 ET of prev trading day
