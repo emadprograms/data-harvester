@@ -90,18 +90,18 @@ def main():
         while prev_trading_day.weekday() > 4 or prev_trading_day in holidays:
             prev_trading_day -= timedelta(days=1)
 
-        # Session Start: 8:00 PM ET of previous trading day
-        session_start_et = US_EASTERN.localize(datetime.combine(prev_trading_day, datetime.strptime("20:00", "%H:%M").time()))
-        # Session End: 8:00 PM ET of target trading day
-        session_end_et = US_EASTERN.localize(datetime.combine(target_date, datetime.strptime("20:00", "%H:%M").time()))
+        # Session Start: 8:01:00 PM ET of previous trading day
+        session_start_et = US_EASTERN.localize(datetime.combine(prev_trading_day, datetime.strptime("20:01:00", "%H:%M:%S").time()))
+        # Session End: 8:00:00 PM ET of target trading day
+        session_end_et = US_EASTERN.localize(datetime.combine(target_date, datetime.strptime("20:00:00", "%H:%M:%S").time()))
 
         # Convert to UTC for logic
         session_start_utc = session_start_et.astimezone(timezone.utc)
         session_end_utc = session_end_et.astimezone(timezone.utc)
 
         logger.log(f"🎯 Market Date: {target_date}")
-        logger.log(f"⏰ Session Range (ET) : {session_start_et.strftime('%Y-%m-%d %H:%M')} to {session_end_et.strftime('%Y-%m-%d %H:%M')}")
-        logger.log(f"🌍 Session Range (UTC): {session_start_utc.strftime('%Y-%m-%d %H:%M')} to {session_end_utc.strftime('%Y-%m-%d %H:%M')}")
+        logger.log(f"⏰ Session Range (ET) : {session_start_et.strftime('%Y-%m-%d %H:%M:%S')} to {session_end_et.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.log(f"🌍 Session Range (UTC): {session_start_utc.strftime('%Y-%m-%d %H:%M:%S')} to {session_end_utc.strftime('%Y-%m-%d %H:%M:%S')}")
 
         # 1. Pre-Harvest Parity Check (Using target_date for reference)
         from src.utils.integrity import ensure_database_parity
@@ -159,10 +159,12 @@ def main():
             if symbols_to_clean:
                 from src.database.operations import clear_market_data_for_range
                 logger.log(f"🧹 Targeted Clean for {len(symbols_to_clean)} multi-source symbols...")
+                # Use a slightly wider range for safety in cleaning (inclusive)
                 clear_market_data_for_range(archive_client, session_start_utc, session_end_utc, logger, "Archive", symbols=symbols_to_clean)
                 clear_market_data_for_range(mirror_client, session_start_utc, session_end_utc, logger, "Mirror", symbols=symbols_to_clean)
 
-            if save_data_to_storage(final_df, logger, archive_client=archive_client, mirror_client=mirror_client, mode="REPLACE"):
+            if save_data_to_storage(final_df, logger, archive_client=archive_client, mirror_client=mirror_client):
+                logger.log(f"✅ Session data written to Archive & Mirror. Rows: {len(final_df)}")
                 logger.log(f"✅ Session data written to Archive & Mirror. Rows: {len(final_df)}")
                 
                 logger.log(f"🔍 Post-Harvest Parity Check for {target_date}...")

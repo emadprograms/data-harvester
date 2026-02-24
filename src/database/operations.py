@@ -74,24 +74,44 @@ def clear_market_data_for_range(client, start_utc: datetime, end_utc: datetime, 
     except Exception as e:
         if logger: logger.log(f"   ⚠️ {label} Range Clean-up warning: {e}")
 
-def _save_to_client(client, rows_to_insert, logger=None, label="DB", mode="REPLACE"):
+def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
     """
-    Stable sequential saver using bulk placeholders.
+    Saves data with Source-Tiering Protection.
+    Tier 1 (MASSIVE, BINANCE) will NOT be overwritten by Tier 2 (YAHOO, CAPITAL).
     """
     if not client or not rows_to_insert:
         return False
 
-    verb = "REPLACE" if mode.upper() == "REPLACE" else "IGNORE"
-    BATCH_SIZE = 100 # Stable batch size for HTTP
+    BATCH_SIZE = 100 
     total_rows = len(rows_to_insert)
     
+    # Tier 1 sources (Authoritative)
+    TIER_1 = ["MASSIVE", "BINANCE"]
+
     try:
         for i in range(0, total_rows, BATCH_SIZE):
             batch = rows_to_insert[i : i + BATCH_SIZE]
-            placeholders = ", ".join(["(?, ?, ?, ?, ?, ?, ?, ?)"] * len(batch))
+            # timestamp, symbol, open, high, low, close, volume, session, source
+            placeholders = ", ".join(["(?, ?, ?, ?, ?, ?, ?, ?, ?)"] * len(batch))
             flat_values = [item for sublist in batch for item in sublist]
             
-            query = f"INSERT OR {verb} INTO market_data (timestamp, symbol, open, high, low, close, volume, session) VALUES {placeholders}"
+            # Use ON CONFLICT with a WHERE clause to protect Tier 1 data
+            query = f"""
+                INSERT INTO market_data 
+                (timestamp, symbol, open, high, low, close, volume, session, source) 
+                VALUES {placeholders}
+                ON CONFLICT(symbol, timestamp) DO UPDATE SET
+                    open=excluded.open,
+                    high=excluded.high,
+                    low=excluded.low,
+                    close=excluded.close,
+                    volume=excluded.volume,
+                    session=excluded.session,
+                    source=excluded.source
+                WHERE 
+                    (market_data.source NOT IN ('MASSIVE', 'BINANCE')) OR 
+                    (excluded.source IN ('MASSIVE', 'BINANCE'))
+            """
             client.execute(query, flat_values)
             
             if logger and i % 5000 == 0:
@@ -103,12 +123,12 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DB", mode="REPLA
         if logger: logger.log(f"   ❌ {label} Save Error: {e}")
         return False
 
-def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mirror_client=None, mode="REPLACE") -> bool:
+def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mirror_client=None) -> bool:
     """
-    Saves market data to BOTH Turso Archive and Turso Mirror sequentially.
+    Saves market data to BOTH Turso Archive and Turso Mirror with Tier Protection.
     """
     if df.empty:
-        return False # Tests expect False on empty
+        return False
 
     own_archive = False
     own_mirror = False
@@ -122,7 +142,6 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
             own_mirror = True
 
         if not archive_client or not mirror_client:
-            if logger: logger.log("   ❌ Save failed: Could not establish dual connections.")
             return False
 
         # 1. Prepare Rows
@@ -141,41 +160,33 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
 
         rows_to_insert = []
         for row in batch_df.itertuples(index=False):
+            # The harvester now includes 'source' in its final DataFrame
+            source_val = getattr(row, 'source', 'UNKNOWN').upper()
             rows_to_insert.append((
                 row.ts_str, row.symbol, 
                 row.open, row.high, row.low, row.close, row.volume, 
-                getattr(row, 'session', 'REG')
+                getattr(row, 'session', 'REG'),
+                source_val
             ))
 
         if logger:
-            logger.log(f"   💾 Dual Committing {len(rows_to_insert)} records (Mode: {mode})...")
+            logger.log(f"   💾 Dual Committing {len(rows_to_insert)} records with Source-Tier Protection...")
 
-        # 2. Sequential Commit (Stable)
+        # 2. Sequential Commit
         # Archive
         if logger: logger.log("   ➡️ Committing to ARCHIVE...")
-        if not _save_to_client(archive_client, rows_to_insert, logger, "Archive", mode):
+        if not _save_to_client(archive_client, rows_to_insert, logger, "Archive"):
             return False
             
         # Mirror
         if logger: logger.log("   ➡️ Committing to MIRROR...")
-        if not _save_to_client(mirror_client, rows_to_insert, logger, "Mirror", mode):
-            # Rollback Archive if Mirror fails
+        if not _save_to_client(mirror_client, rows_to_insert, logger, "Mirror"):
+            # Rollback Archive if Mirror fails to maintain 1:1 parity
             try:
                 target_date_str = rows_to_insert[0][0].split(" ")[0]
-                logger.log(f"   ⚠️ Mirror failed. Rolling back Archive for {target_date_str} to maintain parity...")
+                if logger: logger.log(f"   ⚠️ Mirror failed. Rolling back Archive for {target_date_str}...")
                 archive_client.execute("DELETE FROM market_data WHERE timestamp LIKE ?", [f"{target_date_str}%"])
             except: pass
             return False
         
         return True
-
-    except Exception as e:
-        if logger: logger.log(f"   ❌ Storage Global Error: {e}")
-        return False
-    finally:
-        if own_archive and archive_client:
-            try: archive_client.close()
-            except: pass
-        if own_mirror and mirror_client:
-            try: mirror_client.close()
-            except: pass
