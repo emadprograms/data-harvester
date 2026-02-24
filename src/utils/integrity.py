@@ -6,14 +6,14 @@ from src.config import SCHEMA_COLS
 def compute_fingerprint(client, date_str):
     """
     Returns a fingerprint tuple (count, volume_sum, max_ts, min_ts)
-    for all market_data rows on or after the given date string.
+    for all market_data rows matching the given date string.
     """
     try:
         res = client.execute(
             "SELECT COUNT(*), COALESCE(SUM(CAST(volume AS INTEGER)), 0), "
             "MAX(timestamp), MIN(timestamp) "
-            "FROM market_data WHERE timestamp >= ?",
-            [f"{date_str} 00:00:00"]
+            "FROM market_data WHERE timestamp LIKE ?",
+            [f"{date_str}%"]
         )
         row = res.rows[0]
         return {
@@ -60,16 +60,17 @@ def verify_db_md5(client, df: pd.DataFrame, date_str: str, logger=None) -> tuple
     try:
         df_md5 = calculate_df_md5(df)
         
-        # Read back from DB
+        # Read back from DB (must fetch all 9 SCHEMA_COLS for consistent MD5)
+        col_list = ', '.join(SCHEMA_COLS)
         res = client.execute(
-            "SELECT timestamp, symbol, open, high, low, close, volume FROM market_data WHERE timestamp LIKE ?",
+            f"SELECT {col_list} FROM market_data WHERE timestamp LIKE ?",
             [f"{date_str}%"]
         )
         
         if not res.rows:
             return False, "❌ DB Empty for date"
         
-        db_df = pd.DataFrame([list(row) for row in res.rows], columns=['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume'])
+        db_df = pd.DataFrame([list(row) for row in res.rows], columns=SCHEMA_COLS)
         db_md5 = calculate_df_md5(db_df)
         
         if df_md5 == db_md5:

@@ -98,7 +98,7 @@ class TestHarvestPipeline:
         return {
             "AAPL": {"yahoo_ticker": None, "massive_ticker": "AAPL", "binance_ticker": None, "capital_ticker": "AAPL"},
             "BTCUSDT": {"yahoo_ticker": "BTC-USD", "massive_ticker": None, "binance_ticker": "BTCUSDT", "capital_ticker": None},
-            "GC=F": {"yahoo_ticker": "GC=F", "massive_ticker": None, "binance_ticker": "PAXGUSDT", "capital_ticker": None}
+            "PAXGUSDT": {"yahoo_ticker": "GC=F", "massive_ticker": None, "binance_ticker": "PAXGUSDT", "capital_ticker": None}
         }
         
     @pytest.fixture
@@ -146,8 +146,8 @@ class TestHarvestPipeline:
         logger = MockLogger()
         start, end = safe_range
         
-        # We just want to see if Binance was the first call for GC=F
-        run_harvest_logic(["GC=F"], start, end, inventory, logger, massive_provider=MagicMock())
+        # We just want to see if Binance was the first call for PAXGUSDT
+        run_harvest_logic(["PAXGUSDT"], start, end, inventory, logger, massive_provider=MagicMock())
         
         # First call for this ticker should be BINANCE
         first_call = mock_fetch.call_args_list[0]

@@ -3,6 +3,7 @@ Smoke tests for main.py entrypoint behavior.
 """
 import pytest
 from unittest.mock import MagicMock, patch
+import os
 import sys
 import importlib
 import pandas as pd
@@ -110,7 +111,8 @@ class TestMainSmoke:
         mock_parity.return_value = (True, "✅ PARITY MATCH")
 
         # Explicitly pass --date to match safe_test_date_str
-        with patch.object(sys, 'argv', ['main.py', '--date', safe_test_date_str]):
+        with patch.object(sys, 'argv', ['main.py', '--date', safe_test_date_str]), \
+             patch.dict(os.environ, {"SKIP_DISCORD": ""}, clear=False):
             main.main()
             
         # 3. Verify
@@ -123,7 +125,9 @@ class TestMainSmoke:
         
         # Verify save_data_to_storage called ONCE for dual write
         assert mock_save_storage.call_count == 1
-        assert mock_save_storage.call_args.kwargs.get("mode") == "REPLACE"
+        # Verify save was called with both archive and mirror clients
+        assert mock_save_storage.call_args.kwargs.get("archive_client") is not None
+        assert mock_save_storage.call_args.kwargs.get("mirror_client") is not None
         
         assert mock_discord_report.called
         assert mock_exit.called

@@ -95,10 +95,9 @@ def _seed_default_symbols(client):
         # Crypto
         ("BTCUSDT", "BTC-USD", None, "BTCUSDT", None),
         ("ETHUSDT", "ETH-USD", None, "ETHUSDT", None),
-        ("PAXGUSDT", "PAXG-USD", None, "PAXGUSDT", None),
+        ("PAXGUSDT", "GC=F", None, "PAXGUSDT", None),
         # Specialized
         ("CL=F", "CL=F", None, None, None),
-        ("GC=F", "GC=F", None, None, None),
         ("VIX", "^VIX", None, None, None),
         ("UUP", "UUP", None, None, None)
     ]

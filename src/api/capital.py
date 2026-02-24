@@ -67,7 +67,7 @@ def fetch_capital_data(epic: str, start_dt: datetime, end_dt: datetime, logger) 
     # --- 16 HOUR LOOKBACK CLAMP ---
     # Capital.com only provides the last 16 hours of minute data.
     # We clip the start_dt to this limit to prevent the API from returning current data for old dates.
-    now_utc = datetime.now(timezone.utc if start_dt.tzinfo else None)
+    now_utc = datetime.now(timezone.utc)
     lookback_limit = now_utc - timedelta(hours=15, minutes=50) # 10m buffer for safety
     
     effective_start = max(start_dt, lookback_limit)

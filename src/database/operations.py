@@ -183,9 +183,14 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         if not _save_to_client(mirror_client, rows_to_insert, logger, "Mirror"):
             # Rollback Archive if Mirror fails to maintain 1:1 parity
             try:
-                target_date_str = rows_to_insert[0][0].split(" ")[0]
-                if logger: logger.log(f"   ⚠️ Mirror failed. Rolling back Archive for {target_date_str}...")
-                archive_client.execute("DELETE FROM market_data WHERE timestamp LIKE ?", [f"{target_date_str}%"])
+                all_timestamps = [row[0] for row in rows_to_insert]
+                min_ts = min(all_timestamps)
+                max_ts = max(all_timestamps)
+                if logger: logger.log(f"   ⚠️ Mirror failed. Rolling back Archive for range {min_ts} to {max_ts}...")
+                archive_client.execute(
+                    "DELETE FROM market_data WHERE timestamp >= ? AND timestamp <= ?",
+                    [min_ts, max_ts]
+                )
             except: pass
             return False
         

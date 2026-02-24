@@ -8,13 +8,18 @@ from src.api.binance import fetch_binance_range
 from src.data.normalizer import normalize_yahoo_df
 
 
+# Pre-computed time boundaries for session classification
+_MARKET_OPEN = datetime.strptime("09:30", "%H:%M").time()
+_MARKET_CLOSE = datetime.strptime("16:00", "%H:%M").time()
+
+
 def _session_from_timestamp(ts):
     """Calculates market session (PRE/REG/POST) based on ET time."""
     ts_et = ts.tz_convert(US_EASTERN)
     et_time = ts_et.time()
-    if et_time < datetime.strptime("09:30", "%H:%M").time():
+    if et_time < _MARKET_OPEN:
         return "PRE"
-    if et_time > datetime.strptime("16:00", "%H:%M").time():
+    if et_time > _MARKET_CLOSE:
         return "POST"
     return "REG"
 
@@ -67,7 +72,14 @@ def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, ma
             return pd.DataFrame(), "❌ Binance Empty"
 
         elif source_name == "CAPITAL":
-            # Delegate lookback clamping to the API wrapper
+            # --- 16 HOUR LOOKBACK GUARD (defense-in-depth) ---
+            now_utc = datetime.now(timezone.utc)
+            lookback_limit = now_utc - timedelta(hours=16)
+            
+            if start_dt < lookback_limit:
+                log_event(f"⚠️ Skipping Capital.com: start_dt ({start_dt}) is older than 16h limit.")
+                return pd.DataFrame(), "❌ Beyond 16h Window"
+
             from src.api.capital import fetch_capital_data
             raw = fetch_capital_data(specific_ticker, start_dt, end_dt, logger)
             if not raw.empty:
@@ -160,10 +172,9 @@ def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harv
         df['symbol'] = ticker
         df['source'] = source_label
         df = _apply_session_labels(df)
+        # Ensure timestamps remain in UTC (architecture mandate: all storage in pure UTC)
         if df['timestamp'].dt.tz is None:
-            df['timestamp'] = df['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
-        else:
-            df['timestamp'] = df['timestamp'].dt.tz_convert(US_EASTERN)
+            df['timestamp'] = df['timestamp'].dt.tz_localize(UTC)
 
         session_counts = df['session'].value_counts().to_dict()
         audit.append(f"   📦 Summary: {len(df)} total rows. Sessions: {session_counts}")
