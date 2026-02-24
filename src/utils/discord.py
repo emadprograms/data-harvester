@@ -82,7 +82,8 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
                                 file_path=None, health_alerts="", integrity_status="", 
                                 critical_errors=""):
     """
-    Sends a complete harvest report to Discord, including the ticker summary table.
+    Sends a cleaned-up harvest dashboard to Discord.
+    The detailed ticker-wise table is moved to the attached log file.
     """
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
     if not webhook_url:
@@ -90,9 +91,27 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
         return False
 
     try:
-        header = f"🚜 **Harvest Complete** | `{target_date}`\n"
+        # 1. Prepare the detailed table for the log file
+        table_str = ""
+        if not report_df.empty:
+            summary_cols = ["Ticker", "Source", "Total"]
+            for s in ["Pre", "Reg", "Post"]:
+                if s in report_df.columns:
+                    summary_cols.append(s)
+            table_str = report_df[summary_cols].to_string(index=False)
+
+        # 2. Append the table to the log file if it exists
+        if file_path and os.path.exists(file_path) and table_str:
+            with open(file_path, "a") as f:
+                f.write("\n\n" + "="*50 + "\n")
+                f.write(f"HARVEST DETAILS FOR {target_date}\n")
+                f.write("="*50 + "\n")
+                f.write(table_str)
+                f.write("\n" + "="*50 + "\n")
+
+        # 3. Build the simplified Dashboard message
+        header = f"🚜 **Harvest Dashboard** | `{target_date}`\n"
         
-        # Add critical errors at the top if present
         if critical_errors:
             msg = f"🚨 **CRITICAL ERRORS DETECTED** 🚨\n{critical_errors}\n\n" + header
         else:
@@ -102,22 +121,18 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
             _post(webhook_url, msg + "No data harvested.")
             return True
 
-        # Metadata
-        msg += f"📊 **Total Rows Harvested**: `{total_rows:,}`\n"
-        
-        # --- Harvest Summary Table (The Dashboard) ---
+        # Metadata Overview
+        msg += f"📊 **Overview**\n"
+        msg += f"• Total Records: `{total_rows:,}`\n"
         if not report_df.empty:
-            # We assume report_df has: Ticker, Source, Total, Status
-            # If it has session columns (Pre, Reg, Post), we include those too
-            summary_cols = ["Ticker", "Source", "Total"]
-            # Dynamically check for session columns
-            for s in ["Pre", "Reg", "Post"]:
-                if s in report_df.columns:
-                    summary_cols.append(s)
+            total_tickers = len(report_df)
+            failed_tickers = len(report_df[report_df["Total"] == 0])
+            msg += f"• Symbols: `{total_tickers}` total, `{failed_tickers}` failed\n"
             
-            # Format as a code block table
-            table_str = report_df[summary_cols].to_string(index=False)
-            msg += f"```\n{table_str}\n```"
+            # Source distribution
+            sources = report_df["Source"].value_counts().to_dict()
+            source_str = ", ".join([f"{src}: {count}" for src, count in sources.items()])
+            msg += f"• Sources: `{source_str}`\n"
 
         # Alerts and Integrity
         if health_alerts:
@@ -126,14 +141,14 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
         if integrity_status:
             msg += f"\n🔒 **Integrity** | {integrity_status}"
 
-        # Truncate to avoid 2000-character Discord limit
+        msg += "\n\n📄 *Full details attached in log file.*"
+
+        # Truncate if necessary (though unlikely with this new format)
         if len(msg) > 1950:
             msg = msg[:1950] + "\n... (truncated)"
 
-        # Post the message with the log file attachment
-        all_ok = _post(webhook_url, msg, file_path)
-
-        return all_ok
+        # 4. Post to Discord
+        return _post(webhook_url, msg, file_path)
 
     except Exception as e:
         print(f"⚠️ Discord Error: {e}")
