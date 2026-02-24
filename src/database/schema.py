@@ -10,23 +10,16 @@ def init_db(client=None):
     """Initializes the database, creating tables if they don't exist."""
     if client:
         _init_client(client)
-    else:
-        # Initialize both Turso Archive and Mirror
-        archive_client = get_archive_db_connection()
-        try:
-            if archive_client:
-                _init_client(archive_client)
-        finally:
-            if archive_client:
-                archive_client.close()
-        
-        mirror_client = get_mirror_db_connection()
-        try:
-            if mirror_client:
-                _init_client(mirror_client)
-        finally:
-            if mirror_client:
-                mirror_client.close()
+        return
+
+    # Initialize both Turso Archive and Mirror
+    for conn_func in [get_archive_db_connection, get_mirror_db_connection]:
+        conn = conn_func()
+        if conn:
+            try:
+                _init_client(conn)
+            finally:
+                conn.close()
 
 
 def _init_client(client):

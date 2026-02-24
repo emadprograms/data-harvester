@@ -8,6 +8,7 @@ STRATEGY:
 import pandas as pd
 import numpy as np
 import time
+import math
 from src.database.connection import get_archive_db_connection, get_mirror_db_connection
 from src.config import UTC, US_EASTERN
 
@@ -49,50 +50,6 @@ def get_symbol_map_from_db(client=None):
     finally:
         if own_client and client:
             client.close()
-
-def upsert_symbol_mapping(display_name, y_ticker, m_ticker, b_ticker, client=None):
-    """Adds or updates a symbol's rules in BOTH databases."""
-    archive_client = client or get_archive_db_connection()
-    mirror_client = get_mirror_db_connection()
-    
-    success = True
-    for c in [archive_client, mirror_client]:
-        if not c: continue
-        try:
-            c.execute(
-                """INSERT INTO symbol_map (display_name, yahoo_ticker, massive_ticker, binance_ticker) 
-                   VALUES (?, ?, ?, ?) 
-                   ON CONFLICT(display_name) DO UPDATE SET 
-                     yahoo_ticker=excluded.yahoo_ticker, 
-                     massive_ticker=excluded.massive_ticker,
-                     binance_ticker=excluded.binance_ticker""",
-                [display_name, y_ticker, m_ticker, b_ticker]
-            )
-        except Exception as e:
-            print(f"❌ Error saving symbol to DB: {e}")
-            success = False
-    
-    if archive_client and not client: archive_client.close()
-    if mirror_client: mirror_client.close()
-    return success
-
-def delete_symbol_mapping(ticker, client=None):
-    """Deletes a symbol from BOTH databases."""
-    archive_client = client or get_archive_db_connection()
-    mirror_client = get_mirror_db_connection()
-    
-    success = True
-    for c in [archive_client, mirror_client]:
-        if not c: continue
-        try:
-            c.execute("DELETE FROM symbol_map WHERE display_name = ?", [ticker])
-        except Exception as e:
-            print(f"❌ Error deleting symbol from DB: {e}")
-            success = False
-            
-    if archive_client and not client: archive_client.close()
-    if mirror_client: mirror_client.close()
-    return success
 
 # --- MARKET DATA OPERATIONS ---
 
@@ -151,7 +108,6 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
                 batch_df[col] = batch_df[col].replace([np.inf, -np.inf], np.nan)
                 batch_df[col] = batch_df[col].where(batch_df[col].notnull(), None)
 
-        import math
         rows_to_insert = []
         for row in batch_df.itertuples(index=False):
             sanitized_row = []
@@ -197,55 +153,3 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
             archive_client.close()
         if own_mirror and mirror_client:
             mirror_client.close()
-
-def fetch_data_health_matrix(tickers: list, start_date, end_date, session_filter="Total"):
-    """
-    Fetches data, CONVERTS TO US/EASTERN, and then groups by day.
-    """
-    client = get_archive_db_connection()
-    if not client:
-        return pd.DataFrame()
-
-    start_str = f"{start_date} 00:00:00" 
-    end_dt_buffer = end_date + pd.Timedelta(days=1)
-    end_str = f"{end_dt_buffer} 23:59:59"
-
-    placeholders = ",".join("?" * len(tickers))
-    query = f"""
-        SELECT timestamp, symbol, session
-        FROM market_data 
-        WHERE symbol IN ({placeholders}) 
-          AND timestamp >= ? 
-          AND timestamp <= ?
-    """
-    params = tickers + [start_str, end_str]
-    
-    try:
-        res = client.execute(query, params)
-        if not res.rows:
-            return pd.DataFrame()
-            
-        df = pd.DataFrame([list(row) for row in res.rows], columns=['timestamp', 'symbol', 'session'])
-        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(UTC)
-        df['timestamp_et'] = df['timestamp'].dt.tz_convert(US_EASTERN)
-        df['day'] = df['timestamp_et'].dt.date
-        
-        if session_filter != "Total":
-            df = df[df['session'] == session_filter]
-            
-        df = df[(df['day'] >= start_date) & (df['day'] <= end_date)]
-        
-        if df.empty:
-            return pd.DataFrame()
-
-        grouped = df.groupby(['symbol', 'day']).size().reset_index(name='candle_count')
-        pivot_df = grouped.pivot(index='symbol', columns='day', values='candle_count')
-        
-        return pivot_df
-
-    except Exception as e:
-        print(f"❌ Error fetching health matrix: {e}")
-        return pd.DataFrame()
-    finally:
-        if client:
-            client.close()
