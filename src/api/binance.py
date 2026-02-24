@@ -109,8 +109,11 @@ def fetch_binance_range(ticker: str, start_dt: datetime, end_dt: datetime, logge
             continue
 
     # If we get here, ALL domains failed. Now we log the warnings.
-    msg = f"❌ All Binance domains failed for {binance_symbol}. Reasons: {', '.join(warnings_collected)}"
+    msg = f"❌ All Binance domains failed for {binance_symbol}. Reasons: {', '. join(warnings_collected)}"
     if logger: logger.log(f"   {msg}")
     else: print(msg)
     
     return pd.DataFrame()
+
+# Compatibility alias for tests and legacy logic
+fetch_binance_daily = fetch_binance_range

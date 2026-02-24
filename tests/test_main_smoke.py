@@ -52,7 +52,7 @@ class TestMainSmoke:
     @patch("src.database.connection.get_mirror_db_connection")
     @patch("src.database.schema.init_db")
     @patch("src.database.operations.get_symbol_map_from_db")
-    @patch("src.database.operations.clear_market_data_for_dates")
+    @patch("src.database.operations.clear_market_data_for_range")
     @patch("src.database.operations.save_data_to_storage")
     @patch("src.data.harvester.run_harvest_logic")
     @patch("src.utils.discord.send_discord_harvest_report")
@@ -60,20 +60,20 @@ class TestMainSmoke:
     @patch("sys.exit")
     def test_main_flow_with_mocked_harvest(
         self,
-        mock_exit,          # 1. sys.exit (Bottom)
-        mock_parity,        # 2. ensure_database_parity
-        mock_discord_report,# 3. send_discord_harvest_report
-        mock_run_harvest,   # 4. run_harvest_logic
-        mock_save_storage,  # 5. save_data_to_storage
-        mock_clear_dates,   # 6. clear_market_data_for_dates
-        mock_get_map,       # 7. get_symbol_map_from_db
-        mock_init_db,       # 8. init_db
-        mock_mirror_conn,   # 9. get_mirror_db_connection
-        mock_archive_conn,  # 10. get_archive_db_connection
-        mock_infisical_cls, # 11. InfisicalManager
-        mock_logger_cls,    # 12. CLILogger
-        mock_massive_cls,   # 13. MassiveProvider (Top)
-        safe_test_date_str  # Fixture
+        mock_exit,          # Bottom
+        mock_parity,
+        mock_discord_report,
+        mock_run_harvest,
+        mock_save_storage,
+        mock_clear_range,   # clear_market_data_for_range
+        mock_get_map,
+        mock_init_db,
+        mock_mirror_conn,
+        mock_archive_conn,
+        mock_infisical_cls,
+        mock_logger_cls,
+        mock_massive_cls,
+        safe_test_date_str
     ):
         """Standard main() flow with full mocks to ensure wiring is correct."""
         import main
@@ -118,23 +118,13 @@ class TestMainSmoke:
         assert mock_get_map.called
         assert mock_run_harvest.called
         
-        # Verify Clean-Before-Write called only for target date
-        assert mock_clear_dates.called
-        # Check that it was called with the target date (not the rogue date)
-        # Argument 1 is the dates list
-        call_args = mock_clear_dates.call_args_list[0][0]
-        assert len(call_args[1]) == 1
-        assert str(call_args[1][0]) == safe_test_date_str
+        # Verify Clean-Before-Write called for both databases
+        assert mock_clear_range.call_count == 2
         
-        # Verify save_data_to_storage called twice (Target REPLACE, Rogue IGNORE)
-        assert mock_save_storage.call_count == 2
-        
-        # Target call (REPLACE)
-        target_call = mock_save_storage.call_args_list[0]
-        assert target_call.kwargs.get("mode") == "REPLACE"
-        
-        # Rogue call (IGNORE)
-        rogue_call = mock_save_storage.call_args_list[1]
-        assert rogue_call.kwargs.get("mode") == "IGNORE"
+        # Verify save_data_to_storage called ONCE for dual write
+        assert mock_save_storage.call_count == 1
+        assert mock_save_storage.call_args.kwargs.get("mode") == "REPLACE"
         
         assert mock_discord_report.called
+        assert mock_exit.called
+        assert mock_exit.call_args[0][0] == 0

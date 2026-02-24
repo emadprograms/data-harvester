@@ -19,23 +19,26 @@ class MockLogger:
 
 class TestFetchFromSource:
 
-    def test_unknown_source_returns_empty(self, safe_test_date):
+    def test_unknown_source_returns_empty(self, safe_test_range):
         """Unknown source name must return empty DF."""
+        start_dt, end_dt = safe_test_range
         logger = MockLogger()
-        df, msg = fetch_from_source("UNKNOWN_API", "AAPL", safe_test_date, logger)
+        df, msg = fetch_from_source("UNKNOWN_API", "AAPL", start_dt, end_dt, logger)
         assert df.empty
         assert "Unknown" in msg
 
-    def test_none_source_returns_empty(self, safe_test_date):
+    def test_none_source_returns_empty(self, safe_test_range):
         """NONE source must return empty DF without error."""
+        start_dt, end_dt = safe_test_range
         logger = MockLogger()
-        df, msg = fetch_from_source("NONE", "AAPL", safe_test_date, logger)
+        df, msg = fetch_from_source("NONE", "AAPL", start_dt, end_dt, logger)
         assert df.empty
         assert msg == "No Source"
 
     @patch("src.data.harvester.fetch_yahoo_market_data")
-    def test_yahoo_source_success(self, mock_yahoo, safe_test_date, safe_test_date_str):
+    def test_yahoo_source_success(self, mock_yahoo, safe_test_range, safe_test_date_str):
         """YAHOO source must call fetch_yahoo_market_data and normalize."""
+        start_dt, end_dt = safe_test_range
         idx = pd.DatetimeIndex(
             pd.date_range(f"{safe_test_date_str} 09:30", periods=2, freq="1min", tz="US/Eastern"),
             name="Datetime"
@@ -47,13 +50,14 @@ class TestFetchFromSource:
         }, index=idx)
         
         logger = MockLogger()
-        df, msg = fetch_from_source("YAHOO", "AAPL", safe_test_date, logger)
+        df, msg = fetch_from_source("YAHOO", "AAPL", start_dt, end_dt, logger)
         assert not df.empty
         assert "Yahoo" in msg
 
     @patch("src.data.harvester.fetch_massive_data")
-    def test_massive_source_success(self, mock_massive, safe_test_date, safe_test_date_str):
+    def test_massive_source_success(self, mock_massive, safe_test_range, safe_test_date_str):
         """MASSIVE source must call fetch_massive_data and return data."""
+        start_dt, end_dt = safe_test_range
         mock_massive.return_value = pd.DataFrame({
             "timestamp": pd.to_datetime([f"{safe_test_date_str} 15:00:00"]).tz_localize("UTC"),
             "open": [150.0], "high": [151.0], "low": [149.0],
@@ -61,13 +65,14 @@ class TestFetchFromSource:
         })
 
         logger = MockLogger()
-        df, msg = fetch_from_source("MASSIVE", "AAPL", safe_test_date, logger)
+        df, msg = fetch_from_source("MASSIVE", "AAPL", start_dt, end_dt, logger)
         assert not df.empty
         assert "Massive" in msg
 
-    @patch("src.data.harvester.fetch_binance_daily")
-    def test_binance_source_success(self, mock_binance, safe_test_date, safe_test_date_str):
-        """BINANCE source must call fetch_binance_daily."""
+    @patch("src.data.harvester.fetch_binance_range")
+    def test_binance_source_success(self, mock_binance, safe_test_range, safe_test_date_str):
+        """BINANCE source must call fetch_binance_range."""
+        start_dt, end_dt = safe_test_range
         mock_binance.return_value = pd.DataFrame({
             "timestamp": pd.to_datetime([f"{safe_test_date_str} 15:00:00"]).tz_localize("UTC"),
             "symbol": ["BTCUSDT"], "open": [40000.0], "high": [41000.0],
@@ -76,7 +81,7 @@ class TestFetchFromSource:
         })
         
         logger = MockLogger()
-        df, msg = fetch_from_source("BINANCE", "BTCUSDT", safe_test_date, logger)
+        df, msg = fetch_from_source("BINANCE", "BTCUSDT", start_dt, end_dt, logger)
         assert not df.empty
         assert "Binance" in msg
 
@@ -91,10 +96,11 @@ class TestHarvestPipeline:
         }
 
     @patch("src.data.harvester.fetch_from_source")
-    def test_primary_fallback_logic(self, mock_fetch, safe_test_date, safe_test_date_str):
+    def test_primary_fallback_logic(self, mock_fetch, safe_test_range, safe_test_date_str):
         """If primary fails, it must try fallback."""
+        start_dt, end_dt = safe_test_range
         
-        def side_effect(source, ticker, target_date, logger, massive_provider=None):
+        def side_effect(source, ticker, s_dt, e_dt, logger, massive_provider=None, audit_trail=None):
             if source == "MASSIVE":
                 return pd.DataFrame(), "❌ Empty"
             if source == "CAPITAL":
@@ -110,21 +116,21 @@ class TestHarvestPipeline:
         mock_fetch.side_effect = side_effect
         logger = MockLogger()
         
-        final_df, report = run_harvest_logic(["AAPL"], safe_test_date, self._make_inventory(), logger, massive_provider=MagicMock())
+        final_df, report = run_harvest_logic(["AAPL"], start_dt, end_dt, self._make_inventory(), logger, massive_provider=MagicMock())
         
         assert not final_df.empty
         # Should be labeled as FB-CAPITAL
         assert any("FB-CAPITAL" in str(row) for _, row in report.iterrows())
 
     @patch("src.data.harvester.fetch_from_source")
-    def test_gold_priority(self, mock_fetch, safe_test_date):
+    def test_gold_priority(self, mock_fetch, safe_test_range):
         """GC=F should try Binance (PAXGUSDT) first."""
-        
+        start_dt, end_dt = safe_test_range
         inventory = self._make_inventory()
         logger = MockLogger()
         
         # We just want to see if Binance was the first call for GC=F
-        run_harvest_logic(["GC=F"], safe_test_date, inventory, logger, massive_provider=MagicMock())
+        run_harvest_logic(["GC=F"], start_dt, end_dt, inventory, logger, massive_provider=MagicMock())
         
         # First call for this ticker should be BINANCE
         first_call = mock_fetch.call_args_list[0]

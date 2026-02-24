@@ -42,13 +42,14 @@ class TestIntegrationPipeline:
         self._clients.append(client)
         return client
 
-    @patch("src.data.harvester.fetch_binance_daily")
+    @patch("src.data.harvester.fetch_binance_range")
     @patch("src.data.harvester.fetch_yahoo_market_data")
     @patch("src.data.harvester.fetch_massive_data")
     @patch("src.database.connection.get_archive_db_connection")
     @patch("src.database.connection.get_mirror_db_connection")
-    def test_full_harvest_mixed_symbols(self, mock_mirror, mock_archive, mock_massive, mock_yahoo, mock_binance, safe_test_date, safe_test_date_str):
+    def test_full_harvest_mixed_symbols(self, mock_mirror, mock_archive, mock_massive, mock_yahoo, mock_binance, safe_test_range, safe_test_date_str):
         """Pipeline should correctly handle a mix of crypto, stock, and fallback scenarios."""
+        start_dt, end_dt = safe_test_range
         
         # 0. Setup Mock DB
         mem_client = self._new_client("memdb1.db")
@@ -84,12 +85,12 @@ class TestIntegrationPipeline:
 
         # 2. Execution logic
         symbol_map = get_symbol_map_from_db(mem_client)
-        target_date = safe_test_date
         logger = MagicMock()
         
         final_df, report = run_harvest_logic(
             tickers_to_harvest=list(symbol_map.keys()),
-            target_date=target_date,
+            start_dt=start_dt,
+            end_dt=end_dt,
             db_map=symbol_map,
             logger=logger
         )

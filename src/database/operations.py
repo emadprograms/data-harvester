@@ -96,9 +96,23 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
     Saves market data to BOTH Turso Archive and Turso Mirror sequentially.
     """
     if df.empty:
-        return True
+        return False # Tests expect False on empty
 
+    own_archive = False
+    own_mirror = False
+    
     try:
+        if not archive_client:
+            archive_client = get_archive_db_connection()
+            own_archive = True
+        if not mirror_client:
+            mirror_client = get_mirror_db_connection()
+            own_mirror = True
+
+        if not archive_client or not mirror_client:
+            if logger: logger.log("   ❌ Save failed: Could not establish dual connections.")
+            return False
+
         # 1. Prepare Rows
         batch_df = df.copy()
         if not pd.api.types.is_datetime64_any_dtype(batch_df['timestamp']):
@@ -146,3 +160,10 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
     except Exception as e:
         if logger: logger.log(f"   ❌ Storage Global Error: {e}")
         return False
+    finally:
+        if own_archive and archive_client:
+            try: archive_client.close()
+            except: pass
+        if own_mirror and mirror_client:
+            try: mirror_client.close()
+            except: pass

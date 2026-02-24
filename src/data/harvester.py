@@ -149,16 +149,16 @@ def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harv
         t_m = rules.get('massive_ticker')
         t_c = rules.get('capital_ticker')
 
-        # Priority Selection
-        if t_c:
-            primary_src, primary_ticker = ("MASSIVE", t_m or t_c) if t_m else ("CAPITAL", t_c)
-            fallback_src, fallback_ticker = ("CAPITAL", t_c) if primary_src == "MASSIVE" else ("NONE", None)
-        elif ticker.endswith("USDT") or t_b:
-            primary_src, primary_ticker = ("BINANCE", t_b or ticker)
-            fallback_src, fallback_ticker = ("YAHOO", t_y or ticker)
-        else:
-            primary_src, primary_ticker = ("YAHOO", t_y or ticker)
-            fallback_src, fallback_ticker = ("NONE", None)
+        # v6.0 Sourcing Priority Selection
+        if t_c: # If it has a Capital EPIC, it's an Equity/ETF
+            primary_src, primary_ticker = "MASSIVE", t_m or ticker
+            fallback_src, fallback_ticker = "CAPITAL", t_c
+        elif ticker.endswith("USDT") or t_b: # Crypto / Gold
+            primary_src, primary_ticker = "BINANCE", t_b or ticker
+            fallback_src, fallback_ticker = "YAHOO", t_y or ticker
+        else: # Specials (VIX, Oil, etc.)
+            primary_src, primary_ticker = "YAHOO", t_y or ticker
+            fallback_src, fallback_ticker = "NONE", None
 
         audit.append(f"   🔍 Step 1: Trying Primary source {primary_src} ({primary_ticker})...")
         
