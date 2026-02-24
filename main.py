@@ -29,7 +29,8 @@ def main():
     final_df = None
     report_df = None
     critical_errors = ""
-    integrity_msg = "Skipped"
+    integrity_pre_msg = "Skipped"
+    integrity_post_msg = "Skipped"
     log_filename = f"logs/harvest_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
     
     try:
@@ -101,6 +102,7 @@ def main():
         from src.utils.integrity import ensure_database_parity
         logger.log(f"🔍 Pre-Harvest Parity Check for {target_date}...")
         ok_pre, msg_pre = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
+        integrity_pre_msg = msg_pre
         if not ok_pre:
             critical_errors += f"- Pre-Harvest Parity Failure: {msg_pre}\n"
 
@@ -132,7 +134,7 @@ def main():
                 
                 logger.log(f"🔍 Post-Harvest Parity Check for {target_date}...")
                 ok_post, msg_post = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
-                integrity_msg = f"Parity: {msg_post}"
+                integrity_post_msg = msg_post
                 
                 if not ok_post:
                     critical_errors += f"- Post-Harvest Parity Failure: {msg_post}\n"
@@ -167,7 +169,8 @@ def main():
                 total_rows=rows,
                 file_path=log_filename,
                 health_alerts=health_alerts,
-                integrity_status=integrity_msg,
+                integrity_pre=integrity_pre_msg,
+                integrity_post=integrity_post_msg,
                 critical_errors=critical_errors
             )
 

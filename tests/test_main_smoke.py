@@ -112,3 +112,10 @@ class TestMainSmoke:
         assert mock_run_harvest.called
         assert mock_save_storage.called
         assert mock_discord_report.called
+        
+        # Verify the call arguments specifically for the new integrity fields
+        call_args = mock_discord_report.call_args[1] # get kwargs
+        assert "integrity_pre" in call_args
+        assert "integrity_post" in call_args
+        assert call_args["integrity_pre"] == "✅ PARITY MATCH"
+        assert call_args["integrity_post"] == "✅ PARITY MATCH"

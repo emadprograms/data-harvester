@@ -83,7 +83,7 @@ def build_health_alerts(report_df, now_et_hour):
 
 
 def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows,
-                                file_path=None, health_alerts="", integrity_status="", 
+                                file_path=None, health_alerts="", integrity_pre="", integrity_post="", 
                                 critical_errors=""):
     """
     Sends a cleaned-up harvest dashboard to Discord using Embeds.
@@ -118,11 +118,14 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
         if not report_df.empty:
             failed_tickers = len(report_df[report_df["Total"] == 0])
             overview_text += f"**Failed Symbols:** `{failed_tickers}`\n"
-        embed["fields"].append({"name": "📊 Overview", "value": overview_text, "inline": True})
+        embed["fields"].append({"name": "📊 Overview", "value": overview_text, "inline": False})
 
-        # Integrity Field
-        integrity_val = integrity_status if integrity_status else "Skipped"
-        embed["fields"].append({"name": "🔒 Integrity", "value": f"`{integrity_val}`", "inline": True})
+        # Integrity Fields (Row 2)
+        val_pre = integrity_pre if integrity_pre else "Skipped"
+        val_post = integrity_post if integrity_post else "Skipped"
+        
+        embed["fields"].append({"name": "🔒 Pre-Harvest Parity", "value": f"`{val_pre}`", "inline": True})
+        embed["fields"].append({"name": "🔒 Post-Harvest Parity", "value": f"`{val_post}`", "inline": True})
 
         # Critical Errors Field (if any)
         if critical_errors:
