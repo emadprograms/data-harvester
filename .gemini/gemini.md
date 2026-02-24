@@ -1,4 +1,4 @@
-# Analyst Workbench: AI Instructions & System Architecture (v5.0)
+# Analyst Workbench: AI Instructions & System Architecture (v6.0)
 
 This document serves as the "System Knowledge Base" for the AI Agent (Antigravity) and human developers. It defines the core philosophy, infrastructure, and analytical rules engine.
 
@@ -12,122 +12,75 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 - `USFederalHolidayCalendar`: For market holiday awareness
 - **Database**: Turso (libsql) with a Dual-Write strategy (Archive + Mirror)
 - **Secrets Management**: Infisical SDK (`infisicalsdk`)
-- **APIs**: Polygon.io (Massive), Yahoo Finance, Binance
+- **APIs**: Polygon.io (Massive), Capital.com, Binance, Yahoo Finance
 - **Observability**: Discord Webhooks for health reports and alerts
 
 ### Architecture
-- **Database Parity Mandate**: **Maintaining absolute 1-on-1 consistency between the Archive and Mirror databases is the single most important objective of this application.** Every operation must be designed to verify and enforce this parity.
-- **Stateless/Ephemeral**: Designed to run in environments where local state is transient.
+- **Market Session Mandate**: Data is harvested and stored based on **Market Sessions**, defined as **8:00 PM ET (Previous Trading Day)** to **8:00 PM ET (Target Day)**. This ensures all pre-market, regular, and post-market data for a specific trading day is captured in one continuous block.
+- **Strict UTC Definition**: All internal logic, API requests, and database storage use pure **UTC**. The session range is calculated in ET and then surgically mapped to UTC (e.g., 01:00 UTC to 01:00 UTC during Standard Time).
+- **Database Parity Mandate**: **Maintaining absolute 1-on-1 consistency between the Archive and Mirror databases is the single most important objective.** Every operation must verify and enforce this parity.
+- **Clean-Before-Write (Surgical)**: To prevent data splicing, the system surgically deletes the exact UTC timestamp range of the session from the database before committing new results.
 - **Dual-Master Strategy**: Data is committed to two independent Turso databases (Archive and Mirror) to ensure high availability and data redundancy.
 - **Simplified Fetching**: Uses a strict **Primary -> Fallback** logic. No data splicing or hybrid merging.
-- **Code-Based Priority**: All data sourcing priorities are defined in `src/data/harvester.py`, not in the database.
-- **Self-Healing**: The engine automatically repairs gaps in the local buffer from Turso before every harvest.
-- **Integrity Fingerprinting**: Uses optimized MD5-style fingerprints to verify sync parity between Archive and Mirror databases.
+- **Self-Healing**: The engine automatically performs a surgical parity check/repair for the target date before every harvest.
 
 ---
 
 ## 🔐 1. Secrets Management (Infisical)
 
-The project uses **Infisical** as the single source of truth for secrets (Turso URLs, API Keys, Webhooks).
+The project uses **Infisical** as the single source of truth for secrets.
 
-### A. The SDK & Implementation
-*   **Correct Package**: Always use `infisical-sdk` (imported as `infisical_sdk`). **DO NOT** use the deprecated `infisical-python` package.
-*   **Manager Pattern**: All logic is encapsulated in `src/infisical_manager.py`. It initializes the client and handles authentication state.
-*   **Usage**: `main.py` and other entry points initialize the manager and fetch secrets during application startup.
-
-### B. Authentication Methods
-The manager supports two distinct authentication flows via environment variables:
-1.  **Service Token (Legacy/Simple)**:
-    *   Requires: `INFISICAL_TOKEN`.
-    *   Auth Call: `client.auth.login(token=INFISICAL_TOKEN)`.
-2.  **Universal Auth (Machine Identity - Preferred)**:
-    *   Requires: `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`.
-    *   Auth Call: `client.auth.universal_auth.login(client_id=..., client_secret=...)`.
-*   **Required for both**: `INFISICAL_PROJECT_ID`.
+### A. Implementation
+*   **Correct Package**: Use `infisical-sdk` (imported as `infisical_sdk`).
+*   **Manager Pattern**: All logic is encapsulated in `src/infisical_manager.py`. It handles authentication and credential retrieval for Turso, Massive, and Capital.com.
 
 ---
 
 ## 📁 2. Repository Structure
-- `main.py`: Entry point for the daily automated harvest cycle.
-- `src/api/`: Provider layer containing optimized clients for Massive, Yahoo, and Binance.
-- `src/data/`: Logic layer handling the parallel harvesting engine (`harvester.py`) and normalization (`normalizer.py`).
-- `src/database/`: Storage layer for Turso/libsql connection management and CRUD operations.
-- `src/utils/`: Cross-cutting concerns including Discord notifications, MD5 integrity checks, and logging.
-- `tools/`: Administrative utilities for database migrations, historical repairs, and secret management.
-- `discord_bot/`: Independent bot for real-time market data monitoring.
+- `main.py`: Entry point for the "Market Session" automated harvest.
+- `src/api/`: Provider layer (Massive, Capital, Binance, Yahoo) updated for range-based UTC fetching.
+- `src/data/`: Logic layer handling the parallel session harvesting engine (`harvester.py`).
+- `src/database/`: Storage layer; includes range-based surgical cleaning logic.
+- `src/utils/`: Discord notifications, MD5 integrity checks, and logging.
+- `tools/`: Administrative utilities (Full DB MD5 check, Archive-to-Mirror sync, etc.).
 
 ## 🛠 3. Building and Running
 
-### Environment Setup
-1. **Dependencies**: `pip install -r requirements.txt`
-2. **Secrets**: Ensure `.env` contains Infisical credentials (`INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, `INFISICAL_PROJECT_ID`).
-
 ### Key Commands
-- **Run Harvest**: `python3 main.py`
-- **Manual Date Harvest**: `python3 main.py --date YYYY-MM-DD`
-- **Run Tests**: `PYTHONPATH=. python3 -m pytest tests/ -v`
-- **DB Migration**: `python3 tools/migrate_db_v5.py`
-- **Sync Mirror**: `python3 tools/sync_mirror_v5.py`
+- **Run Harvest**: `python3 main.py` (Auto-targets today's market session)
+- **Manual Session Harvest**: `python3 main.py --date YYYY-MM-DD`
+- **Full Parity Check**: `PYTHONPATH=. python3 tools/full_database_md5_check.py`
+- **Manual Sync**: `PYTHONPATH=. python3 tools/sync_from_archive.py`
 
 ---
 
 ## ⚖️ 4. Development Conventions
 
-### Coding Style
-- **Type Safety**: Use type hints where possible for clarity.
-- **Logging**: Use the centralized `CLILogger` for all session-based logging.
-- **Timezones**: Strictly adhere to UTC for storage and US/Eastern for market session logic.
-- **Holiday Awareness**: Use `pandas.tseries.holiday.USFederalHolidayCalendar` to correctly identify and skip US Market Holidays during date rollover logic.
-- **Error Handling**: Implement robust retry logic (see `src/api/retry.py`) for all external API calls.
-
 ### Sourcing Priority (Implemented in `src/data/harvester.py`)
-1.  **Gold (`GC=F`)**: Binance (`PAXGUSDT`) -> Fallback: Yahoo (`GC=F`).
-2.  **Crypto (`*USDT`)**: Binance -> Fallback: Yahoo.
-3.  **Equities/ETFs**: Massive (Polygon) -> Fallback: Yahoo.
-4.  **Specialized**: Yahoo only (if no other source available).
+1.  **Equities & ETFs**: Massive (Polygon) -> Fallback: Capital.com (Using optimized Epics like `US30`, `US100`).
+2.  **Crypto & Gold**: Binance (`*USDT`, `PAXGUSDT`) -> Fallback: Yahoo Finance.
+3.  **Specials**: Yahoo Finance Only (e.g., `CL=F` Oil, `VIX`).
+*   **Note**: Yahoo is completely removed from the Equity/ETF pipelines to ensure pre-market data quality.
+
+### GitHub Automation
+The harvester runs **4 times per trading day** to stay within Capital.com's 16-hour window:
+1.  **8:30 AM ET**: Pre-Market capture.
+2.  **12:30 PM ET**: Mid-Market update.
+3.  **4:30 PM ET**: Market Close capture.
+4.  **10:30 PM ET**: Final Session Wrap-up.
+*   The workflow automatically skips weekends and US Market Holidays.
 
 ### Testing Practices
-- **Mocking**: External APIs (Polygon, Yahoo, Binance) should be mocked in unit tests.
-- **Integration**: `tests/test_integration.py` validates the full pipeline.
-- **Validation**: Every harvest must conclude with a "Clean MD5" integrity check across both databases.
-
-### Contribution Guidelines
-- **No Local State**: Never assume files persisted in one run will be available in the next.
-- **Dual Write**: Any schema change or data update must be applied to both Archive and Mirror databases.
-- **Security**: Never hardcode secrets; always retrieve them via `InfisicalManager`.
+- **Mocking**: External APIs must be mocked in unit tests.
+- **Validation**: Every harvest concludes with a surgical MD5 check for the target session.
 
 ---
 
 ## 🤖 5. CLI Operational Mandates (Gemini CLI ONLY)
 
-The following rules apply **EXCLUSIVELY** to the **Gemini CLI** agent (this interface). They do **NOT** apply to automated agents like Antigravity.
-
-1.  **Automatic Pushing**: Because all actions in the Gemini CLI are directed and approved by the user in real-time, the agent must **always** execute a `git push` immediately after completing a code modification or bug fix. 
-2.  **No Manual Staging Required**: The agent should assume that once a task is finished, the state is ready for the remote repository.
-3.  **Database Parity (Mirroring)**: The **Archive** and **Mirror** databases must remain 1-on-1 identical at all times for metadata and schema changes. Any modification made to the Archive database (e.g., updating `symbol_map`, renaming columns, or altering schema) MUST be immediately reflected in the Mirror database, whether explicitly requested or not.
-4.  **Mandatory Test-Driven Workflow**: After every code modification or bug fix, the agent MUST run the full test suite (`python3 -m pytest tests/`). If tests fail, the agent must fix the errors and re-run the tests until they pass before pushing the changes to GitHub.
+1.  **Automatic Pushing**: Execute `git push` immediately after completing verified changes.
+2.  **Database Parity (Mirroring)**: The **Archive** and **Mirror** databases must remain 1-on-1 identical. Use `tools/sync_from_archive.py` if a full sync is needed.
+3.  **Mandatory Test-Driven Workflow**: Run `python3 -m pytest tests/` after every modification. All tests must pass before pushing.
 
 ---
-
-## 📅 6. Discord Bot Design Pattern
-
-When adding or updating commands to the Discord bot, always adhere to the **Interactive-First** design pattern:
-
-### A. Command Flow Strategy
-1.  **Argument Support**: Commands should accept an optional `date_indicator` string.
-    *   `0` → Today
-    *   `-1`, `-2`... → Relative days
-    *   `YYYY-MM-DD` → Exact date
-2.  **Interactive Fallback**: If no argument is provided, the command **MUST** present a `DateSelectionView` to the user.
-
-### B. Reusable UI Components
-- **`DateSelectionView`**: A view containing a dropdown (`DateDropdown`) with the last 14 days and a "Manual Date Entry" button.
-- **`CustomDateModal`**: A modal triggered by the manual entry button that allows users to type a specific `YYYY-MM-DD` string.
-- **Action Callback**: Both the dropdown and modal should trigger a unified `action_callback` (e.g., `trigger_github_harvest`) to ensure consistent behavior across all input methods.
-
-### C. UX Guidelines
-- **Use Embeds for Notifications**: All automated notifications (harvest reports, alerts) MUST use **Discord Embeds** to provide a structured, card-like dashboard experience. Avoid sending raw text tables in the message body.
-- **Suppress Link Previews**: Always wrap URLs in masked links with angle brackets (e.g., `[Monitor Progress](<URL>)`) to prevent Discord from generating large link preview banners (embeds) that clutter the channel.
-
----
-*Updated: 2026-02-24*
+*Updated: 2026-02-24 (v6.0 - Market Session Architecture)*

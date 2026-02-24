@@ -54,18 +54,14 @@ def _get_session():
             pass
     return None
 
-def fetch_capital_data(epic: str, target_date, logger) -> pd.DataFrame:
+def fetch_capital_data(epic: str, start_dt: datetime, end_dt: datetime, logger) -> pd.DataFrame:
     """
-    Fetches 1-minute historical candles from Capital.com for a specific day.
+    Fetches 1-minute historical candles from Capital.com within a UTC range.
     """
     session_data = _get_session()
     if not session_data:
         return pd.DataFrame()
 
-    # Define the day boundaries in UTC (Capital API expects UTC)
-    start_dt = US_EASTERN.localize(datetime.combine(target_date, datetime.min.time())).astimezone(UTC)
-    end_dt = US_EASTERN.localize(datetime.combine(target_date, datetime.max.time())).astimezone(UTC)
-    
     session = get_retry_session()
     chunk_start = start_dt
     all_rows = []

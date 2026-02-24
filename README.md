@@ -1,35 +1,33 @@
-# 🚀 Stock Data Harvester (v5.0)
+# 🚀 Stock Data Harvester (v6.0)
 
-A high-performance, stateless data harvesting engine designed for scheduled daily automation. Optimized for resilience, integrity, and ephemeral execution environments (like GitHub Actions).
+A high-performance, stateless data harvesting engine designed for scheduled daily automation. Optimized for resilience, integrity, and absolute database parity.
 
-## 🏛 Architecture & Documentation
+## 🏛 Market Session Architecture
 
-The harvester follows a strict **ephemeral run cycle** to ensure data integrity and avoid local state drift.
-
-For a deep dive into the system's design and dual-layer persistence:
-👉 **[Read the System Architecture Guide](docs/system_architecture.md)**
+The harvester operates on a **Market Session** basis rather than calendar days. 
+- **Session Definition**: 8:00 PM ET (Previous Trading Day) to 8:00 PM ET (Target Day).
+- **Strict UTC**: All data is fetched, cleaned, and stored using precise UTC ranges to eliminate time-zone overlap and "rogue" data issues.
+- **Continuous Crypto**: The Monday session automatically captures the entire weekend gap for 24/7 assets.
 
 ## 🛠 Key Features
 
-- **Triple-Source Strategy**: 
-    - **Massive (Polygon.io)**: High-fidelity, paged institutional data (Primary Source for Equities).
-    - **Binance**: Direct WebSocket/REST data for crypto assets.
-    - **Yahoo Finance**: Universal fallback and primary source for specialized indices.
-- **Parallel Engine**: `ThreadPoolExecutor` architecture for high-concurrency harvesting using 8 parallel workers for optimal throughput.
-- **Dual-Write Persistence**: Data is committed to both **Archive** and **Mirror** Turso (libsql) databases with post-harvest MD5 integrity validation.
-- **Centralized Secrets**: Fully integrated with the latest **Infisical SDK** (`infisicalsdk`) for secure, cached credential management.
-- **Discord Observability**: Automated health matrix and integrity alerts sent directly to Discord after every run.
+- **Quad-Source Strategy**: 
+    - **Massive (Polygon.io)**: institutional-grade equities data.
+    - **Capital.com**: High-fidelity pre-market and ETF data (using optimized epics like `US30`, `US100`).
+    - **Binance**: Primary source for crypto and gold (`PAXGUSDT`).
+    - **Yahoo Finance**: Restricted to specialized indices (`VIX`, `CL=F`) and crypto fallbacks.
+- **Clean-Before-Write**: Surgical UTC range deletion before every commit to prevent data splicing.
+- **Dual-Write Integrity**: 1-on-1 parity between **Archive** and **Mirror** databases, verified by pre/post-harvest MD5 fingerprinting.
+- **High-Frequency Automation**: GitHub Actions run **4 times per trading day** to stay within API lookback windows.
 
 ## 📁 Repository Structure
 
-- `main.py`: The stateless entry point for the daily automated harvest.
-- `src/api/`: Optimized clients for Massive (Polygon), Yahoo, and Binance with robust retry logic.
-- `src/data/`: Normalization logic and the parallel harvesting engine.
-- `src/database/`: Dual-layer persistence logic (Turso/libsql).
-- `src/utils/`: Integrity fingerprinting and Discord alerting.
-- `discord_bot/`: Independent bot for real-time market data monitoring and alerts.
-- `tools/`: Administrative utilities for database migrations, historical repairs, and secret management.
-- `tests/`: Comprehensive test suite validating the entire pipeline.
+- `main.py`: The range-based entry point for automated harvesting.
+- `src/api/`: Optimized clients for Massive, Capital.com, Yahoo, and Binance.
+- `src/data/`: The parallel harvesting engine and session logic.
+- `src/database/`: Dual-layer persistence logic with surgical range cleaning.
+- `tools/`: Parity tools, including full DB MD5 checks and Archive-to-Mirror synchronization.
+- `tests/`: Comprehensive test suite validating the range-based pipeline.
 
 ## 🧪 Testing
 
@@ -40,13 +38,17 @@ PYTHONPATH=. python3 -m pytest tests/ -v
 
 ## 🚀 Usage
 
-The harvester is triggered automatically via GitHub Actions (`Daily Harvest`). For manual local runs:
-1. Ensure your `.env` contains Infisical credentials (`INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, `INFISICAL_PROJECT_ID`).
-2. Run:
+### Manual Harvest
+Run for a specific market session:
 ```bash
-python3 main.py
+python3 main.py --date YYYY-MM-DD
+```
+
+### Full Parity Verification
+Confirm Archive and Mirror are 1-on-1 identical:
+```bash
+PYTHONPATH=. python3 tools/full_database_md5_check.py
 ```
 
 ---
-*Maintained by Antigravity & Gemini CLI*
-
+*Maintained by emadprograms & Gemini CLI*

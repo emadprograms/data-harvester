@@ -60,7 +60,7 @@ def main():
         init_db(mirror_client)
         
         # Parse command line arguments
-        parser = argparse.ArgumentParser(description="Data Harvester CLI (Dual Turso + Massive)")
+        parser = argparse.ArgumentParser(description="Data Harvester CLI (Market Session Logic)")
         parser.add_argument("--date", type=str, help="Target date for harvest in YYYY-MM-DD format", default=None)
         args = parser.parse_args()
 
@@ -69,37 +69,41 @@ def main():
         if args.date:
             try:
                 target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
-                logger.log(f"📅 Using manually provided target date: {target_date}")
             except ValueError:
                 msg = f"❌ Invalid date format provided: {args.date}."
                 logger.log(msg)
                 critical_errors += f"- {msg}\n"
                 return
         else:
-            # Cut-off: If before 8 PM ET (Post-Market Close), target previous day.
-            # If after 8 PM ET, target today.
-            if now_et.hour < 20:
-                target_date = (now_et - timedelta(days=1)).date()
-                logger.log(f"🕒 Time is before 8 PM ET. Targeting previous trading day.")
-            else:
-                target_date = now_et.date()
-                logger.log(f"🕒 Time is after 8 PM ET. Targeting today's harvest.")
-                
-            # Rollback for Weekends and US Market Holidays
-            cal = USFederalHolidayCalendar()
-            holidays = cal.holidays(start=f"{target_date.year-1}-01-01", end=f"{target_date.year+1}-12-31").date
-            
-            while target_date.weekday() > 4 or target_date in holidays:
-                reason = "Weekend" if target_date.weekday() > 4 else "Market Holiday"
-                logger.log(f"⚠️ {reason} detected ({target_date}). Rolling back Target Date...")
-                target_date -= timedelta(days=1)
-            
-            logger.log(f"🎯 Final Target Market Date: {target_date}")
-        
-        logger.log(f"🌍 Running Harvest at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
-        logger.log(f"🎯 Target Market Date: {target_date}")
+            # Default to today's date in ET
+            target_date = now_et.date()
 
-        # 1. Pre-Harvest Parity Check & Repair
+        # --- CALCULATE SESSION BOUNDARIES (ET -> UTC) ---
+        # 1. Find the PREVIOUS trading day to determine session start
+        cal = USFederalHolidayCalendar()
+        # Look back up to 10 days to find a valid trading day
+        search_start = target_date - timedelta(days=10)
+        search_end = target_date - timedelta(days=1)
+        holidays = cal.holidays(start=search_start, end=search_end).date
+        
+        prev_trading_day = target_date - timedelta(days=1)
+        while prev_trading_day.weekday() > 4 or prev_trading_day in holidays:
+            prev_trading_day -= timedelta(days=1)
+
+        # Session Start: 8:00 PM ET of previous trading day
+        session_start_et = US_EASTERN.localize(datetime.combine(prev_trading_day, datetime.strptime("20:00", "%H:%M").time()))
+        # Session End: 8:00 PM ET of target trading day
+        session_end_et = US_EASTERN.localize(datetime.combine(target_date, datetime.strptime("20:00", "%H:%M").time()))
+
+        # Convert to UTC for logic
+        session_start_utc = session_start_et.astimezone(timezone.utc)
+        session_end_utc = session_end_et.astimezone(timezone.utc)
+
+        logger.log(f"🎯 Market Date: {target_date}")
+        logger.log(f"⏰ Session Range (ET) : {session_start_et.strftime('%Y-%m-%d %H:%M')} to {session_end_et.strftime('%Y-%m-%d %H:%M')}")
+        logger.log(f"🌍 Session Range (UTC): {session_start_utc.strftime('%Y-%m-%d %H:%M')} to {session_end_utc.strftime('%Y-%m-%d %H:%M')}")
+
+        # 1. Pre-Harvest Parity Check (Using target_date for reference)
         from src.utils.integrity import ensure_database_parity
         logger.log(f"🔍 Pre-Harvest Parity Check for {target_date}...")
         ok_pre, msg_pre = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
@@ -122,7 +126,8 @@ def main():
         massive_provider = MassiveProvider(logger)
         final_df, report_df = run_harvest_logic(
             tickers_to_harvest=inventory_list,
-            target_date=target_date,
+            start_dt=session_start_utc,
+            end_dt=session_end_utc,
             db_map=symbol_map,
             logger=logger,
             massive_provider=massive_provider
@@ -130,40 +135,25 @@ def main():
         
         # 4. Dual Write & Post-Harvest Parity
         if final_df is not None and not final_df.empty:
-            # Split data into Target Date vs Rogue Rows (Previous/Other days)
-            if not pd.api.types.is_datetime64_any_dtype(final_df['timestamp']):
-                final_df['timestamp'] = pd.to_datetime(final_df['timestamp'], utc=True)
-            
-            target_mask = final_df['timestamp'].dt.date == target_date
-            target_df = final_df[target_mask].copy()
-            rogue_df = final_df[~target_mask].copy()
+            # CLEAN RANGE
+            from src.database.operations import clear_market_data_for_range
+            logger.log(f"🧹 Clearing existing data for session range before commit...")
+            clear_market_data_for_range(archive_client, session_start_utc, session_end_utc, logger, "Archive")
+            clear_market_data_for_range(mirror_client, session_start_utc, session_end_utc, logger, "Mirror")
 
-            # A. Clean & Replace for TARGET DATE
-            if not target_df.empty:
-                logger.log(f"🧹 Clearing existing data for {target_date} before commit...")
-                clear_market_data_for_dates(archive_client, [target_date], logger, "Archive")
-                clear_market_data_for_dates(mirror_client, [target_date], logger, "Mirror")
+            if save_data_to_storage(final_df, logger, archive_client=archive_client, mirror_client=mirror_client, mode="REPLACE"):
+                logger.log(f"✅ Session data written to Archive & Mirror. Rows: {len(final_df)}")
                 
-                if save_data_to_storage(target_df, logger, archive_client=archive_client, mirror_client=mirror_client, mode="REPLACE"):
-                    logger.log(f"✅ Target data ({target_date}) written to Archive & Mirror. Rows: {len(target_df)}")
-                else:
-                    msg = f"❌ Failed to save target data for {target_date}."
-                    logger.log(msg)
-                    critical_errors += f"- {msg}\n"
-
-            # B. Fill Gaps for ROGUE ROWS (Previous days) - Use mode="IGNORE"
-            if not rogue_df.empty:
-                logger.log(f"📥 Filling gaps for {len(rogue_df)} rogue rows from other dates using IGNORE mode...")
-                save_data_to_storage(rogue_df, logger, archive_client=archive_client, mirror_client=mirror_client, mode="IGNORE")
-
-            # C. Verification (Parity check targets the explicitly requested date)
-            logger.log(f"🔍 Post-Harvest Parity Check for {target_date}...")
-            from src.utils.integrity import ensure_database_parity
-            ok_post, msg_post = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
-            integrity_post_msg = msg_post
-            
-            if not ok_post:
-                critical_errors += f"- Post-Harvest Parity Failure: {msg_post}\n"
+                logger.log(f"🔍 Post-Harvest Parity Check for {target_date}...")
+                ok_post, msg_post = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
+                integrity_post_msg = msg_post
+                
+                if not ok_post:
+                    critical_errors += f"- Post-Harvest Parity Failure: {msg_post}\n"
+            else:
+                msg = "❌ Failed to save data to dual storage."
+                logger.log(msg)
+                critical_errors += f"- {msg}\n"
         else:
             logger.log("⚠️ No data harvested.")
 

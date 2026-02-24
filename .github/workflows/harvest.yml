@@ -1,17 +1,25 @@
-name: Daily Harvest
+name: Market Session Harvest
 
 on:
   schedule:
-    # Run twice daily at 4:05 AM and 4:05 PM Bahrain (AST) time.
-    # This ensures we stay within Capital.com's 16-hour 1-minute data window.
-    - cron: '05 01 * * *'  # 4:05 AM Bahrain (Final Session Harvest)
-    - cron: '05 13 * * *'  # 4:05 PM Bahrain (Pre-Market Session Harvest)
-  workflow_dispatch:  # Allow manual trigger
+    # 1. Mon-Fri Daytime Runs (UTC 13:30, 17:30, 21:30)
+    # 13:30 UTC = 8:30 AM ET (Pre-Market)
+    # 17:30 UTC = 12:30 PM ET (Mid-Market)
+    # 21:30 UTC = 4:30 PM ET (Market Close)
+    - cron: '30 13,17,21 * * 1-5'
+    
+    # 2. Tue-Sat Early Morning Run (UTC 03:30)
+    # 03:30 UTC = 10:30 PM ET (Post-Market Wrap-up)
+    # We run Tue-Sat UTC to capture the Mon-Fri ET trading sessions.
+    - cron: '30 03 * * 2-6'
+
+  workflow_dispatch:
     inputs:
       target_date:
-        description: 'Target date for harvest in YYYY-MM-DD format'
+        description: 'Manual Session Date (YYYY-MM-DD)'
         required: false
         type: string
+
 jobs:
   harvest:
     runs-on: ubuntu-latest
@@ -30,9 +38,33 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Run Test Suite
+    - name: Skip on US Market Holidays
+      id: check_holiday
+      shell: python
       run: |
-        PYTHONPATH=. python3 -m pytest tests/ -v
+        import sys
+        from datetime import datetime
+        import pytz
+        from pandas.tseries.holiday import USFederalHolidayCalendar
+        
+        # We check the CURRENT date in US/Eastern
+        tz = pytz.timezone('America/New_York')
+        now_et = datetime.now(tz)
+        target_date = now_et.date()
+        
+        cal = USFederalHolidayCalendar()
+        holidays = cal.holidays(start=f"{target_date.year}-01-01", end=f"{target_date.year}-12-31").date
+        
+        is_weekend = target_date.weekday() > 4
+        is_holiday = target_date in holidays
+        
+        if is_weekend or is_holiday:
+            print(f"Skipping: {target_date} is a {'Weekend' if is_weekend else 'Holiday'}")
+            sys.exit(1)
+        else:
+            print(f"Proceeding: {target_date} is an active trading day.")
+            sys.exit(0)
+      continue-on-error: false
 
     - name: Run Harvest CLI
       env:

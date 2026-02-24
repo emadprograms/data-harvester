@@ -10,19 +10,14 @@ from src.config import SCHEMA_COLS, BINANCE_DOMAINS
 # Global cache for the first successful endpoint to prevent repetitive 451 geo-block testing
 WORKING_BINANCE_DOMAIN = None
 
-def fetch_binance_daily(ticker: str, target_date_obj, logger=None) -> pd.DataFrame:
+def fetch_binance_range(ticker: str, start_dt: datetime, end_dt: datetime, logger=None) -> pd.DataFrame:
     """
-    Fetches full 24h 1-minute klines from Binance for a specific symbol.
-    The ticker must be in Binance format (e.g., 'BTCUSDT', 'EURUSDT').
+    Fetches 1-minute klines from Binance within a specific UTC datetime range.
     Uses a Smart Cache strategy to remember the working domain and silence 451 warnings.
     """
     global WORKING_BINANCE_DOMAIN
     binance_symbol = ticker.upper().strip()
 
-    # Calculate Start/End Timestamps (UTC)
-    start_dt = datetime.combine(target_date_obj, datetime.min.time()).replace(tzinfo=timezone.utc)
-    end_dt = datetime.combine(target_date_obj, datetime.max.time()).replace(tzinfo=timezone.utc)
-    
     start_ts = int(start_dt.timestamp() * 1000)
     end_ts = int(end_dt.timestamp() * 1000)
     

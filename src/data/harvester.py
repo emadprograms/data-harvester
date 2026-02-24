@@ -4,7 +4,7 @@ import pandas as pd
 from src.config import US_EASTERN, UTC, SCHEMA_COLS
 from src.api.massive import fetch_massive_data, MassiveProvider
 from src.api.yahoo import fetch_yahoo_market_data
-from src.api.binance import fetch_binance_daily
+from src.api.binance import fetch_binance_range
 from src.data.normalizer import normalize_yahoo_df
 
 
@@ -63,42 +63,44 @@ def _validate_date_match(df, target_date, source_name, logger, ticker):
     return df, f"✅ {source_name}"
     
 
-def fetch_from_source(source_name, specific_ticker, target_date, logger, massive_provider=None):
+def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, massive_provider=None):
     """
-    Generic fetcher that routes to the correct API.
+    Generic fetcher that routes to the correct API using a datetime range.
     """
     if not source_name or source_name == "NONE":
         return pd.DataFrame(), "No Source"
 
     try:
         if source_name == "YAHOO":
-            raw = fetch_yahoo_market_data(specific_ticker, target_date, logger)
+            from src.api.yahoo import fetch_yahoo_market_data
+            raw = fetch_yahoo_market_data(specific_ticker, start_dt, end_dt, logger)
             if not raw.empty:
-                norm = normalize_yahoo_df(raw, specific_ticker) 
-                return _validate_date_match(norm, target_date, "Yahoo", logger, specific_ticker)
+                return normalize_yahoo_df(raw, specific_ticker), f"✅ Yahoo"
             return pd.DataFrame(), "❌ Yahoo Empty"
             
         elif source_name == "MASSIVE":
             if massive_provider:
-                raw = massive_provider.fetch_data(specific_ticker, target_date)
+                raw = massive_provider.fetch_data(specific_ticker, start_dt, end_dt)
             else:
-                raw = fetch_massive_data(specific_ticker, target_date, logger)
+                from src.api.massive import fetch_massive_data
+                raw = fetch_massive_data(specific_ticker, start_dt, end_dt, logger)
             
             if not raw.empty:
-                return _validate_date_match(raw, target_date, "Massive", logger, specific_ticker)
+                return raw, f"✅ Massive"
             return pd.DataFrame(), "❌ Massive Empty"
             
         elif source_name == "BINANCE":
-            raw = fetch_binance_daily(specific_ticker, target_date, logger)
+            from src.api.binance import fetch_binance_range
+            raw = fetch_binance_range(specific_ticker, start_dt, end_dt, logger)
             if not raw.empty:
-                return _validate_date_match(raw, target_date, "Binance", logger, specific_ticker)
+                return raw, f"✅ Binance"
             return pd.DataFrame(), "❌ Binance Empty"
 
         elif source_name == "CAPITAL":
             from src.api.capital import fetch_capital_data
-            raw = fetch_capital_data(specific_ticker, target_date, logger)
+            raw = fetch_capital_data(specific_ticker, start_dt, end_dt, logger)
             if not raw.empty:
-                return _validate_date_match(raw, target_date, "Capital", logger, specific_ticker)
+                return raw, f"✅ Capital"
             return pd.DataFrame(), "❌ Capital Empty"
 
     except Exception as e:
@@ -107,10 +109,9 @@ def fetch_from_source(source_name, specific_ticker, target_date, logger, massive
         
     return pd.DataFrame(), f"Unknown Source {source_name}"
 
-def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None, massive_provider=None):
+def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harvest_mode="🚀 Full Day", progress_callback=None, massive_provider=None):
     """
-    Executes the simplified concurrent harvesting engine.
-    Strategy: Stocks (Massive -> Capital), Crypto (Binance -> Yahoo), Specialized (Yahoo).
+    Executes the simplified concurrent harvesting engine using UTC ranges.
     """
     def update_ui(ticker, col, val):
         if progress_callback:
@@ -119,7 +120,6 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
     total_tickers = len(tickers_to_harvest)
     completed_count = 0
     
-    # Instantiate provider if not passed (Fallback for tests/legacy calls)
     if not massive_provider:
         massive_provider = MassiveProvider(logger)
 
@@ -137,31 +137,19 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         t_c = rules.get('capital_ticker')
 
         # ---------------------------------------------------------------------
-        # PRIORITY LOGIC (Pure Code Based)
+        # PRIORITY LOGIC
         # ---------------------------------------------------------------------
         
-        # 1. Stocks/ETFs (Identified by presence of Capital ticker)
         if t_c:
             primary_src = "MASSIVE" if t_m else "CAPITAL"
             primary_ticker = t_m or t_c
             fallback_src = "CAPITAL" if primary_src == "MASSIVE" else "NONE"
             fallback_ticker = t_c if fallback_src == "CAPITAL" else None
-
-        # 2. Gold Specific (PAXGUSDT Binance -> GC=F Yahoo)
-        elif ticker == "GC=F":
-            primary_src = "BINANCE"
-            primary_ticker = t_b or "PAXGUSDT"
-            fallback_src = "YAHOO"
-            fallback_ticker = t_y or "GC=F"
-            
-        # 3. Crypto (Binance -> Yahoo)
         elif ticker.endswith("USDT") or t_b:
             primary_src = "BINANCE"
             primary_ticker = t_b or ticker
             fallback_src = "YAHOO"
             fallback_ticker = t_y or ticker
-            
-        # 4. Specialized (Yahoo only)
         else:
             primary_src = "YAHOO"
             primary_ticker = t_y or ticker
@@ -169,24 +157,20 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
             fallback_ticker = None
 
         # ---------------------------------------------------------------------
-        # EXECUTION (Strict Primary -> Fallback)
+        # EXECUTION
         # ---------------------------------------------------------------------
         
-        # A. Try Primary
         logger.log(f"   🔍 {ticker} - Trying {primary_src} ({primary_ticker})...")
-        df, msg = fetch_from_source(primary_src, primary_ticker, target_date, logger, massive_provider)
+        df, msg = fetch_from_source(primary_src, primary_ticker, start_dt, end_dt, logger, massive_provider)
         
         if not df.empty:
             logger.log(f"   ✅ {ticker} - {primary_src} Success ({len(df)} rows).")
             source_label = primary_src
         else:
             logger.log(f"   ⚠️ {ticker} - {primary_src} Failed ({msg}).")
-            
-            # B. Try Fallback (Yahoo)
             if fallback_src != "NONE":
                 logger.log(f"   🔄 {ticker} - Falling back to {fallback_src} ({fallback_ticker})...")
-                df, msg = fetch_from_source(fallback_src, fallback_ticker, target_date, logger, massive_provider)
-                
+                df, msg = fetch_from_source(fallback_src, fallback_ticker, start_dt, end_dt, logger, massive_provider)
                 if not df.empty:
                     logger.log(f"   ✅ {ticker} - {fallback_src} Success ({len(df)} rows).")
                     source_label = f"FB-{fallback_src}"
@@ -197,23 +181,18 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
                 return ticker, pd.DataFrame(), f"❌ Failed ({msg})", "FAILED", 0, {}
 
         # ---------------------------------------------------------------------
-        # POST-PROCESS (Unified for all sources)
+        # POST-PROCESS
         # ---------------------------------------------------------------------
         df = df.copy()
         df['symbol'] = ticker
+        df = _apply_session_labels(df)
         
-        # Standardize session labels
-        if 'session' not in df.columns or df['session'].isnull().any():
-            df = _apply_session_labels(df)
-        
-        # Ensure consistent Timezone
         if df['timestamp'].dt.tz is None:
             df['timestamp'] = df['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)
         else:
             df['timestamp'] = df['timestamp'].dt.tz_convert(US_EASTERN)
 
         session_counts = df['session'].value_counts().to_dict()
-        
         return ticker, df, f"✅ {source_label}", source_label, len(df), session_counts
 
     # Execute in Parallel

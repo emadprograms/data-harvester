@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import time
 import math
+from datetime import datetime
 from src.database.connection import get_archive_db_connection, get_mirror_db_connection
 from src.config import UTC, US_EASTERN
 
@@ -57,7 +58,6 @@ def get_symbol_map_from_db(client=None):
 def clear_market_data_for_dates(client, dates: list, logger=None, label="DB"):
     """
     Deletes all records from market_data for the specified dates.
-    Used to ensure a clean state before a new harvest commit.
     """
     if not dates:
         return
@@ -71,6 +71,22 @@ def clear_market_data_for_dates(client, dates: list, logger=None, label="DB"):
             logger.log(f"   ✅ {label}: Cleaned existing records for: {date_str}")
     except Exception as e:
         if logger: logger.log(f"   ⚠️ {label} Clean-up warning: {e}")
+
+def clear_market_data_for_range(client, start_utc: datetime, end_utc: datetime, logger=None, label="DB"):
+    """
+    Surgically deletes records within a specific UTC range.
+    """
+    try:
+        start_str = start_utc.strftime('%Y-%m-%d %H:%M:%S')
+        end_str = end_utc.strftime('%Y-%m-%d %H:%M:%S')
+        client.execute(
+            "DELETE FROM market_data WHERE timestamp >= ? AND timestamp < ?",
+            [start_str, end_str]
+        )
+        if logger:
+            logger.log(f"   ✅ {label}: Cleaned existing records for range: {start_str} to {end_str}")
+    except Exception as e:
+        if logger: logger.log(f"   ⚠️ {label} Range Clean-up warning: {e}")
 
 def _save_to_client(client, rows_to_insert, logger=None, label="DB", mode="REPLACE"):
     """Generic helper to save a batch of rows to a specific database client."""

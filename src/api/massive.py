@@ -28,19 +28,14 @@ class MassiveProvider:
             self._key_index = (self._key_index + 1) % len(self.clients)
             return client
 
-    def fetch_data(self, ticker: str, target_date) -> pd.DataFrame:
+    def fetch_data(self, ticker: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
         """
-        Fetches 1-minute historical data for a ticker using Polygon REST SDK.
-        Implements paged fetching to collect all data for the day.
+        Fetches 1-minute historical data for a ticker using Polygon REST SDK within a UTC range.
         """
         client = self._get_next_client()
         if not client:
             return pd.DataFrame()
 
-        # Define the day boundaries in US/Eastern
-        start_dt = US_EASTERN.localize(datetime.combine(target_date, datetime.min.time()))
-        end_dt = US_EASTERN.localize(datetime.combine(target_date, datetime.max.time()))
-        
         # Polygon expects milliseconds since epoch
         from_ts = int(start_dt.timestamp() * 1000)
         to_ts = int(end_dt.timestamp() * 1000)
@@ -54,7 +49,7 @@ class MassiveProvider:
                 timespan="minute",
                 from_=from_ts,
                 to=to_ts,
-                limit=50000 # Large limit for daily data
+                limit=50000 # Large limit for session data
             )
             
             for agg in aggs:
@@ -78,7 +73,7 @@ class MassiveProvider:
         df = df.sort_values("timestamp")
         return df
 
-def fetch_massive_data(ticker: str, target_date, logger) -> pd.DataFrame:
-    """Wrapper function for standalone Massive data fetching."""
+def fetch_massive_data(ticker: str, start_dt: datetime, end_dt: datetime, logger) -> pd.DataFrame:
+    """Wrapper function for standalone Massive range fetching."""
     provider = MassiveProvider(logger)
-    return provider.fetch_data(ticker, target_date)
+    return provider.fetch_data(ticker, start_dt, end_dt)
