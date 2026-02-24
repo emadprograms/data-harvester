@@ -1,4 +1,4 @@
-# Analyst Workbench: AI Instructions & System Architecture (v7.0)
+# Analyst Workbench: AI Instructions & System Architecture (v7.1)
 
 This document serves as the "System Knowledge Base" for the AI Agent (Antigravity) and human developers. It defines the core philosophy, infrastructure, and analytical rules engine.
 
@@ -7,11 +7,12 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 
 ### Architecture & Integrity Rules
 - **Market Session Mandate**: Data is harvested and stored based on **Market Sessions**, defined as **8:01:00 PM ET (Previous Trading Day)** to **8:00:00 PM ET (Target Day)**. This ensures exactly 1,440 minutes of data for 24/7 assets and avoids "Midnight Spillover" overlaps.
-- **Source-Tiering Protection**: The database enforces a "Quality-First" overwrite policy:
+- **Source-Tiering Protection**: The database enforces a "Quality-First" overwrite policy via a **9-column schema** (including `source`):
     - **Tier 1 (Authoritative)**: `MASSIVE`, `BINANCE`.
     - **Tier 2 (Fallback)**: `YAHOO`, `CAPITAL`.
     - **Rule**: Data from a Tier 1 source can NEVER be overwritten by data from a Tier 2 source for the same timestamp and symbol.
-- **Targeted Cleaning (Surgical)**: Before committing, the system only deletes existing data for symbols that were **successfully re-harvested** in the current run and have **multiple data sources** defined. Symbols with only one source (e.g., specialized Capital.com tickers) are NEVER cleared, preserving historical data that cannot be re-fetched.
+- **Tiered Deletion (Source-Aware Cleaning)**: Before committing, the system only performs a `DELETE` if the **new data** is high-fidelity (Tier 1). Tier 2 data (Capital/Yahoo) is stacked incrementally without wiping existing records, preserving historical "tails."
+- **Adaptive Request Clamping**: The Capital.com client automatically clips requests to the last **16 hours** of minute data. If a full session is requested, it fetches only the available "tail" to prevent API errors and "wrong-date" pollution.
 - **Database Parity Mandate**: **Maintaining absolute 1-on-1 consistency between the Archive and Mirror databases is foundational.** Any operation modifying the Archive (schema or metadata) must be immediately reflected in the Mirror.
 - **Self-Healing**: The engine automatically repairs the Mirror database from the Archive for the target date before every harvest if a desync is detected.
 
