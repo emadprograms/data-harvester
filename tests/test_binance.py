@@ -1,7 +1,7 @@
 """
 Tests for src/api/binance.py — Verify domain fallback, error handling, logger usage.
 """
-import unittest
+import pytest
 from unittest.mock import patch, MagicMock
 import pandas as pd
 from datetime import date
@@ -14,10 +14,10 @@ class MockLogger:
         self.messages.append(msg)
 
 
-class TestBinanceFetch(unittest.TestCase):
+class TestBinanceFetch:
 
     @patch("src.api.binance.requests.get")
-    def test_success_returns_data(self, mock_get):
+    def test_success_returns_data(self, mock_get, safe_test_date):
         """Successful Binance response must return valid DataFrame."""
         kline = [
             1705276800000, "40000.0", "41000.0", "39000.0", "40500.0", "100.0",
@@ -36,13 +36,13 @@ class TestBinanceFetch(unittest.TestCase):
         
         from src.api.binance import fetch_binance_daily
         logger = MockLogger()
-        df = fetch_binance_daily("BTCUSDT", date(2026, 2, 18), logger)
-        self.assertFalse(df.empty)
-        self.assertIn("timestamp", df.columns)
-        self.assertIn("close", df.columns)
+        df = fetch_binance_daily("BTCUSDT", safe_test_date, logger)
+        assert not df.empty
+        assert "timestamp" in df.columns
+        assert "close" in df.columns
 
     @patch("src.api.binance.requests.get")
-    def test_invalid_symbol_returns_empty(self, mock_get):
+    def test_invalid_symbol_returns_empty(self, mock_get, safe_test_date):
         """Invalid symbol returning error dict must return empty DF."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -51,13 +51,13 @@ class TestBinanceFetch(unittest.TestCase):
         
         from src.api.binance import fetch_binance_daily
         logger = MockLogger()
-        df = fetch_binance_daily("INVALIDXYZ", date(2026, 2, 18), logger)
-        self.assertTrue(df.empty)
+        df = fetch_binance_daily("INVALIDXYZ", safe_test_date, logger)
+        assert df.empty
         # Should have logged the comprehensive error report
-        self.assertTrue(any("All Binance domains failed" in m for m in logger.messages))
+        assert any("All Binance domains failed" in m for m in logger.messages)
 
     @patch("src.api.binance.requests.get")
-    def test_geo_block_tries_next_domain(self, mock_get):
+    def test_geo_block_tries_next_domain(self, mock_get, safe_test_date):
         """403 geo-block must try the next domain."""
         response_403 = MagicMock()
         response_403.status_code = 403
@@ -79,31 +79,27 @@ class TestBinanceFetch(unittest.TestCase):
         
         from src.api.binance import fetch_binance_daily
         logger = MockLogger()
-        df = fetch_binance_daily("BTCUSDT", date(2026, 2, 18), logger)
+        df = fetch_binance_daily("BTCUSDT", safe_test_date, logger)
         # Should have tried at least 2 domains
-        self.assertGreaterEqual(mock_get.call_count, 2)
+        assert mock_get.call_count >= 2
 
     @patch("src.api.binance.requests.get")
-    def test_exception_caught(self, mock_get):
+    def test_exception_caught(self, mock_get, safe_test_date):
         """Network exception must be caught and logged."""
         mock_get.side_effect = Exception("Connection refused")
         
         from src.api.binance import fetch_binance_daily
         logger = MockLogger()
-        df = fetch_binance_daily("BTCUSDT", date(2026, 2, 18), logger)
-        self.assertTrue(df.empty)
-        self.assertTrue(any("All Binance domains failed" in m for m in logger.messages))
+        df = fetch_binance_daily("BTCUSDT", safe_test_date, logger)
+        assert df.empty
+        assert any("All Binance domains failed" in m for m in logger.messages)
 
     @patch("src.api.binance.requests.get")
-    def test_logger_is_optional(self, mock_get):
+    def test_logger_is_optional(self, mock_get, safe_test_date):
         """fetch_binance_daily must work without a logger (backward compat)."""
         mock_get.side_effect = Exception("test")
         
         from src.api.binance import fetch_binance_daily
         # Must NOT crash when logger=None
-        df = fetch_binance_daily("BTCUSDT", date(2026, 2, 18))
-        self.assertTrue(df.empty)
-
-
-if __name__ == '__main__':
-    unittest.main()
+        df = fetch_binance_daily("BTCUSDT", safe_test_date)
+        assert df.empty

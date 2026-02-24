@@ -1,25 +1,25 @@
 """
 Tests for src/data/normalizer.py — Verify normalization handles edge cases.
 """
-import unittest
+import pytest
 import pandas as pd
 import numpy as np
 from src.data.normalizer import normalize_yahoo_df
 from src.config import SCHEMA_COLS
 
 
-class TestNormalizeYahoo(unittest.TestCase):
+class TestNormalizeYahoo:
 
     def test_empty_dataframe(self):
         """Must return empty DF with correct columns if input is empty."""
         result = normalize_yahoo_df(pd.DataFrame(), "AAPL")
-        self.assertTrue(result.empty)
-        self.assertEqual(list(result.columns), SCHEMA_COLS)
+        assert result.empty
+        assert list(result.columns) == SCHEMA_COLS
 
-    def test_standard_yahoo_data(self):
+    def test_standard_yahoo_data(self, safe_test_date_str):
         """Standard Yahoo data with timezone-aware index must normalize correctly."""
         idx = pd.DatetimeIndex(
-            pd.date_range("2026-02-18 09:30", periods=3, freq="1min", tz="US/Eastern"),
+            pd.date_range(f"{safe_test_date_str} 09:30", periods=3, freq="1min", tz="US/Eastern"),
             name="Datetime"
         )
         df = pd.DataFrame({
@@ -31,16 +31,16 @@ class TestNormalizeYahoo(unittest.TestCase):
         }, index=idx)
         
         result = normalize_yahoo_df(df, "AAPL")
-        self.assertEqual(len(result), 3)
-        self.assertEqual(list(result.columns), SCHEMA_COLS)
-        self.assertEqual(result['symbol'].iloc[0], "AAPL")
+        assert len(result) == 3
+        assert list(result.columns) == SCHEMA_COLS
+        assert result['symbol'].iloc[0] == "AAPL"
         # Timestamps should be UTC after normalization
-        self.assertIsNotNone(result['timestamp'].dt.tz)
+        assert result['timestamp'].dt.tz is not None
 
-    def test_yahoo_missing_volume(self):
+    def test_yahoo_missing_volume(self, safe_test_date_str):
         """VIX and similar indices may have no Volume column — must fill with 0."""
         idx = pd.DatetimeIndex(
-            pd.date_range("2026-02-18 09:30", periods=2, freq="1min", tz="US/Eastern"),
+            pd.date_range(f"{safe_test_date_str} 09:30", periods=2, freq="1min", tz="US/Eastern"),
             name="Datetime"
         )
         df = pd.DataFrame({
@@ -52,14 +52,13 @@ class TestNormalizeYahoo(unittest.TestCase):
         }, index=idx)
         
         result = normalize_yahoo_df(df, "^VIX")
-        self.assertEqual(len(result), 2)
-        self.assertTrue((result['volume'] == 0.0).all(), 
-                        "Missing volume should default to 0.0")
+        assert len(result) == 2
+        assert (result['volume'] == 0.0).all()
 
-    def test_yahoo_nan_volume(self):
+    def test_yahoo_nan_volume(self, safe_test_date_str):
         """Volume with NaN values must be filled with 0."""
         idx = pd.DatetimeIndex(
-            pd.date_range("2026-02-18 09:30", periods=2, freq="1min", tz="US/Eastern"),
+            pd.date_range(f"{safe_test_date_str} 09:30", periods=2, freq="1min", tz="US/Eastern"),
             name="Datetime"
         )
         df = pd.DataFrame({
@@ -71,12 +70,12 @@ class TestNormalizeYahoo(unittest.TestCase):
         }, index=idx)
         
         result = normalize_yahoo_df(df, "AAPL")
-        self.assertTrue((result['volume'] == 0).all())
+        assert (result['volume'] == 0).all()
 
-    def test_yahoo_naive_timestamps(self):
+    def test_yahoo_naive_timestamps(self, safe_test_date_str):
         """Naive (no timezone) timestamps must be localized to US/Eastern then converted to UTC."""
         idx = pd.DatetimeIndex(
-            pd.date_range("2026-02-18 09:30", periods=2, freq="1min"),
+            pd.date_range(f"{safe_test_date_str} 09:30", periods=2, freq="1min"),
             name="Datetime"
         )
         df = pd.DataFrame({
@@ -88,12 +87,12 @@ class TestNormalizeYahoo(unittest.TestCase):
         }, index=idx)
         
         result = normalize_yahoo_df(df, "AAPL")
-        self.assertIsNotNone(result['timestamp'].dt.tz)
+        assert result['timestamp'].dt.tz is not None
 
-    def test_yahoo_multiindex_columns(self):
+    def test_yahoo_multiindex_columns(self, safe_test_date_str):
         """Yahoo sometimes returns MultiIndex columns — must flatten them."""
         idx = pd.DatetimeIndex(
-            pd.date_range("2026-02-18 09:30", periods=2, freq="1min", tz="US/Eastern"),
+            pd.date_range(f"{safe_test_date_str} 09:30", periods=2, freq="1min", tz="US/Eastern"),
             name="Datetime"
         )
         arrays = [["Open", "High", "Low", "Close", "Volume"], 
@@ -106,10 +105,5 @@ class TestNormalizeYahoo(unittest.TestCase):
         )
         
         result = normalize_yahoo_df(df, "AAPL")
-        self.assertEqual(len(result), 2)
-        self.assertEqual(list(result.columns), SCHEMA_COLS)
-
-
-
-if __name__ == '__main__':
-    unittest.main()
+        assert len(result) == 2
+        assert list(result.columns) == SCHEMA_COLS

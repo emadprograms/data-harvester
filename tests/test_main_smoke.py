@@ -1,16 +1,17 @@
 """
 Smoke tests for main.py entrypoint behavior.
 """
-import unittest
+import pytest
 from unittest.mock import MagicMock, patch
 import sys
 import importlib
 import pandas as pd
 
 
-class TestMainSmoke(unittest.TestCase):
+class TestMainSmoke:
 
-    def setUp(self):
+    @pytest.fixture(autouse=True)
+    def setup(self):
         # Ensure main is fresh
         if 'main' in sys.modules:
             importlib.reload(sys.modules['main'])
@@ -40,12 +41,12 @@ class TestMainSmoke(unittest.TestCase):
 
         import main
         with patch.object(sys, 'argv', ['main.py']):
-            with self.assertRaises(SystemExit) as cm:
+            with pytest.raises(SystemExit) as cm:
                 main.main()
-            self.assertEqual(cm.exception.code, 1)
+            assert cm.value.code == 1
 
-        self.assertTrue(mock_logger.log.called)
-        self.assertTrue(any("CRITICAL" in str(c) for c in mock_logger.log.call_args_list))
+        assert mock_logger.log.called
+        assert any("CRITICAL" in str(c) for c in mock_logger.log.call_args_list)
 
     @patch("src.utils.integrity.verify_db_md5")
     @patch("src.utils.discord.send_discord_harvest_report")
@@ -70,7 +71,8 @@ class TestMainSmoke(unittest.TestCase):
         mock_save_storage,
         mock_run_harvest,
         mock_discord_report,
-        mock_verify_md5
+        mock_verify_md5,
+        safe_test_date_str
     ):
         """Standard main() flow with full mocks to ensure wiring is correct."""
         # 1. Setup Mocks
@@ -88,7 +90,7 @@ class TestMainSmoke(unittest.TestCase):
         
         mock_get_map.return_value = {"AAPL": {"yahoo_ticker": "AAPL", "massive_ticker": "AAPL", "binance_ticker": None}}
         
-        mock_df = pd.DataFrame([{"timestamp": "2026-02-18 10:00:00", "symbol": "AAPL", "close": 150.0}])
+        mock_df = pd.DataFrame([{"timestamp": f"{safe_test_date_str} 10:00:00", "symbol": "AAPL", "close": 150.0}])
         mock_report = pd.DataFrame([{"Ticker": "AAPL", "Status": "✅ Massive", "Total": 1}])
         mock_run_harvest.return_value = (mock_df, mock_report)
         
@@ -105,12 +107,8 @@ class TestMainSmoke(unittest.TestCase):
                 main.main()
             
         # 3. Verify
-        self.assertTrue(mock_init_db.called)
-        self.assertTrue(mock_get_map.called)
-        self.assertTrue(mock_run_harvest.called)
-        self.assertTrue(mock_save_storage.called)
-        self.assertTrue(mock_discord_report.called)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert mock_init_db.called
+        assert mock_get_map.called
+        assert mock_run_harvest.called
+        assert mock_save_storage.called
+        assert mock_discord_report.called
