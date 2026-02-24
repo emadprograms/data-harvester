@@ -100,14 +100,6 @@ def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, ma
             return pd.DataFrame(), "❌ Binance Empty"
 
         elif source_name == "CAPITAL":
-            # --- 16 HOUR LOOKBACK GUARD ---
-            now_utc = datetime.now(timezone.utc)
-            lookback_limit = now_utc - timedelta(hours=16)
-            
-            if start_dt < lookback_limit:
-                log_event(f"⚠️ Skipping Capital.com: start_dt ({start_dt}) is older than 16h limit.")
-                return pd.DataFrame(), "❌ Beyond 16h Window"
-
             from src.api.capital import fetch_capital_data
             raw = fetch_capital_data(specific_ticker, start_dt, end_dt, logger)
             if not raw.empty:

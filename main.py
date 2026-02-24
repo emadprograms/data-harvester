@@ -137,8 +137,9 @@ def main():
         if final_df is not None and not final_df.empty:
             # --- SOURCE-AWARE CLEANING (TIERED DELETION) ---
             # Rule: Only wipe symbols if we have a fresh Tier-1 (Authoritative) replacement.
-            # Tier-2 data (Capital/Yahoo) is stacked incrementally without deleting morning data.
-            tier_1_symbols = final_df[final_df['source'].isin(['MASSIVE', 'BINANCE'])]['symbol'].unique().tolist()
+            # AND only if we actually found rows for that symbol.
+            tier_1_data = final_df[final_df['source'].isin(['MASSIVE', 'BINANCE'])]
+            tier_1_symbols = tier_1_data['symbol'].unique().tolist() if not tier_1_data.empty else []
             
             if tier_1_symbols:
                 from src.database.operations import clear_market_data_for_range
