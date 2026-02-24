@@ -186,6 +186,7 @@ def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harv
         # Post-Process
         df = df.copy()
         df['symbol'] = ticker
+        df['source'] = source_label # <--- ADD THIS
         df = _apply_session_labels(df)
         if df['timestamp'].dt.tz is None:
             df['timestamp'] = df['timestamp'].dt.tz_localize(UTC).dt.tz_convert(US_EASTERN)

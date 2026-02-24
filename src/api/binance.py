@@ -99,6 +99,7 @@ def fetch_binance_range(ticker: str, start_dt: datetime, end_dt: datetime, logge
                     # Final Schema Cleanup
                     df["symbol"] = ticker 
                     df["session"] = "REG" 
+                    df["source"] = "BINANCE" # <--- ADD THIS
                     
                     return df[SCHEMA_COLS]
                 else:

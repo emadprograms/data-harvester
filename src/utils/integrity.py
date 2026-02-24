@@ -30,8 +30,8 @@ def calculate_df_md5(df: pd.DataFrame) -> str:
     if df.empty:
         return ""
     
-    # Target columns for hash consistency
-    target_cols = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume']
+    # Target columns for hash consistency (Now including source/session for 9-column parity)
+    target_cols = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume', 'session', 'source']
     
     # Ensure all target columns exist
     for col in target_cols:
@@ -89,8 +89,10 @@ def ensure_database_parity(archive_client, mirror_client, date_str: str, logger=
     """
     try:
         # 1. Fetch from Archive
+        # Explicitly list columns from SCHEMA_COLS to ensure 9-column match
+        col_list = ", ".join(SCHEMA_COLS)
         res_a = archive_client.execute(
-            "SELECT timestamp, symbol, open, high, low, close, volume, session FROM market_data WHERE timestamp LIKE ?",
+            f"SELECT {col_list} FROM market_data WHERE timestamp LIKE ?",
             [f"{date_str}%"]
         )
         df_a = pd.DataFrame([list(row) for row in res_a.rows], columns=SCHEMA_COLS)
@@ -100,7 +102,7 @@ def ensure_database_parity(archive_client, mirror_client, date_str: str, logger=
 
         # 2. Fetch from Mirror
         res_m = mirror_client.execute(
-            "SELECT timestamp, symbol, open, high, low, close, volume, session FROM market_data WHERE timestamp LIKE ?",
+            f"SELECT {col_list} FROM market_data WHERE timestamp LIKE ?",
             [f"{date_str}%"]
         )
         df_m = pd.DataFrame([list(row) for row in res_m.rows], columns=SCHEMA_COLS)

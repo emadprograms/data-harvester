@@ -47,6 +47,11 @@ def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = None)
     df_norm['symbol'] = symbol
     df_norm['session'] = session_label
     
+    # Ensure all SCHEMA_COLS exist (e.g. source)
+    for col in SCHEMA_COLS:
+        if col not in df_norm.columns:
+            df_norm[col] = None
+
     # Final safety check: ensure exactly SCHEMA_COLS in correct order
     return df_norm[SCHEMA_COLS].copy()
 
