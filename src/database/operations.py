@@ -190,3 +190,14 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
             return False
         
         return True
+
+    except Exception as e:
+        if logger: logger.log(f"   ❌ Storage Global Error: {e}")
+        return False
+    finally:
+        if own_archive and archive_client:
+            try: archive_client.close()
+            except: pass
+        if own_mirror and mirror_client:
+            try: mirror_client.close()
+            except: pass
