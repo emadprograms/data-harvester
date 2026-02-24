@@ -46,19 +46,31 @@ def get_symbol_map_from_db(client=None):
 
 # --- MARKET DATA OPERATIONS ---
 
-def clear_market_data_for_range(client, start_utc: datetime, end_utc: datetime, logger=None, label="DB"):
+def clear_market_data_for_range(client, start_utc: datetime, end_utc: datetime, logger=None, label="DB", symbols=None):
     """
     Surgically deletes records within a specific UTC range.
+    If symbols is provided, only deletes for those specific symbols.
     """
     try:
         start_str = start_utc.strftime('%Y-%m-%d %H:%M:%S')
         end_str = end_utc.strftime('%Y-%m-%d %H:%M:%S')
-        client.execute(
-            "DELETE FROM market_data WHERE timestamp >= ? AND timestamp < ?",
-            [start_str, end_str]
-        )
-        if logger:
-            logger.log(f"   ✅ {label}: Cleaned existing records for range: {start_str} to {end_str}")
+        
+        if symbols:
+            # Handle list of symbols
+            placeholders = ",".join(["?"] * len(symbols))
+            query = f"DELETE FROM market_data WHERE timestamp >= ? AND timestamp < ? AND symbol IN ({placeholders})"
+            params = [start_str, end_str] + list(symbols)
+            client.execute(query, params)
+            if logger:
+                logger.log(f"   ✅ {label}: Cleaned {len(symbols)} symbols for range: {start_str} to {end_str}")
+        else:
+            # Global wipe for range
+            client.execute(
+                "DELETE FROM market_data WHERE timestamp >= ? AND timestamp < ?",
+                [start_str, end_str]
+            )
+            if logger:
+                logger.log(f"   ✅ {label}: Cleaned ALL records for range: {start_str} to {end_str}")
     except Exception as e:
         if logger: logger.log(f"   ⚠️ {label} Range Clean-up warning: {e}")
 
