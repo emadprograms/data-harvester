@@ -5,7 +5,7 @@ import requests
 import pandas as pd
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from src.infisical_manager import InfisicalManager
 from src.config import SCHEMA_COLS, UTC, US_EASTERN
 from src.api.retry import get_retry_session
