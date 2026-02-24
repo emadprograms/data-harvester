@@ -95,25 +95,7 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
         return False
 
     try:
-        # 1. Prepare the detailed table for the log file
-        table_str = ""
-        if not report_df.empty:
-            summary_cols = ["Ticker", "Source", "Total"]
-            for s in ["Pre", "Reg", "Post"]:
-                if s in report_df.columns:
-                    summary_cols.append(s)
-            table_str = report_df[summary_cols].to_string(index=False)
-
-        # 2. Append the table to the log file if it exists
-        if file_path and os.path.exists(file_path) and table_str:
-            with open(file_path, "a") as f:
-                f.write("\n\n" + "="*50 + "\n")
-                f.write(f"HARVEST DETAILS FOR {target_date}\n")
-                f.write("="*50 + "\n")
-                f.write(table_str)
-                f.write("\n" + "="*50 + "\n")
-
-        # 3. Build the Embed Dashboard
+        # 1. Build the Embed Dashboard
         color = 5763719  # Green (0x57F287)
         title = f"🚜 Harvest Complete | {target_date}"
         

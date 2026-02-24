@@ -126,6 +126,7 @@ When adding or updating commands to the Discord bot, always adhere to the **Inte
 - **Action Callback**: Both the dropdown and modal should trigger a unified `action_callback` (e.g., `trigger_github_harvest`) to ensure consistent behavior across all input methods.
 
 ### C. UX Guidelines
+- **Use Embeds for Notifications**: All automated notifications (harvest reports, alerts) MUST use **Discord Embeds** to provide a structured, card-like dashboard experience. Avoid sending raw text tables in the message body.
 - **Suppress Link Previews**: Always wrap URLs in masked links with angle brackets (e.g., `[Monitor Progress](<URL>)`) to prevent Discord from generating large link preview banners (embeds) that clutter the channel.
 
 ---

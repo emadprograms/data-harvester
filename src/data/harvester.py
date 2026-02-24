@@ -49,7 +49,7 @@ def _validate_date_match(df, target_date, source_name, logger, ticker):
     if rogue_count > 0:
         # Special handling for Binance: Keep the rows (likely previous day data due to UTC/ET shift)
         if source_name == "Binance":
-            logger.log(f"   ℹ️ {ticker} [Binance]: Retaining {rogue_count} rows belonging to other days (likely previous).")
+            logger.log(f"   ℹ️ {ticker} [Binance]: Found {rogue_count} rows from previous day. Adding them to dataset.")
             return df, f"✅ {source_name}"
         else:
             # For others (Yahoo/Massive), strictly enforce the date boundary
