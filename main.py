@@ -4,9 +4,10 @@ CLI/automation worker script for scheduled data harvesting.
 import os
 import sys
 import argparse
+import pandas as pd
 from datetime import datetime, timedelta, timezone
 from src.database.schema import init_db
-from src.database.operations import get_symbol_map_from_db, save_data_to_storage
+from src.database.operations import get_symbol_map_from_db, save_data_to_storage, clear_market_data_for_dates
 from src.data.harvester import run_harvest_logic
 from src.api.massive import MassiveProvider
 from src.config import US_EASTERN
@@ -129,6 +130,16 @@ def main():
         
         # 4. Dual Write & Post-Harvest Parity
         if final_df is not None and not final_df.empty:
+            # Clean up existing data for the target dates to prevent splicing/overlap
+            if not pd.api.types.is_datetime64_any_dtype(final_df['timestamp']):
+                final_df['timestamp'] = pd.to_datetime(final_df['timestamp'], utc=True)
+            
+            unique_dates = final_df['timestamp'].dt.date.unique().tolist()
+            if unique_dates:
+                logger.log(f"🧹 Clearing existing data for {len(unique_dates)} dates before commit...")
+                clear_market_data_for_dates(archive_client, unique_dates, logger, "Archive")
+                clear_market_data_for_dates(mirror_client, unique_dates, logger, "Mirror")
+
             if save_data_to_storage(final_df, logger, archive_client=archive_client, mirror_client=mirror_client):
                 logger.log(f"✅ Data written to Archive & Mirror. Rows: {len(final_df)}")
                 
@@ -157,7 +168,6 @@ def main():
             rows = len(final_df) if final_df is not None else 0
             # report_df might be None if inventory was empty
             if report_df is None:
-                import pandas as pd
                 report_df = pd.DataFrame()
                 
             now_et = datetime.now(US_EASTERN)
@@ -187,7 +197,8 @@ def main():
         # Exit with error if any critical errors happened
         if critical_errors:
             sys.exit(1)
-        sys.exit(0)
+        else:
+            sys.exit(0)
 
 if __name__ == "__main__":
     main()

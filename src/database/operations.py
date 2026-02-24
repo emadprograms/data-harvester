@@ -54,6 +54,22 @@ def get_symbol_map_from_db(client=None):
 
 # --- MARKET DATA OPERATIONS ---
 
+def clear_market_data_for_dates(client, dates: list, logger=None, label="DB"):
+    """
+    Deletes all records from market_data for the specified dates.
+    Used to ensure a clean state before a new harvest commit.
+    """
+    if not dates:
+        return
+    
+    try:
+        for d in dates:
+            d_str = str(d)
+            client.execute("DELETE FROM market_data WHERE timestamp LIKE ?", [f"{d_str}%"])
+        if logger: logger.log(f"   ✅ {label}: Cleaned existing records for {len(dates)} dates.")
+    except Exception as e:
+        if logger: logger.log(f"   ⚠️ {label} Clean-up warning: {e}")
+
 def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
     """Generic helper to save a batch of rows to a specific database client."""
     BATCH_SIZE = 100
