@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from polygon import RESTClient
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.infisical_manager import InfisicalManager
-from src.config import SCHEMA_COLS, UTC
+from src.config import SCHEMA_COLS, UTC, US_EASTERN
 
 class MassiveProvider:
     def __init__(self, logger):
@@ -34,12 +34,13 @@ class MassiveProvider:
         if not client:
             return pd.DataFrame()
 
-        start_time = datetime.combine(target_date, datetime.min.time())
-        end_time = datetime.combine(target_date, datetime.max.time())
+        # Define the day boundaries in US/Eastern
+        start_dt = US_EASTERN.localize(datetime.combine(target_date, datetime.min.time()))
+        end_dt = US_EASTERN.localize(datetime.combine(target_date, datetime.max.time()))
         
-        # Polygon expects milliseconds since epoch or ISO formatted strings
-        from_ts = int(start_time.timestamp() * 1000)
-        to_ts = int(end_time.timestamp() * 1000)
+        # Polygon expects milliseconds since epoch
+        from_ts = int(start_dt.timestamp() * 1000)
+        to_ts = int(end_dt.timestamp() * 1000)
 
         all_aggs = []
         try:

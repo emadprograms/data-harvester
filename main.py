@@ -73,11 +73,14 @@ def main():
                 critical_errors += f"- {msg}\n"
                 return
         else:
-            if now_et.hour < 4:
+            # Cut-off: If before 8 PM ET (Post-Market Close), target previous day.
+            # If after 8 PM ET, target today.
+            if now_et.hour < 20:
                 target_date = (now_et - timedelta(days=1)).date()
-                logger.log("🕒 Time is before 4 AM ET. Targeting previous trading day.")
+                logger.log(f"🕒 Time is before 8 PM ET. Targeting previous trading day.")
             else:
                 target_date = now_et.date()
+                logger.log(f"🕒 Time is after 8 PM ET. Targeting today's harvest.")
                 
             while target_date.weekday() > 4:
                 target_date -= timedelta(days=1)
