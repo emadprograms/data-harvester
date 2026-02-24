@@ -7,7 +7,7 @@ from src.config import SCHEMA_COLS, US_EASTERN, UTC
 
 
 
-def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = 'REG') -> pd.DataFrame:
+def normalize_yahoo_df(df: pd.DataFrame, symbol: str, session_label: str = None) -> pd.DataFrame:
     """Normalizes Yahoo Finance data to target schema."""
     if df.empty:
         return pd.DataFrame(columns=SCHEMA_COLS)

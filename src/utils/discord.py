@@ -3,7 +3,7 @@ import os
 import pandas as pd
 import json
 import time
-from datetime import datetime, time as dt_time
+from datetime import datetime, timezone
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
                                 critical_errors=""):
     """
     Sends a cleaned-up harvest dashboard to Discord using Embeds.
-    The detailed ticker-wise table is moved to the attached log file.
+    The dashboard is sent first, followed by the log file as a separate message.
     """
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
     if not webhook_url:
@@ -108,7 +108,7 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
         embed = {
             "title": title,
             "color": color,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "fields": [],
             "footer": {"text": "Data Harvester v5.0"}
         }
@@ -135,7 +135,6 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
 
         # Health Alerts Field (if any)
         if health_alerts:
-             # Strip the code block markdown for the value if it exists, or just use it
             embed["fields"].append({"name": "🏥 Health Check", "value": health_alerts, "inline": False})
 
         # Sources Field (if data exists)
@@ -144,33 +143,44 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
             source_str = "\n".join([f"**{src}:** {count}" for src, count in sources.items()])
             embed["fields"].append({"name": "📡 Sources", "value": source_str, "inline": True})
 
-        # 4. Post to Discord (Embed + File)
-        # Discord allows sending 'payload_json' with 'files' for multipart/form-data
-        return _post_embed(webhook_url, embed, file_path)
+        # 2. Step 1: Post the Dashboard Card
+        dashboard_ok = _post_embed(webhook_url, embed)
+
+        # 3. Step 2: Post the Log File
+        if file_path and os.path.exists(file_path):
+            time.sleep(1) # Small delay to ensure order
+            file_ok = _post_file(webhook_url, "📄 **Find the attached logs below:**", file_path)
+            return dashboard_ok and file_ok
+
+        return dashboard_ok
 
     except Exception as e:
         print(f"⚠️ Discord Error: {e}")
         return False
 
 
-def _post_embed(webhook_url, embed_dict, file_path=None):
-    """Helper to post an embed and optional file to Discord."""
+def _post_embed(webhook_url, embed_dict):
+    """Helper to post a single embed to Discord."""
     try:
         payload = {"embeds": [embed_dict]}
-        
-        if file_path and os.path.exists(file_path):
-            with open(file_path, 'rb') as f:
-                # When sending files, JSON payload must be passed as a string in 'payload_json' field
-                files = {
-                    'file': (os.path.basename(file_path), f),
-                    'payload_json': (None, json.dumps(payload), 'application/json')
-                }
-                resp = requests.post(webhook_url, files=files, timeout=30)
-        else:
-            resp = requests.post(webhook_url, json=payload, timeout=10)
+        resp = requests.post(webhook_url, json=payload, timeout=10)
+        if resp.status_code not in [200, 204]:
+            print(f"❌ Discord Embed Error {resp.status_code}: {resp.text}")
+            return False
+        return True
+    except Exception as e:
+        print(f"❌ Discord Post Error: {e}")
+        return False
+
+def _post_file(webhook_url, content, file_path):
+    """Helper to post a file with a message to Discord."""
+    try:
+        with open(file_path, 'rb') as f:
+            files = {'file': (os.path.basename(file_path), f)}
+            resp = requests.post(webhook_url, data={'content': content}, files=files, timeout=30)
             
         if resp.status_code not in [200, 204]:
-            print(f"❌ Discord {resp.status_code}: {resp.text}")
+            print(f"❌ Discord File Error {resp.status_code}: {resp.text}")
             return False
         return True
     except Exception as e:

@@ -188,7 +188,7 @@ def run_harvest_logic(tickers_to_harvest, target_date, db_map, logger, harvest_m
         df['symbol'] = ticker
         
         # Standardize session labels
-        if 'session' not in df.columns:
+        if 'session' not in df.columns or df['session'].isnull().any():
             df = _apply_session_labels(df)
         
         # Ensure consistent Timezone
