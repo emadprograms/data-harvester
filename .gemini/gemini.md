@@ -125,5 +125,8 @@ async def somecommand(ctx, date_indicator: str = None):
         await my_action_callback(ctx, target_date)
 ```
 
+### D. UX Guidelines
+- **Suppress Link Previews**: Always wrap URLs in masked links with angle brackets (e.g., `[Monitor Progress](<URL>)`) to prevent Discord from generating large link preview banners (embeds) that clutter the channel.
+
 ---
 *Updated: 2026-02-24*

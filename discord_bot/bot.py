@@ -109,7 +109,7 @@ async def trigger_github_harvest(interaction_or_ctx, date_str: str):
                             break
                 except: pass
 
-            link = f"\n\n🔗 [Monitor Progress]({run_url or ACTIONS_URL}) 📡⏱️"
+            link = f"\n\n🔗 [Monitor Progress](<{run_url or ACTIONS_URL}>) 📡⏱️"
             await status_msg.edit(content=f"✅ **Harvest Triggered for {date_str}!**{link}")
         else:
             err = response.json().get("message", response.text)
