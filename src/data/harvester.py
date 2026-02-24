@@ -42,16 +42,25 @@ def _validate_date_match(df, target_date, source_name, logger, ticker):
         
     target_date_str = target_date.strftime('%Y-%m-%d')
     valid_mask = temp_df['timestamp'].dt.strftime('%Y-%m-%d') == target_date_str
-    valid_df = df[valid_mask].copy()
     
-    dropped = len(df) - len(valid_df)
-    if dropped > 0:
-        logger.log(f"   ⚠️ {ticker} [{source_name}]: Dropped {dropped} rogue rows not matching target date {target_date}.")
+    # Check for rows that don't match the target date
+    rogue_count = len(df) - valid_mask.sum()
+    
+    if rogue_count > 0:
+        # Special handling for Binance: Keep the rows (likely previous day data due to UTC/ET shift)
+        if source_name == "Binance":
+            logger.log(f"   ℹ️ {ticker} [Binance]: Retaining {rogue_count} rows belonging to other days (likely previous).")
+            return df, f"✅ {source_name}"
+        else:
+            # For others (Yahoo/Massive), strictly enforce the date boundary
+            valid_df = df[valid_mask].copy()
+            logger.log(f"   ⚠️ {ticker} [{source_name}]: Dropped {rogue_count} rogue rows not matching target date {target_date}.")
+            
+            if valid_df.empty:
+                return valid_df, f"❌ {source_name} Empty (Wrong date)"
+            return valid_df, f"✅ {source_name}"
         
-    if valid_df.empty:
-        return valid_df, f"❌ {source_name} Empty (Wrong date)"
-        
-    return valid_df, f"✅ {source_name}"
+    return df, f"✅ {source_name}"
     
 
 def fetch_from_source(source_name, specific_ticker, target_date, logger, massive_provider=None):
