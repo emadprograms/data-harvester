@@ -27,7 +27,7 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 - **Source-Tiering Protection**: The database enforces a "Quality-First" overwrite policy via the `source` column. Data from **High-Quality** sources can never be overwritten by lower-tier sources for the same timestamp.
 - **Strict UTC Definition**: All internal logic, API requests, and database storage use pure **UTC**.
 - **Database Parity Mandate**: **Maintaining absolute 1-on-1 consistency between the Archive and Mirror databases is the single most important objective.**
-- **Self-Healing**: The engine automatically performs a surgical parity check/repair (MD5) for the target date before and after every harvest.
+- **Self-Healing**: The engine automatically performs a surgical parity check/repair (MD5) using the **full session range** (`session_start_utc` → `session_end_utc`) before and after every harvest. This ensures all rows are verified even when a session spans multiple calendar dates (e.g., Friday 8PM ET → Monday 8PM ET).
 
 ---
 

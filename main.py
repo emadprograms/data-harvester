@@ -138,10 +138,10 @@ def main():
         logger.log(f"🌍 Session Range (UTC): {session_start_utc.strftime('%Y-%m-%d %H:%M')} to {session_end_utc.strftime('%Y-%m-%d %H:%M')}")
         logger.log(f"⚙️  Harvest Mode: {harvest_mode_label}")
 
-        # 1. Pre-Harvest Parity Check (Using target_date for reference)
+        # 1. Pre-Harvest Parity Check (Session-Scoped)
         from src.utils.integrity import ensure_database_parity
-        logger.log(f"🔍 Pre-Harvest Parity Check for {target_date}...")
-        ok_pre, msg_pre = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
+        logger.log(f"🔍 Pre-Harvest Parity Check for session {session_start_utc.strftime('%Y-%m-%d %H:%M')} → {session_end_utc.strftime('%Y-%m-%d %H:%M')} UTC...")
+        ok_pre, msg_pre = ensure_database_parity(archive_client, mirror_client, session_start_utc, session_end_utc, logger)
         integrity_pre_msg = msg_pre
         if not ok_pre:
             critical_errors += f"- Pre-Harvest Parity Failure: {msg_pre}\n"
@@ -197,8 +197,8 @@ def main():
                 except AttributeError:
                     pass # Fallback if logger doesn't have this method yet
 
-                logger.log(f"🔍 Post-Harvest Parity Check for {target_date}...")
-                ok_post, msg_post = ensure_database_parity(archive_client, mirror_client, str(target_date), logger)
+                logger.log(f"🔍 Post-Harvest Parity Check for session...")
+                ok_post, msg_post = ensure_database_parity(archive_client, mirror_client, session_start_utc, session_end_utc, logger)
                 integrity_post_msg = msg_post
                 
                 if not ok_post:

@@ -3,7 +3,7 @@ Stress tests and edge-case coverage for the data harvesting pipeline.
 Targets bugs found during code audit:
   - Timestamps must be stored in UTC (not ET)
   - Rollback must cover full session range (multi-date)
-  - compute_fingerprint must scope to single date
+  - compute_fingerprint must use session range (not LIKE)
   - verify_db_md5 must fetch all 9 SCHEMA_COLS
   - Capital.com datetime.now must always be UTC-aware
   - Session labels on boundary times (09:30, 16:00)
@@ -231,24 +231,28 @@ class TestCapitalGuard:
 # ---------------------------------------------------------------------------
 class TestIntegrityFixes:
 
-    def test_compute_fingerprint_scoped_to_date(self):
-        """compute_fingerprint must query only the given date, not all future."""
+    def test_compute_fingerprint_scoped_to_session_range(self):
+        """compute_fingerprint must use >= / < range query, not LIKE."""
         mock_client = MagicMock()
         mock_res = MagicMock()
         mock_res.rows = [(10, 5000, "2026-02-18 23:00:00", "2026-02-18 01:00:00")]
         mock_client.execute.return_value = mock_res
 
-        result = compute_fingerprint(mock_client, "2026-02-18")
+        from datetime import datetime
+        start = datetime(2026, 2, 18, 1, 0, 0)
+        end = datetime(2026, 2, 19, 1, 0, 0)
+        result = compute_fingerprint(mock_client, start, end)
 
-        # Verify LIKE query is used (not >=)
         call_args = mock_client.execute.call_args
         query = call_args[0][0]
         params = call_args[0][1]
-        assert "LIKE" in query, f"Expected LIKE query, got: {query}"
-        assert params == ["2026-02-18%"]
+        assert ">=" in query, f"Expected range query with >=, got: {query}"
+        assert "<" in query, f"Expected range query with <, got: {query}"
+        assert "LIKE" not in query, f"Should NOT use LIKE, got: {query}"
+        assert params == ["2026-02-18 01:00:00", "2026-02-19 01:00:00"]
 
     def test_verify_db_md5_fetches_all_schema_cols(self):
-        """verify_db_md5 must SELECT all 9 SCHEMA_COLS, not just 7."""
+        """verify_db_md5 must SELECT all 9 SCHEMA_COLS with range query."""
         mock_client = MagicMock()
         mock_res = MagicMock()
         mock_res.rows = [
@@ -263,13 +267,17 @@ class TestIntegrityFixes:
             "close": [150.5], "volume": [1000.0],
             "session": ["REG"], "source": ["MASSIVE"],
         })
-        ok, msg = verify_db_md5(mock_client, df, "2026-02-18")
+        from datetime import datetime
+        start = datetime(2026, 2, 18, 1, 0, 0)
+        end = datetime(2026, 2, 19, 1, 0, 0)
+        ok, msg = verify_db_md5(mock_client, df, start, end)
 
-        # Verify the query includes all SCHEMA_COLS
         call_args = mock_client.execute.call_args
         query = call_args[0][0]
         for col in SCHEMA_COLS:
             assert col in query, f"Missing column '{col}' in verify_db_md5 query"
+        # Ensure range query, not LIKE
+        assert ">=" in query and "<" in query
 
 
 # ---------------------------------------------------------------------------

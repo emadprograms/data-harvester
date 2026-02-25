@@ -1,19 +1,29 @@
 import hashlib
 import pandas as pd
 import time
+from datetime import datetime
 from src.config import SCHEMA_COLS
 
-def compute_fingerprint(client, date_str):
+
+def _range_params(start_utc, end_utc):
+    """Convert datetime boundaries to SQL-safe string params."""
+    start_str = start_utc.strftime('%Y-%m-%d %H:%M:%S') if isinstance(start_utc, datetime) else str(start_utc)
+    end_str = end_utc.strftime('%Y-%m-%d %H:%M:%S') if isinstance(end_utc, datetime) else str(end_utc)
+    return start_str, end_str
+
+
+def compute_fingerprint(client, start_utc, end_utc):
     """
-    Returns a fingerprint tuple (count, volume_sum, max_ts, min_ts)
-    for all market_data rows matching the given date string.
+    Returns a fingerprint dict (count, volume_sum, max_ts, min_ts)
+    for all market_data rows within the session range [start_utc, end_utc).
     """
     try:
+        start_str, end_str = _range_params(start_utc, end_utc)
         res = client.execute(
             "SELECT COUNT(*), COALESCE(SUM(CAST(volume AS INTEGER)), 0), "
             "MAX(timestamp), MIN(timestamp) "
-            "FROM market_data WHERE timestamp LIKE ?",
-            [f"{date_str}%"]
+            "FROM market_data WHERE timestamp >= ? AND timestamp < ?",
+            [start_str, end_str]
         )
         row = res.rows[0]
         return {
@@ -49,10 +59,10 @@ def calculate_df_md5(df: pd.DataFrame) -> str:
     hash_obj = hashlib.md5(df_sorted.to_csv(index=False).encode('utf-8'))
     return hash_obj.hexdigest()
 
-def verify_db_md5(client, df: pd.DataFrame, date_str: str, logger=None) -> tuple[bool, str]:
+def verify_db_md5(client, df: pd.DataFrame, start_utc, end_utc, logger=None) -> tuple[bool, str]:
     """
-    Verifies database integrity by reading back data and comparing MD5.
-    Optimized for minimum reads by targeting only the harvested date.
+    Verifies database integrity by reading back session data and comparing MD5.
+    Uses the full session range [start_utc, end_utc) to capture all rows.
     """
     if df.empty:
         return True, "Empty Data"
@@ -60,15 +70,15 @@ def verify_db_md5(client, df: pd.DataFrame, date_str: str, logger=None) -> tuple
     try:
         df_md5 = calculate_df_md5(df)
         
-        # Read back from DB (must fetch all 9 SCHEMA_COLS for consistent MD5)
+        start_str, end_str = _range_params(start_utc, end_utc)
         col_list = ', '.join(SCHEMA_COLS)
         res = client.execute(
-            f"SELECT {col_list} FROM market_data WHERE timestamp LIKE ?",
-            [f"{date_str}%"]
+            f"SELECT {col_list} FROM market_data WHERE timestamp >= ? AND timestamp < ?",
+            [start_str, end_str]
         )
         
         if not res.rows:
-            return False, "❌ DB Empty for date"
+            return False, "❌ DB Empty for session range"
         
         db_df = pd.DataFrame([list(row) for row in res.rows], columns=SCHEMA_COLS)
         db_md5 = calculate_df_md5(db_df)
@@ -83,18 +93,22 @@ def verify_db_md5(client, df: pd.DataFrame, date_str: str, logger=None) -> tuple
         if logger: logger.log(msg)
         return False, msg
 
-def ensure_database_parity(archive_client, mirror_client, date_str: str, logger=None) -> tuple[bool, str]:
+def ensure_database_parity(archive_client, mirror_client, start_utc, end_utc, logger=None) -> tuple[bool, str]:
     """
-    Compares Archive and Mirror for a specific date and repairs Mirror if they differ.
+    Compares Archive and Mirror for the full session range [start_utc, end_utc)
+    and repairs Mirror if they differ. Session-scoped to avoid missing rows
+    that span multiple calendar dates.
     Returns (Success, Message).
     """
     try:
+        start_str, end_str = _range_params(start_utc, end_utc)
+        range_label = f"{start_str} → {end_str}"
+
         # 1. Fetch from Archive
-        # Explicitly list columns from SCHEMA_COLS to ensure 9-column match
         col_list = ", ".join(SCHEMA_COLS)
         res_a = archive_client.execute(
-            f"SELECT {col_list} FROM market_data WHERE timestamp LIKE ?",
-            [f"{date_str}%"]
+            f"SELECT {col_list} FROM market_data WHERE timestamp >= ? AND timestamp < ?",
+            [start_str, end_str]
         )
         df_a = pd.DataFrame([list(row) for row in res_a.rows], columns=SCHEMA_COLS)
         md5_a = calculate_df_md5(df_a)
@@ -103,8 +117,8 @@ def ensure_database_parity(archive_client, mirror_client, date_str: str, logger=
 
         # 2. Fetch from Mirror
         res_m = mirror_client.execute(
-            f"SELECT {col_list} FROM market_data WHERE timestamp LIKE ?",
-            [f"{date_str}%"]
+            f"SELECT {col_list} FROM market_data WHERE timestamp >= ? AND timestamp < ?",
+            [start_str, end_str]
         )
         df_m = pd.DataFrame([list(row) for row in res_m.rows], columns=SCHEMA_COLS)
         md5_m = calculate_df_md5(df_m)
@@ -112,28 +126,29 @@ def ensure_database_parity(archive_client, mirror_client, date_str: str, logger=
         if logger: logger.log(f"   📊 Mirror : {len(df_m)} rows | MD5: {md5_m[:8]}")
 
         if md5_a == md5_m:
-            if logger: logger.log(f"   ✅ Parity Confirmed for {date_str}.")
+            if logger: logger.log(f"   ✅ Parity Confirmed for session {range_label}.")
             return True, f"✅ PARITY MATCH ({md5_a[:8]})"
 
         # 3. Repair if different
-        if logger: logger.log(f"   ⚠️ Desync detected for {date_str}. Repairing Mirror from Archive...")
+        if logger: logger.log(f"   ⚠️ Desync detected for session {range_label}. Repairing Mirror from Archive...")
         
-        # Delete existing data for that date in Mirror
-        mirror_client.execute("DELETE FROM market_data WHERE timestamp LIKE ?", [f"{date_str}%"])
+        # Delete existing session data in Mirror
+        mirror_client.execute(
+            "DELETE FROM market_data WHERE timestamp >= ? AND timestamp < ?",
+            [start_str, end_str]
+        )
         
         if not df_a.empty:
             # Sanitize for Turso (Replace NaN/Inf with None)
             import numpy as np
             import math
             
-            # Clean up the dataframe before tuple conversion
             numeric_cols = ['open', 'high', 'low', 'close', 'volume']
             for col in numeric_cols:
                 if col in df_a.columns:
                     df_a[col] = df_a[col].replace([np.inf, -np.inf], np.nan)
                     df_a[col] = df_a[col].where(df_a[col].notnull(), None)
 
-            # Batch Insert into Mirror
             rows_to_insert = []
             for row in df_a.itertuples(index=False):
                 sanitized_row = []
