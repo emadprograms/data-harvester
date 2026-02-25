@@ -66,6 +66,10 @@ jobs:
             sys.exit(0)
       continue-on-error: false
 
+    - name: Run Tests
+      run: |
+        python -m pytest tests/
+
     - name: Run Harvest CLI
       env:
         INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
