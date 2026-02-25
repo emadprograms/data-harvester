@@ -101,8 +101,8 @@ class TestMainSmoke:
         rogue_dt = target_dt - timedelta(days=1)
         
         mock_df = pd.DataFrame([
-            {"timestamp": target_dt, "symbol": "AAPL", "close": 150.0},
-            {"timestamp": rogue_dt, "symbol": "AAPL", "close": 149.0}
+            {"timestamp": target_dt, "symbol": "AAPL", "close": 150.0, "source": "MASSIVE"},
+            {"timestamp": rogue_dt, "symbol": "AAPL", "close": 149.0, "source": "MASSIVE"}
         ])
         mock_report = pd.DataFrame([{"Ticker": "AAPL", "Status": "✅ Massive", "Total": 2}])
         mock_run_harvest.return_value = (mock_df, mock_report)

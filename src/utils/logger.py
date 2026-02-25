@@ -27,19 +27,32 @@ class CLILogger:
         import pandas as pd
         from datetime import timedelta
         
-        self.log("\n📊 SESSION DATA DENSITY (8:01 PM ET -> 8:00 PM ET)")
-        self.log("Each bar represents 24 hours (48 slots, 30m each)")
+        # Compute actual session duration from the boundaries passed in
+        session_duration = end_utc - start_utc
+        total_minutes = int(session_duration.total_seconds() // 60)
+        if total_minutes <= 0:
+            return
+
+        # Scale slots to session length: 48 slots for a standard 24h session,
+        # more for longer sessions (e.g. 144 for a 72h Monday session)
+        mins_per_slot = 30
+        num_slots = max(1, total_minutes // mins_per_slot)
+        # Cap at 96 slots (2-day width) for readability; widen slots if needed
+        max_slots = 96
+        if num_slots > max_slots:
+            mins_per_slot = total_minutes // max_slots
+            num_slots = max_slots
+
+        hours = total_minutes / 60
+        self.log(f"\n📊 SESSION DATA DENSITY ({hours:.0f}h session, {num_slots} slots of {mins_per_slot}m)")
         
         symbols = sorted(df['symbol'].unique())
-        total_minutes = 1440
-        num_slots = 48
-        mins_per_slot = total_minutes // num_slots
 
         for symbol in symbols:
             symbol_df = df[df['symbol'] == symbol]
             found_ts = pd.to_datetime(symbol_df['timestamp']).dt.tz_localize(None)
             
-            # Remove TZ from start/end for comparison
+            # Remove TZ from start for comparison
             s_utc = start_utc.replace(tzinfo=None)
             
             bar = ""
@@ -50,4 +63,4 @@ class CLILogger:
                 bar += "█" if has_data else "░"
             
             row_count = len(symbol_df)
-            self.log(f"{symbol.ljust(8)} [{bar}] {row_count}/1440")
+            self.log(f"{symbol.ljust(10)} [{bar}] {row_count}/{total_minutes}")
