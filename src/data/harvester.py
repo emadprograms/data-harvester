@@ -127,16 +127,23 @@ def run_harvest_logic(tickers_to_harvest, start_dt, end_dt, db_map, logger, harv
              primary_src, primary_ticker = ("BINANCE", t_b or ticker)
              fallback_src, fallback_ticker = ("YAHOO", t_y or ticker)
 
-        # 2. Equities / ETFs (Split by Session Status)
+        # 2. Equities / ETFs (Split by Session Status and Availability)
         elif t_m or t_c:
-            if session_status == "COMPLETED":
-                # Previous Session -> Massive Only (Full Data)
-                primary_src, primary_ticker = ("MASSIVE", t_m or t_c)
+            if t_m and not t_c:
+                # Only Massive available
+                primary_src, primary_ticker = ("MASSIVE", t_m)
+                fallback_src, fallback_ticker = ("NONE", None)
+            elif t_c and not t_m:
+                # Only Capital available (e.g. UUP, XLC, XLV, etc.)
+                # We use CAPITAL always, regardless of session status.
+                primary_src, primary_ticker = ("CAPITAL", t_c)
                 fallback_src, fallback_ticker = ("NONE", None)
             else:
-                # Active Session -> Capital Only (Live Data, No Volume)
-                # Note: Capital has 16h lookback limit; we accept the tail.
-                primary_src, primary_ticker = ("CAPITAL", t_c)
+                # Both available -> Switch based on session status
+                if session_status == "COMPLETED":
+                    primary_src, primary_ticker = ("MASSIVE", t_m)
+                else:
+                    primary_src, primary_ticker = ("CAPITAL", t_c)
                 fallback_src, fallback_ticker = ("NONE", None)
                 
         # 3. Specials (Yahoo Only)

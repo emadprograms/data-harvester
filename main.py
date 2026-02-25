@@ -173,19 +173,20 @@ def main():
         
         # 4. Dual Write & Post-Harvest Parity
         if final_df is not None and not final_df.empty:
-            # CLEAN RANGE logic depends on Session Status
-            if session_status == "COMPLETED":
-                # For a COMPLETED session (Massive), we want to strictly overwrite the entire session
-                # to ensure no splicing. We clear the range first.
+            # --- TARGETED CLEANING ---
+            # Rule: We only clear data for symbols where we have fresh High-Quality data (MASSIVE/BINANCE).
+            # This prevents us from wiping Capital-only tickers (like UUP) which might not return data 
+            # if we are >16h past the session.
+            
+            hq_symbols = final_df[final_df['source'].isin(['MASSIVE', 'BINANCE'])]['symbol'].unique().tolist()
+            
+            if hq_symbols:
                 from src.database.operations import clear_market_data_for_range
-                logger.log(f"🧹 [COMPLETED] Clearing existing data for full session range before Massive commit...")
-                clear_market_data_for_range(archive_client, session_start_utc, session_end_utc, logger, "Archive")
-                clear_market_data_for_range(mirror_client, session_start_utc, session_end_utc, logger, "Mirror")
+                logger.log(f"🧹 High-Quality Replacement: Clearing {len(hq_symbols)} symbols before commit...")
+                clear_market_data_for_range(archive_client, session_start_utc, session_end_utc, logger, "Archive", symbols=hq_symbols)
+                clear_market_data_for_range(mirror_client, session_start_utc, session_end_utc, logger, "Mirror", symbols=hq_symbols)
             else:
-                # For an ACTIVE session (Capital), we are likely fetching the "tail" (recent 16h).
-                # We should NOT clear the whole range, as we might lose the "head" of the session 
-                # fetched earlier. We just Upsert/Replace.
-                logger.log(f"⤵️  [ACTIVE] Skipping clear. Appending/Updating Capital.com data...")
+                logger.log(f"⤵️  Incremental Mode: No High-Quality sources. Appending data without clearing...")
 
             if save_data_to_storage(final_df, logger, archive_client=archive_client, mirror_client=mirror_client):
                 logger.log(f"✅ Session data written to Archive & Mirror. Rows: {len(final_df)}")
