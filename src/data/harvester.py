@@ -47,7 +47,6 @@ def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, ma
 
     try:
         if source_name == "YAHOO":
-            from src.api.yahoo import fetch_yahoo_market_data
             raw = fetch_yahoo_market_data(specific_ticker, start_dt, end_dt, logger)
             if not raw.empty:
                 return normalize_yahoo_df(raw, specific_ticker), f"✅ Yahoo"
@@ -57,7 +56,6 @@ def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, ma
             if massive_provider:
                 raw = massive_provider.fetch_data(specific_ticker, start_dt, end_dt)
             else:
-                from src.api.massive import fetch_massive_data
                 raw = fetch_massive_data(specific_ticker, start_dt, end_dt, logger)
             
             if not raw.empty:
@@ -65,7 +63,6 @@ def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, ma
             return pd.DataFrame(), "❌ Massive Empty"
             
         elif source_name == "BINANCE":
-            from src.api.binance import fetch_binance_range
             raw = fetch_binance_range(specific_ticker, start_dt, end_dt, logger)
             if not raw.empty:
                 return raw, f"✅ Binance"
