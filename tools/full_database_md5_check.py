@@ -21,8 +21,9 @@ def main():
     try:
         # 1. Fetch ALL data from Archive
         print("📥 Fetching all records from ARCHIVE...")
+        col_list = ", ".join(SCHEMA_COLS)
         res_a = archive_client.execute(
-            "SELECT timestamp, symbol, open, high, low, close, volume, session FROM market_data"
+            f"SELECT {col_list} FROM market_data"
         )
         df_a = pd.DataFrame([list(row) for row in res_a.rows], columns=SCHEMA_COLS)
         print(f"   📊 Archive Total: {len(df_a)} rows.")
@@ -30,7 +31,7 @@ def main():
         # 2. Fetch ALL data from Mirror
         print("📥 Fetching all records from MIRROR...")
         res_m = mirror_client.execute(
-            "SELECT timestamp, symbol, open, high, low, close, volume, session FROM market_data"
+            f"SELECT {col_list} FROM market_data"
         )
         df_m = pd.DataFrame([list(row) for row in res_m.rows], columns=SCHEMA_COLS)
         print(f"   📊 Mirror Total : {len(df_m)} rows.")

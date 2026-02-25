@@ -36,7 +36,9 @@ def sync_from_archive():
         
         # 3. Sync Market Data
         print("📥 Fetching Market Data from Archive...")
-        res_data = archive.execute("SELECT timestamp, symbol, open, high, low, close, volume, session FROM market_data")
+        from src.config import SCHEMA_COLS
+        col_list = ", ".join(SCHEMA_COLS)
+        res_data = archive.execute(f"SELECT {col_list} FROM market_data")
         
         if res_data.rows:
             print(f"➡️ Inserting {len(res_data.rows)} market data rows into Mirror...")
@@ -47,8 +49,8 @@ def sync_from_archive():
             class DummyLogger:
                 def log(self, msg): print(f"      {msg.strip()}")
             
-            # Use REPLACE mode to ensure absolute parity
-            _save_to_client(mirror, rows_to_insert, logger=DummyLogger(), label="Mirror-Sync", mode="REPLACE")
+            # Note: _save_to_client expects rows with all SCHEMA_COLS columns now
+            _save_to_client(mirror, rows_to_insert, logger=DummyLogger(), label="Mirror-Sync")
             
         print("✅ Sync Complete.")
 
