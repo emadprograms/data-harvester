@@ -2,7 +2,7 @@ import os
 import discord
 from discord.ext import commands
 from discord import ui
-import requests
+import aiohttp
 import asyncio
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
@@ -92,28 +92,34 @@ async def trigger_github_harvest(interaction_or_ctx, date_str: str):
     data = {"ref": "main", "inputs": {"target_date": date_str}}
     
     try:
-        response = requests.post(url, headers=headers, json=data)
-        if response.status_code == 204:
-            run_url = None
-            runs_url = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/{WORKFLOW_FILENAME}/runs"
-            
-            # Wait loop to find the run link
-            for attempt in range(4):
-                await asyncio.sleep(2 + attempt)
-                try:
-                    r = requests.get(runs_url, headers=headers, params={"per_page": 1})
-                    if r.status_code == 200:
-                        runs = r.json().get("workflow_runs", [])
-                        if runs:
-                            run_url = runs[0].get("html_url")
-                            break
-                except: pass
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=data) as response:
+                if response.status == 204:
+                    run_url = None
+                    runs_url = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/{WORKFLOW_FILENAME}/runs"
+                    
+                    # Wait loop to find the run link
+                    for attempt in range(4):
+                        await asyncio.sleep(2 + attempt)
+                        try:
+                            async with session.get(runs_url, headers=headers, params={"per_page": 1}) as r:
+                                if r.status == 200:
+                                    json_data = await r.json()
+                                    runs = json_data.get("workflow_runs", [])
+                                    if runs:
+                                        run_url = runs[0].get("html_url")
+                                        break
+                        except: pass
 
-            link = f"\n\n🔗 [Monitor Progress](<{run_url or ACTIONS_URL}>) 📡⏱️"
-            await status_msg.edit(content=f"✅ **Harvest Triggered for {date_str}!**{link}")
-        else:
-            err = response.json().get("message", response.text)
-            await status_msg.edit(content=f"❌ **GitHub API Error:** `{err}`")
+                    link = f"\n\n🔗 [Monitor Progress](<{run_url or ACTIONS_URL}>) 📡⏱️"
+                    await status_msg.edit(content=f"✅ **Harvest Triggered for {date_str}!**{link}")
+                else:
+                    try:
+                        err_json = await response.json()
+                        err = err_json.get("message", "Unknown API error")
+                    except:
+                        err = await response.text()
+                    await status_msg.edit(content=f"❌ **GitHub API Error:** `{err}`")
     except Exception as e:
         await status_msg.edit(content=f"⚠️ **System Error:** `{str(e)}`")
 
@@ -182,6 +188,7 @@ async def on_ready():
     print(f'✅ Harvester Bot Online | Logged in as: {bot.user.name}')
 
 @bot.command(name="updatedata")
+@commands.cooldown(1, 10, commands.BucketType.user)
 async def update_data(ctx, date_indicator: str = None):
     """
     Triggers a data harvest.
@@ -199,6 +206,11 @@ async def update_data(ctx, date_indicator: str = None):
     else:
         # Direct trigger with validation
         await trigger_github_harvest(ctx, target_date)
+
+@update_data.error
+async def update_data_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏳ **Cooldown:** Please wait {error.retry_after:.1f} seconds before using this command again.", delete_after=5)
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN or not GITHUB_TOKEN:
