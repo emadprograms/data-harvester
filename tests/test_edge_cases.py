@@ -485,3 +485,218 @@ class TestDensitySummary:
         start = datetime(2026, 2, 19, 1, 0, 0, tzinfo=timezone.utc)
         end = datetime(2026, 2, 20, 1, 0, 0, tzinfo=timezone.utc)
         logger.print_density_summary(pd.DataFrame(), start, end)
+
+
+# ---------------------------------------------------------------------------
+# 11. calculate_df_md5 Must Not Mutate Input
+# ---------------------------------------------------------------------------
+class TestMd5NoMutation:
+
+    def test_calculate_df_md5_does_not_add_columns(self):
+        """calculate_df_md5 must NOT add columns to the caller's DataFrame."""
+        df = pd.DataFrame({
+            "timestamp": ["2026-02-18 15:00:00"],
+            "symbol": ["AAPL"],
+        })
+        original_cols = list(df.columns)
+        calculate_df_md5(df)
+        assert list(df.columns) == original_cols, \
+            f"calculate_df_md5 mutated input columns: {list(df.columns)} vs original {original_cols}"
+
+    def test_calculate_df_md5_does_not_modify_values(self):
+        """calculate_df_md5 must NOT modify existing values in the caller's DataFrame."""
+        df = pd.DataFrame({
+            "timestamp": ["2026-02-18 15:00:00"],
+            "symbol": ["AAPL"],
+            "open": [150.0], "high": [151.0], "low": [149.0],
+            "close": [150.5], "volume": [1000.0],
+            "session": ["REG"], "source": ["MASSIVE"],
+        })
+        original_csv = df.to_csv(index=False)
+        calculate_df_md5(df)
+        assert df.to_csv(index=False) == original_csv
+
+
+# ---------------------------------------------------------------------------
+# 12. save_data_to_storage Handles None Source
+# ---------------------------------------------------------------------------
+class TestNoneSourceHandling:
+
+    def test_none_source_does_not_crash(self):
+        """A row with source=None must not crash save_data_to_storage."""
+        mock_client = MagicMock()
+        rows = [("2026-02-18 15:00:00", "AAPL", 150, 151, 149, 150.5, 1000, "REG", "UNKNOWN")]
+        # This should not raise — the defensive handling converts None to 'UNKNOWN'
+        result = _save_to_client(mock_client, rows, MockLogger(), "Test")
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# 13. Health Alerts Skip Crypto Regardless of Source
+# ---------------------------------------------------------------------------
+class TestHealthAlertsCrypto:
+
+    def test_crypto_ticker_skips_prepost_even_with_yahoo_source(self):
+        """Crypto tickers (ending in USDT) must skip Pre/Post checks even on Yahoo fallback."""
+        from src.utils.discord import build_health_alerts
+        report = pd.DataFrame([{
+            "Ticker": "BTCUSDT", "Source": "FB-YAHOO", "Total": 100,
+            "Status": "✅", "Pre": 0, "Reg": 100, "Post": 0,
+        }])
+        # At hour 20, Pre+Reg+Post are all applicable.
+        # Without the fix, BTCUSDT would be flagged for Pre=0, Post=0
+        result = build_health_alerts(report, 20)
+        assert "BTCUSDT" not in result, \
+            f"Crypto ticker should be skipped in health alerts, got: {result}"
+
+    def test_equity_ticker_still_checked(self):
+        """Non-crypto tickers must still get Pre/Post health checks."""
+        from src.utils.discord import build_health_alerts
+        report = pd.DataFrame([{
+            "Ticker": "AAPL", "Source": "MASSIVE", "Total": 100,
+            "Status": "✅", "Pre": 0, "Reg": 100, "Post": 0,
+        }])
+        result = build_health_alerts(report, 20)
+        assert "AAPL" in result, \
+            f"Equity ticker should be flagged for missing Pre/Post, got: {result}"
+
+
+# ---------------------------------------------------------------------------
+# 14. Rollback Scope Includes Symbol Filter
+# ---------------------------------------------------------------------------
+class TestRollbackSymbolScope:
+
+    @patch("src.database.operations._save_to_client")
+    @patch("src.database.operations.get_archive_db_connection")
+    @patch("src.database.operations.get_mirror_db_connection")
+    def test_rollback_includes_symbol_filter(self, mock_mirror_conn, mock_archive_conn, mock_save):
+        """When mirror fails, archive rollback DELETE must include a symbol IN clause."""
+        mock_archive = MagicMock()
+        mock_mirror = MagicMock()
+        mock_archive_conn.return_value = mock_archive
+        mock_mirror_conn.return_value = mock_mirror
+
+        # First call (archive) succeeds, second call (mirror) fails
+        mock_save.side_effect = [True, False]
+
+        df = pd.DataFrame({
+            "timestamp": pd.to_datetime([
+                "2026-02-17 23:30:00",
+                "2026-02-18 15:00:00",
+            ], utc=True),
+            "symbol": ["AAPL", "AAPL"],
+            "open": [150.0, 151.0], "high": [151.0, 152.0],
+            "low": [149.0, 150.0], "close": [150.5, 151.5],
+            "volume": [1000.0, 2000.0],
+            "session": ["POST", "REG"],
+            "source": ["MASSIVE", "MASSIVE"],
+        })
+
+        result = save_data_to_storage(df, MockLogger(),
+                                       archive_client=mock_archive,
+                                       mirror_client=mock_mirror)
+        assert result is False
+
+        # Archive rollback should include symbol IN clause
+        rollback_calls = [c for c in mock_archive.execute.call_args_list
+                         if "DELETE" in str(c)]
+        assert len(rollback_calls) >= 1, "Expected rollback DELETE on archive"
+        rollback_query = str(rollback_calls[0])
+        assert "symbol IN" in rollback_query, \
+            f"Rollback should scope to symbols, got: {rollback_query}"
+
+
+# ---------------------------------------------------------------------------
+# 15. Database Health Grid
+# ---------------------------------------------------------------------------
+class TestDatabaseHealthGrid:
+
+    def test_grid_returns_empty_for_no_inventory(self):
+        """build_database_health_grid must return empty string for empty inventory."""
+        from src.utils.discord import build_database_health_grid
+        assert build_database_health_grid({}, [], 24) == ""
+
+    def test_grid_marks_missing_symbol(self):
+        """A symbol with 0 rows in DB must show the black ⬛ (zero) emoji."""
+        from src.utils.discord import build_database_health_grid
+        result = build_database_health_grid({}, ["AAPL"], 24)
+        assert "⬛" in result
+        assert "(0)" in result
+
+    def test_grid_marks_healthy_crypto(self):
+        """A crypto symbol with >=80% coverage must show green 🟩."""
+        from src.utils.discord import build_database_health_grid
+        # 24h session = 1440 expected minutes. 80% = 1152
+        result = build_database_health_grid({"BTCUSDT": 1300}, ["BTCUSDT"], 24)
+        assert "🟩" in result
+        assert "(1300)" in result
+
+    def test_grid_uses_equity_expected_for_non_crypto(self):
+        """Equity symbols use a fixed 960 expected count. 500/960 ≈ 52% → yellow 🟨."""
+        from src.utils.discord import build_database_health_grid
+        result = build_database_health_grid({"AAPL": 500}, ["AAPL"], 72)
+        assert "🟨" in result
+
+    def test_grid_orange_tier(self):
+        """Coverage between 15%-40% must show orange 🟧."""
+        from src.utils.discord import build_database_health_grid
+        # 200/960 ≈ 20.8% → orange
+        result = build_database_health_grid({"AAPL": 200}, ["AAPL"], 24)
+        assert "🟧" in result
+
+    def test_grid_red_tier(self):
+        """Coverage >0 but <15% must show red 🟥."""
+        from src.utils.discord import build_database_health_grid
+        # 10/960 ≈ 1% → red
+        result = build_database_health_grid({"AAPL": 10}, ["AAPL"], 24)
+        assert "🟥" in result
+
+    def test_grid_legend_present(self):
+        """Output must contain the legend line."""
+        from src.utils.discord import build_database_health_grid
+        result = build_database_health_grid({"AAPL": 500}, ["AAPL"], 24)
+        assert "🟩 >65%" in result
+        assert "⬛ 0" in result
+
+    def test_grid_truncates_long_output(self):
+        """Grid must truncate if grid_str exceeds 950 chars."""
+        from src.utils.discord import build_database_health_grid
+        symbols = [f"SYM{i:04d}" for i in range(100)]
+        counts = {s: 0 for s in symbols}
+        result = build_database_health_grid(counts, symbols, 24)
+        assert "truncated" in result
+
+
+# ---------------------------------------------------------------------------
+# 16. get_session_row_counts
+# ---------------------------------------------------------------------------
+class TestGetSessionRowCounts:
+
+    def test_returns_counts_per_symbol(self):
+        """get_session_row_counts must return {symbol: count} dict."""
+        from src.database.operations import get_session_row_counts
+        mock_client = MagicMock()
+        mock_res = MagicMock()
+        mock_res.rows = [("AAPL", 500), ("BTCUSDT", 1400)]
+        mock_client.execute.return_value = mock_res
+
+        start = datetime(2026, 2, 18, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 2, 19, 1, 0, 0, tzinfo=timezone.utc)
+        result = get_session_row_counts(mock_client, ["AAPL", "BTCUSDT"], start, end)
+        assert result == {"AAPL": 500, "BTCUSDT": 1400}
+
+    def test_returns_empty_dict_on_no_client(self):
+        """get_session_row_counts must return {} if client is None."""
+        from src.database.operations import get_session_row_counts
+        start = datetime(2026, 2, 18, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 2, 19, 1, 0, 0, tzinfo=timezone.utc)
+        assert get_session_row_counts(None, ["AAPL"], start, end) == {}
+
+    def test_returns_empty_dict_on_no_symbols(self):
+        """get_session_row_counts must return {} if symbols list is empty."""
+        from src.database.operations import get_session_row_counts
+        mock_client = MagicMock()
+        start = datetime(2026, 2, 18, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 2, 19, 1, 0, 0, tzinfo=timezone.utc)
+        assert get_session_row_counts(mock_client, [], start, end) == {}
+

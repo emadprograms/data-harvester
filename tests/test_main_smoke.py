@@ -46,6 +46,7 @@ class TestMainSmoke:
         assert mock_exit.call_args[0][0] == 1
         assert any("CRITICAL" in str(c) for c in mock_logger.log.call_args_list)
 
+    @patch("src.database.operations.get_session_row_counts")
     @patch("src.api.massive.MassiveProvider")
     @patch("src.utils.logger.CLILogger")
     @patch("src.infisical_manager.InfisicalManager")
@@ -74,6 +75,7 @@ class TestMainSmoke:
         mock_infisical_cls,
         mock_logger_cls,
         mock_massive_cls,
+        mock_get_row_counts,
         safe_test_date_str
     ):
         """Standard main() flow with full mocks to ensure wiring is correct."""
@@ -94,6 +96,9 @@ class TestMainSmoke:
         mock_mirror_conn.return_value = mock_mirror
         
         mock_get_map.return_value = {"AAPL": {"yahoo_ticker": None, "massive_ticker": "AAPL", "binance_ticker": None, "capital_ticker": "AAPL"}}
+        
+        # Mock the health grid query to return clean data 
+        mock_get_row_counts.return_value = {"AAPL": 500}
         
         # Create a DF with a target date row and a rogue row
         from datetime import date, timedelta
@@ -130,5 +135,9 @@ class TestMainSmoke:
         assert mock_save_storage.call_args.kwargs.get("mirror_client") is not None
         
         assert mock_discord_report.called
+        # Verify db_health_grid was passed to Discord report
+        discord_call_kwargs = mock_discord_report.call_args.kwargs
+        assert "db_health_grid" in discord_call_kwargs
+        
         assert mock_exit.called
         assert mock_exit.call_args[0][0] == 0

@@ -16,15 +16,6 @@ HEALTH_THRESHOLDS = {
     "Post": 20,   # POST: 4:00 PM – 8:00 PM ET
 }
 
-# Which sessions should have data based on the current ET hour
-SESSION_AVAILABILITY = {
-    4:  ["Pre"],
-    10: ["Pre"],
-    16: ["Pre", "Reg"],
-    20: ["Pre", "Reg", "Post"],
-}
-
-
 def build_health_alerts(report_df, now_et_hour):
     """
     Analyze the harvest report and flag tickers with suspiciously low candle counts
@@ -54,8 +45,10 @@ def build_health_alerts(report_df, now_et_hour):
             alerts.append(f"🚨 **{ticker:<10}** FAILED (0 Rows) ❌")
             continue
             
-        # Skip Pre/Post checks for 24/7 markets (Binance)
-        if "BINANCE" in source.upper():
+        # Skip Pre/Post checks for 24/7 markets (Binance / Crypto)
+        # Check both source AND ticker name to handle fallback scenarios
+        # (e.g. crypto falling back to Yahoo should still skip Pre/Post)
+        if "BINANCE" in source.upper() or ticker.endswith("USDT"):
             continue
 
         issues = []
@@ -104,21 +97,23 @@ def build_database_health_grid(db_counts, inventory_list, session_hours):
         # Calculate percentage of expected
         pct = (count / expected) * 100 if expected > 0 else 0
         
-        if pct >= 85:
-            emoji = "🟩" # Healthy
+        if pct >= 80:
+            emoji = "🟩" # Dark Green
+        elif pct >= 65:
+            emoji = "🟩" # Light Green (mapped to Green)
         elif pct >= 40:
-            emoji = "🟨" # Partial/Good
-        elif pct >= 10:
-            emoji = "🟧" # Low
+            emoji = "🟨" # Yellow
+        elif pct >= 15:
+            emoji = "🟧" # Orange
         elif count >= 1:
-            emoji = "🟥" # Sparse
+            emoji = "🟥" # Red
         else:
-            emoji = "⬛" # Missing
+            emoji = "⬛" # Black
             
-        grid.append(f"`{symbol:<8}` {emoji}")
+        grid.append(f"`{symbol:<8}` {emoji} `({count})`")
         
-    # Group into columns (4 columns to be compact)
-    columns = 4
+    # Group into columns (2 columns to fit the row counts)
+    columns = 2
     rows = []
     for i in range(0, len(grid), columns):
         row = " | ".join(grid[i:i+columns])
@@ -126,10 +121,10 @@ def build_database_health_grid(db_counts, inventory_list, session_hours):
         
     grid_str = "\n".join(rows)
     
-    if len(grid_str) > 900:
-        grid_str = grid_str[:850] + "\n... (truncated)"
+    if len(grid_str) > 950:
+        grid_str = grid_str[:900] + "\n... (truncated)"
         
-    legend = "🟩 >85% | 🟨 >40% | 🟧 >10% | 🟥 Sparse | ⬛ 0"
+    legend = "🟩 >65% | 🟨 >40% | 🟧 >15% | 🟥 >0% | ⬛ 0"
     return f"{legend}\n{grid_str}"
 
 def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows,

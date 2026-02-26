@@ -40,6 +40,9 @@ def calculate_df_md5(df: pd.DataFrame) -> str:
     if df.empty:
         return ""
     
+    # Work on a copy to avoid mutating the caller's DataFrame
+    df = df.copy()
+    
     # Target columns for hash consistency (Now including source/session for 9-column parity)
     target_cols = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume', 'session', 'source']
     

@@ -2,6 +2,14 @@ import pytest
 from datetime import datetime, timedelta, date, timezone
 from src.config import US_EASTERN, UTC
 
+@pytest.fixture(autouse=True)
+def reset_binance_domain():
+    """Reset the Binance module-level global between tests to prevent leakage."""
+    import src.api.binance as binance_mod
+    original = binance_mod.WORKING_BINANCE_DOMAIN
+    yield
+    binance_mod.WORKING_BINANCE_DOMAIN = original
+
 @pytest.fixture
 def safe_test_date():
     """Returns a recent trading day (not a weekend) within the last 30 days."""

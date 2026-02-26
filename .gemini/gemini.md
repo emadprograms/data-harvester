@@ -13,7 +13,7 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 - **Database**: Turso (libsql) with a Dual-Write strategy (Archive + Mirror)
 - **Secrets Management**: Infisical SDK (`infisicalsdk`)
 - **APIs**: Polygon.io (Massive), Capital.com, Binance, Yahoo Finance
-- **Observability**: Discord Webhooks for health reports, alerts, and actual Database Health Grids (visual representation of session data coverage per symbol, dynamically adjusted for crypto 24/7 vs equities 16-hour sessions).
+- **Observability**: Discord Webhooks for health reports, alerts, and actual Database Health Grids (visual representation of session data coverage per symbol using a 5-step square emoji scale and row counts: 🟩 >65%, 🟨 >40%, 🟧 >15%, 🟥 >0%, ⬛ 0). Dynamically adjusted for crypto 24/7 vs equities 16-hour sessions.
 
 ### Architecture
 - **Market Session Mandate**: Data is harvested based on a strict **Market Session** definition:
