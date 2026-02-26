@@ -206,3 +206,27 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
         if own_mirror and mirror_client:
             try: mirror_client.close()
             except: pass
+
+def get_session_row_counts(client, symbols, start_utc: datetime, end_utc: datetime):
+    """Returns a dictionary of symbol -> row count for the specified session range in the DB."""
+    if not client or not symbols:
+        return {}
+    
+    start_str = start_utc.strftime('%Y-%m-%d %H:%M:%S')
+    end_str = end_utc.strftime('%Y-%m-%d %H:%M:%S')
+    placeholders = ",".join(["?"] * len(symbols))
+    
+    query = f"""
+        SELECT symbol, COUNT(*) 
+        FROM market_data 
+        WHERE timestamp >= ? AND timestamp < ? AND symbol IN ({placeholders})
+        GROUP BY symbol
+    """
+    params = [start_str, end_str] + list(symbols)
+    
+    try:
+        res = client.execute(query, params)
+        return {row[0]: row[1] for row in res.rows}
+    except Exception:
+        return {}
+

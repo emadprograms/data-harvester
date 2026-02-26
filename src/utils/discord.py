@@ -81,10 +81,60 @@ def build_health_alerts(report_df, now_et_hour):
 
     return f"{header}```\n{body}\n```"
 
+def build_database_health_grid(db_counts, inventory_list, session_hours):
+    """
+    Builds a visual grid representing the actual database data coverage for the targeted session.
+    Adjusts expectations based on asset type (Crypto vs Equities).
+    """
+    if not inventory_list:
+        return ""
+        
+    grid = []
+    sorted_inventory = sorted(inventory_list)
+    
+    crypto_expected = session_hours * 60
+    equity_expected = 960  # Approx 16 hours (Pre+Reg+Post) of actual market data per trading day
+    
+    for symbol in sorted_inventory:
+        count = db_counts.get(symbol, 0)
+        
+        # Determine expected count
+        expected = crypto_expected if symbol.endswith("USDT") else equity_expected
+        
+        # Calculate percentage of expected
+        pct = (count / expected) * 100 if expected > 0 else 0
+        
+        if pct >= 85:
+            emoji = "🟢" # Healthy
+        elif pct >= 40:
+            emoji = "🟩" # Partial/Good
+        elif pct >= 10:
+            emoji = "🟨" # Low
+        elif count >= 1:
+            emoji = "🟧" # Sparse
+        else:
+            emoji = "🔴" # Missing
+            
+        grid.append(f"`{symbol:<8}` {emoji}")
+        
+    # Group into columns (4 columns to be compact)
+    columns = 4
+    rows = []
+    for i in range(0, len(grid), columns):
+        row = " | ".join(grid[i:i+columns])
+        rows.append(row)
+        
+    grid_str = "\n".join(rows)
+    
+    if len(grid_str) > 900:
+        grid_str = grid_str[:850] + "\n... (truncated)"
+        
+    legend = "🟢 >85% | 🟩 >40% | 🟨 >10% | 🟧 Sparse | 🔴 0"
+    return f"{legend}\n{grid_str}"
 
 def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows,
                                 file_path=None, health_alerts="", integrity_pre="", integrity_post="", 
-                                critical_errors=""):
+                                critical_errors="", db_health_grid=""):
     """
     Sends a cleaned-up harvest dashboard to Discord using Embeds.
     The dashboard is sent first, followed by the log file as a separate message.
@@ -126,6 +176,10 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
         
         embed["fields"].append({"name": "🔒 Pre-Harvest Parity", "value": f"`{val_pre}`", "inline": True})
         embed["fields"].append({"name": "🔒 Post-Harvest Parity", "value": f"`{val_post}`", "inline": True})
+
+        # Database Health Grid Field (New)
+        if db_health_grid:
+            embed["fields"].append({"name": "🗄️ Actual Database Health (Session Coverage)", "value": db_health_grid, "inline": False})
 
         # Critical Errors Field (if any)
         if critical_errors:

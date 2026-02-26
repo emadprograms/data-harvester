@@ -227,6 +227,20 @@ def main():
             now_et = datetime.now(US_EASTERN)
             health_alerts = build_health_alerts(report_df, now_et.hour)
             
+            db_health_grid = ""
+            if not report_df.empty and 'session_start_utc' in locals() and 'session_end_utc' in locals():
+                try:
+                    from src.database.operations import get_session_row_counts
+                    from src.utils.discord import build_database_health_grid
+                    
+                    session_hours = (session_end_utc - session_start_utc).total_seconds() / 3600
+                    inventory_list = report_df['Ticker'].tolist()
+                    db_counts = get_session_row_counts(archive_client, inventory_list, session_start_utc, session_end_utc)
+                    
+                    db_health_grid = build_database_health_grid(db_counts, inventory_list, session_hours)
+                except Exception as e:
+                    logger.log(f"⚠️ Could not generate Database Health Grid: {e}")
+            
             if os.getenv("SKIP_DISCORD") == "true":
                 logger.log("📢 SKIP_DISCORD is true. Skipping Discord notification.")
             else:
@@ -238,7 +252,8 @@ def main():
                     health_alerts=health_alerts,
                     integrity_pre=integrity_pre_msg,
                     integrity_post=integrity_post_msg,
-                    critical_errors=critical_errors
+                    critical_errors=critical_errors,
+                    db_health_grid=db_health_grid
                 )
 
         if archive_client:
