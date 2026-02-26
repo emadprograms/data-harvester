@@ -105,15 +105,15 @@ def build_database_health_grid(db_counts, inventory_list, session_hours):
         pct = (count / expected) * 100 if expected > 0 else 0
         
         if pct >= 85:
-            emoji = "🟢" # Healthy
+            emoji = "🟩" # Healthy
         elif pct >= 40:
-            emoji = "🟩" # Partial/Good
+            emoji = "🟨" # Partial/Good
         elif pct >= 10:
-            emoji = "🟨" # Low
+            emoji = "🟧" # Low
         elif count >= 1:
-            emoji = "🟧" # Sparse
+            emoji = "🟥" # Sparse
         else:
-            emoji = "🔴" # Missing
+            emoji = "⬛" # Missing
             
         grid.append(f"`{symbol:<8}` {emoji}")
         
@@ -129,7 +129,7 @@ def build_database_health_grid(db_counts, inventory_list, session_hours):
     if len(grid_str) > 900:
         grid_str = grid_str[:850] + "\n... (truncated)"
         
-    legend = "🟢 >85% | 🟩 >40% | 🟨 >10% | 🟧 Sparse | 🔴 0"
+    legend = "🟩 >85% | 🟨 >40% | 🟧 >10% | 🟥 Sparse | ⬛ 0"
     return f"{legend}\n{grid_str}"
 
 def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows,
