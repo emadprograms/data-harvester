@@ -610,60 +610,77 @@ class TestRollbackSymbolScope:
 # 15. Database Health Grid
 # ---------------------------------------------------------------------------
 class TestDatabaseHealthGrid:
+    
+    @pytest.fixture
+    def session_bounds(self):
+        # Default 24h session
+        start = datetime(2026, 2, 18, 1, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 2, 19, 1, 0, 0, tzinfo=timezone.utc)
+        return start, end
 
-    def test_grid_returns_empty_for_no_inventory(self):
+    def test_grid_returns_empty_for_no_inventory(self, session_bounds):
         """build_database_health_grid must return empty string for empty inventory."""
         from src.utils.discord import build_database_health_grid
-        assert build_database_health_grid({}, [], 24) == ""
+        start, end = session_bounds
+        assert build_database_health_grid({}, [], start, end) == ""
 
-    def test_grid_marks_missing_symbol(self):
+    def test_grid_marks_missing_symbol(self, session_bounds):
         """A symbol with 0 rows in DB must show the black ⬛ (zero) emoji."""
         from src.utils.discord import build_database_health_grid
-        result = build_database_health_grid({}, ["AAPL"], 24)
+        start, end = session_bounds
+        result = build_database_health_grid({}, ["AAPL"], start, end)
         assert "⬛" in result
         assert "(0)" in result
 
-    def test_grid_marks_healthy_crypto(self):
-        """A crypto symbol with >=80% coverage must show green 🟩."""
+    def test_grid_marks_healthy_crypto(self, session_bounds):
+        """A crypto symbol with >=65% coverage must show green 🟩."""
         from src.utils.discord import build_database_health_grid
+        start, end = session_bounds
         # 24h session = 1440 expected minutes. 80% = 1152
-        result = build_database_health_grid({"BTCUSDT": 1300}, ["BTCUSDT"], 24)
+        result = build_database_health_grid({"BTCUSDT": 1300}, ["BTCUSDT"], start, end)
         assert "🟩" in result
         assert "(1300)" in result
 
     def test_grid_uses_equity_expected_for_non_crypto(self):
-        """Equity symbols use a fixed 960 expected count. 500/960 ≈ 52% → yellow 🟨."""
+        """Equity symbols use a fixed 960 expected count for completed sessions. 500/960 ≈ 52% → yellow 🟨."""
         from src.utils.discord import build_database_health_grid
-        result = build_database_health_grid({"AAPL": 500}, ["AAPL"], 72)
+        # Simulate 72h weekend session
+        start = datetime(2026, 2, 13, 1, 0, 0, tzinfo=timezone.utc) # Friday
+        end = datetime(2026, 2, 16, 1, 0, 0, tzinfo=timezone.utc)   # Monday
+        result = build_database_health_grid({"AAPL": 500}, ["AAPL"], start, end)
         assert "🟨" in result
 
-    def test_grid_orange_tier(self):
+    def test_grid_orange_tier(self, session_bounds):
         """Coverage between 15%-40% must show orange 🟧."""
         from src.utils.discord import build_database_health_grid
+        start, end = session_bounds
         # 200/960 ≈ 20.8% → orange
-        result = build_database_health_grid({"AAPL": 200}, ["AAPL"], 24)
+        result = build_database_health_grid({"AAPL": 200}, ["AAPL"], start, end)
         assert "🟧" in result
 
-    def test_grid_red_tier(self):
+    def test_grid_red_tier(self, session_bounds):
         """Coverage >0 but <15% must show red 🟥."""
         from src.utils.discord import build_database_health_grid
+        start, end = session_bounds
         # 10/960 ≈ 1% → red
-        result = build_database_health_grid({"AAPL": 10}, ["AAPL"], 24)
+        result = build_database_health_grid({"AAPL": 10}, ["AAPL"], start, end)
         assert "🟥" in result
 
-    def test_grid_legend_present(self):
+    def test_grid_legend_present(self, session_bounds):
         """Output must contain the legend line."""
         from src.utils.discord import build_database_health_grid
-        result = build_database_health_grid({"AAPL": 500}, ["AAPL"], 24)
+        start, end = session_bounds
+        result = build_database_health_grid({"AAPL": 500}, ["AAPL"], start, end)
         assert "🟩 >65%" in result
         assert "⬛ 0" in result
 
-    def test_grid_truncates_long_output(self):
+    def test_grid_truncates_long_output(self, session_bounds):
         """Grid must truncate if grid_str exceeds 950 chars."""
         from src.utils.discord import build_database_health_grid
+        start, end = session_bounds
         symbols = [f"SYM{i:04d}" for i in range(100)]
         counts = {s: 0 for s in symbols}
-        result = build_database_health_grid(counts, symbols, 24)
+        result = build_database_health_grid(counts, symbols, start, end)
         assert "truncated" in result
 
 

@@ -74,10 +74,11 @@ def build_health_alerts(report_df, now_et_hour):
 
     return f"{header}```\n{body}\n```"
 
-def build_database_health_grid(db_counts, inventory_list, session_hours):
+def build_database_health_grid(db_counts, inventory_list, session_start_utc, session_end_utc, is_active_session=False):
     """
     Builds a visual grid representing the actual database data coverage for the targeted session.
-    Adjusts expectations based on asset type (Crypto vs Equities).
+    Adjusts expectations dynamically based on elapsed time if the session is active.
+    Follows a strict 5-step square emoji scale.
     """
     if not inventory_list:
         return ""
@@ -85,34 +86,83 @@ def build_database_health_grid(db_counts, inventory_list, session_hours):
     grid = []
     sorted_inventory = sorted(inventory_list)
     
-    crypto_expected = session_hours * 60
-    equity_expected = 960  # Approx 16 hours (Pre+Reg+Post) of actual market data per trading day
+    now_utc = datetime.now(timezone.utc)
     
+    # --- DYNAMIC EXPECTATION CALCULATION ---
+    # Total minutes in the session range
+    total_session_mins = int((session_end_utc - session_start_utc).total_seconds() // 60)
+    
+    # If the session is complete (or we are past its end time), use the full duration.
+    # Otherwise, use the elapsed time from the start of the session to *now*.
+    if is_active_session and now_utc < session_end_utc:
+        # Cap elapsed time at the session bounds
+        actual_end = max(session_start_utc, now_utc)
+    else:
+        actual_end = session_end_utc
+        
+    # Crypto: Expects 1 candle per minute, 24/7.
+    elapsed_crypto_mins = int((actual_end - session_start_utc).total_seconds() // 60)
+    crypto_expected = max(1, elapsed_crypto_mins)
+
+    # Equities: Only trade 16 hours a day (4:00 AM ET to 8:00 PM ET).
+    # We must calculate how many "trading minutes" have actually passed in the requested window.
+    import pytz
+    eastern = pytz.timezone('US/Eastern')
+    
+    # Walk through the session minute by minute (or hour by hour) to count valid trading minutes.
+    # Since sessions are exactly 8 PM to 8 PM ET (1440 mins), we can optimize this.
+    # A full normal 24h session has exactly 960 trading minutes.
+    # If it's a 72h weekend session (Friday 8 PM to Monday 8 PM), only Monday has trading minutes.
+    # To keep it simple and accurate dynamically:
+    
+    equity_expected = 0
+    if not is_active_session:
+        # Completed session: Assume max possible for the session type.
+        # A standard session has 960. We use 960 as the baseline for "100% full".
+        equity_expected = 960
+    else:
+        # Active session: We need to know how many trading minutes have passed since the session *started*.
+        # The session starts at 8:00 PM ET (which is closed). Trading begins at 4:00 AM ET the *next* day.
+        # So we just convert actual_end to ET and see how far into the trading day we are.
+        end_et = actual_end.astimezone(eastern)
+        
+        # Determine the target trading day (the day the session ends on)
+        trading_day = session_end_utc.astimezone(eastern).date()
+        
+        start_of_trading = eastern.localize(datetime.combine(trading_day, datetime.strptime("04:00", "%H:%M").time()))
+        end_of_trading = eastern.localize(datetime.combine(trading_day, datetime.strptime("20:00", "%H:%M").time()))
+        
+        if end_et < start_of_trading:
+            equity_expected = 1 # Prevent div by zero, market hasn't opened yet
+        elif end_et > end_of_trading:
+            equity_expected = 960
+        else:
+            equity_expected = max(1, int((end_et - start_of_trading).total_seconds() // 60))
+
+
     for symbol in sorted_inventory:
         count = db_counts.get(symbol, 0)
         
-        # Determine expected count
-        expected = crypto_expected if symbol.endswith("USDT") else equity_expected
+        is_crypto = symbol.endswith("USDT") or "PAXG" in symbol or symbol == "UUP"
+        expected = crypto_expected if is_crypto else equity_expected
         
         # Calculate percentage of expected
         pct = (count / expected) * 100 if expected > 0 else 0
         
-        if pct >= 80:
-            emoji = "🟩" # Dark Green
-        elif pct >= 65:
-            emoji = "🟩" # Light Green (mapped to Green)
+        if pct >= 65:
+            emoji = "🟩" 
         elif pct >= 40:
-            emoji = "🟨" # Yellow
+            emoji = "🟨" 
         elif pct >= 15:
-            emoji = "🟧" # Orange
-        elif count >= 1:
-            emoji = "🟥" # Red
+            emoji = "🟧" 
+        elif count > 0:
+            emoji = "🟥" 
         else:
-            emoji = "⬛" # Black
+            emoji = "⬛" 
             
         grid.append(f"`{symbol:<8}` {emoji} `({count})`")
         
-    # Group into columns (2 columns to fit the row counts)
+    # Group into columns
     columns = 2
     rows = []
     for i in range(0, len(grid), columns):

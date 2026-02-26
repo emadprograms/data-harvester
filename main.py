@@ -233,11 +233,11 @@ def main():
                     from src.database.operations import get_session_row_counts
                     from src.utils.discord import build_database_health_grid
                     
-                    session_hours = (session_end_utc - session_start_utc).total_seconds() / 3600
                     inventory_list = report_df['Ticker'].tolist()
                     db_counts = get_session_row_counts(archive_client, inventory_list, session_start_utc, session_end_utc)
                     
-                    db_health_grid = build_database_health_grid(db_counts, inventory_list, session_hours)
+                    is_active = session_status == "ACTIVE" if 'session_status' in locals() else False
+                    db_health_grid = build_database_health_grid(db_counts, inventory_list, session_start_utc, session_end_utc, is_active_session=is_active)
                 except Exception as e:
                     logger.log(f"⚠️ Could not generate Database Health Grid: {e}")
             
