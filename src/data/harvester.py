@@ -73,9 +73,33 @@ def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, ma
             now_utc = datetime.now(timezone.utc)
             lookback_limit = now_utc - timedelta(hours=16)
             
-            if start_dt < lookback_limit:
-                log_event(f"⚠️ Skipping Capital.com: start_dt ({start_dt}) is older than 16h limit.")
+            if end_dt <= lookback_limit:
+                log_event(f"⚠️ Skipping Capital.com: end_dt ({end_dt}) is older than 16h limit.")
                 return pd.DataFrame(), "❌ Beyond 16h Window"
+            
+            if start_dt < lookback_limit:
+                log_event(f"⚠️ Notice: Data for {specific_ticker} wasn't fetched from the start of the session (clipped to 16h limit).")
+                # Check if we have data for the missing period
+                missing_start_str = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+                missing_end_str = lookback_limit.strftime('%Y-%m-%d %H:%M:%S')
+                has_missing_data = False
+                try:
+                    from src.database.connection import get_archive_db_connection
+                    client = get_archive_db_connection()
+                    if client:
+                        res = client.execute(
+                            "SELECT 1 FROM market_data WHERE symbol = ? AND timestamp >= ? AND timestamp < ? LIMIT 1",
+                            [specific_ticker, missing_start_str, missing_end_str]
+                        )
+                        has_missing_data = len(res.rows) > 0
+                        client.close()
+                except Exception as e:
+                    pass
+                
+                if has_missing_data:
+                    log_event(f"   ✅ Database ALREADY HAS data for the missing period ({missing_start_str} to {missing_end_str}).")
+                else:
+                    log_event(f"   ❌ Database is MISSING data for the period ({missing_start_str} to {missing_end_str}).")
 
             from src.api.capital import fetch_capital_data
             raw = fetch_capital_data(specific_ticker, start_dt, end_dt, logger)

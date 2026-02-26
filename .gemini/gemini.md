@@ -22,6 +22,7 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
     - **Roll-Forward Logic**: If a target date falls on a weekend or holiday, it automatically rolls forward to the next valid trading day (e.g., a Saturday run targets the Monday session).
 - **Session-Based Sourcing**:
     - **Active Session (Current)**: Uses **Capital.com** (Live Data). No volume. **Append/Update Strategy** (No clear) to preserve early-session data.
+        - *16-Hour Tail Fetching*: Capital.com only provides the last 16 hours of data. If a session is longer than 16 hours, the system fetches the "tail" (what is available up to the end of the session). Users are notified of the clipped start, and the system actively checks the database to confirm if the missing early-session data is already present.
     - **Previous Session (Completed)**: Uses **Massive** (Polygon.io). Full Data. **Targeted Clean & Replace Strategy**.
 - **Targeted Cleaning**: Before committing, the system only performs a surgical `DELETE` for the **specific symbols** arriving with high-fidelity data (`MASSIVE`, `BINANCE`). Lower-tier data (Capital/Yahoo) is stacked incrementally without wiping existing records.
 - **Source-Tiering Protection**: The database enforces a "Quality-First" overwrite policy via the `source` column. Data from **High-Quality** sources can never be overwritten by lower-tier sources for the same timestamp.
