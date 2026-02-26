@@ -186,10 +186,12 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
                 all_timestamps = [row[0] for row in rows_to_insert]
                 min_ts = min(all_timestamps)
                 max_ts = max(all_timestamps)
+                symbols = list(set([row[1] for row in rows_to_insert]))
+                placeholders = ",".join(["?"] * len(symbols))
                 if logger: logger.log(f"   ⚠️ Mirror failed. Rolling back Archive for range {min_ts} to {max_ts}...")
                 archive_client.execute(
-                    "DELETE FROM market_data WHERE timestamp >= ? AND timestamp <= ?",
-                    [min_ts, max_ts]
+                    f"DELETE FROM market_data WHERE timestamp >= ? AND timestamp <= ? AND symbol IN ({placeholders})",
+                    [min_ts, max_ts] + symbols
                 )
             except: pass
             return False
