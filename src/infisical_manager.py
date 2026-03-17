@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+
 class InfisicalManager:
     _instance = None
     _cache_lock = threading.Lock()
@@ -21,16 +22,16 @@ class InfisicalManager:
     def __init__(self):
         if getattr(self, '_initialized', False):
             return
-        
+
         self.client = None
         self.is_connected = False
         self._secrets_cache = {}
-        
+
         # Load from Env or Secrets file
         client_id = os.getenv("INFISICAL_CLIENT_ID")
         client_secret = os.getenv("INFISICAL_CLIENT_SECRET")
         self.project_id = os.getenv("INFISICAL_PROJECT_ID")
-        
+
         if not client_id:
             try:
                 # Attempt to load from .streamlit/secrets.toml if env vars are missing
@@ -47,12 +48,13 @@ class InfisicalManager:
         if client_id and client_secret and self.project_id:
             try:
                 # Initialize Infisical Client
-                self.client = InfisicalSDKClient(host="https://app.infisical.com")
+                self.client = InfisicalSDKClient(
+                    host="https://app.infisical.com")
                 self.client.auth.universal_auth.login(
                     client_id=client_id,
                     client_secret=client_secret
                 )
-                
+
                 self.is_connected = True
                 self._initialized = True
                 print("✅ Infisical Connected")
@@ -60,19 +62,23 @@ class InfisicalManager:
                 print(f"❌ Infisical Connection Failed: {e}")
         else:
             missing = []
-            if not client_id: missing.append("INFISICAL_CLIENT_ID")
-            if not client_secret: missing.append("INFISICAL_CLIENT_SECRET")
-            if not self.project_id: missing.append("INFISICAL_PROJECT_ID")
-            print(f"❌ Infisical Credentials not found. Missing: {', '.join(missing)}")
+            if not client_id:
+                missing.append("INFISICAL_CLIENT_ID")
+            if not client_secret:
+                missing.append("INFISICAL_CLIENT_SECRET")
+            if not self.project_id:
+                missing.append("INFISICAL_PROJECT_ID")
+            print(
+                f"❌ Infisical Credentials not found. Missing: {', '.join(missing)}")
             print(f"   Set them as environment variables or in .streamlit/secrets.toml")
 
     def get_secret(self, secret_name):
-        if not self.is_connected: 
+        if not self.is_connected:
             return None
-        
+
         if secret_name in self._secrets_cache:
             return self._secrets_cache[secret_name]
-            
+
         try:
             secret = self.client.secrets.get_secret_by_name(
                 secret_name=secret_name,
@@ -81,7 +87,7 @@ class InfisicalManager:
                 secret_path="/"
             )
             # NOTE: New SDK uses secretValue attribute
-            val = secret.secretValue 
+            val = secret.secretValue
             self._secrets_cache[secret_name] = val
             return val
         except Exception:
@@ -91,7 +97,7 @@ class InfisicalManager:
         """Retrieves all Polygon/Massive API keys matching the 'massive-' prefix."""
         if not self.is_connected:
             return []
-            
+
         try:
             # List all secrets to find those matching 'massive-'
             response = self.client.secrets.list_secrets(
@@ -99,12 +105,12 @@ class InfisicalManager:
                 environment_slug="dev",
                 secret_path="/"
             )
-            
+
             keys = []
             for s in response.secrets:
                 if s.secretKey.startswith("massive-") or s.secretKey == "massive_api_key":
                     keys.append(s.secretValue)
-            
+
             return keys
         except Exception as e:
             print(f"⚠️ Error fetching Massive keys: {e}")
@@ -121,7 +127,7 @@ class InfisicalManager:
         """Retrieves Turso Stock Data Archive Mirror 1 credentials."""
         return {
             "url": self.get_secret("turso_hamzaarshadalam_stockdataarchivemirror1_db_url"),
-            "token": self.get_secret("turso_hamzarshadalam_stockdataarchivemirror1_auth_token")
+            "token": self.get_secret("turso_hamzaarshadalam_stockdataarchivemirror1_auth_token")
         }
 
     def get_capital_credentials(self) -> dict:
