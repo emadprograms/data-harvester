@@ -21,17 +21,16 @@ from pandas.tseries.holiday import USFederalHolidayCalendar
 
 def main():
     """
-    Main entry point for the dual-database data harvesting engine.
+    Main entry point for the single-database data harvesting engine.
+    Writes only to the Archive database. Mirror is synced separately
+    via the sync_mirror GitHub Actions workflow.
     """
     logger = None
     archive_client = None
-    mirror_client = None
     target_date = None
     final_df = None
     report_df = None
     critical_errors = ""
-    integrity_pre_msg = "Skipped"
-    integrity_post_msg = "Skipped"
     log_filename = f"logs/harvest_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
     
     try:
@@ -44,20 +43,18 @@ def main():
         if discord_webhook:
             os.environ["DISCORD_WEBHOOK_URL"] = discord_webhook
             
-        # 0. Initialize Database Clients
-        from src.database.connection import get_archive_db_connection, get_mirror_db_connection
+        # 0. Initialize Database Client (Archive Only)
+        from src.database.connection import get_archive_db_connection
         archive_client = get_archive_db_connection()
-        mirror_client = get_mirror_db_connection()
 
-        if not archive_client or not mirror_client:
-            msg = "❌ CRITICAL: Could not connect to Dual Turso setup."
+        if not archive_client:
+            msg = "❌ CRITICAL: Could not connect to Turso Archive."
             logger.log(msg)
             critical_errors += f"- {msg}\n"
             return # Jump to finally for notification
 
         # Initialize database schema
         init_db(archive_client)
-        init_db(mirror_client)
         
         # Parse command line arguments
         parser = argparse.ArgumentParser(description="Data Harvester CLI (Market Session Logic)")
@@ -138,15 +135,7 @@ def main():
         logger.log(f"🌍 Session Range (UTC): {session_start_utc.strftime('%Y-%m-%d %H:%M')} to {session_end_utc.strftime('%Y-%m-%d %H:%M')}")
         logger.log(f"⚙️  Harvest Mode: {harvest_mode_label}")
 
-        # 1. Pre-Harvest Parity Check (Session-Scoped)
-        from src.utils.integrity import ensure_database_parity
-        logger.log(f"🔍 Pre-Harvest Parity Check for session {session_start_utc.strftime('%Y-%m-%d %H:%M')} → {session_end_utc.strftime('%Y-%m-%d %H:%M')} UTC...")
-        ok_pre, msg_pre = ensure_database_parity(archive_client, mirror_client, session_start_utc, session_end_utc, logger)
-        integrity_pre_msg = msg_pre
-        if not ok_pre:
-            critical_errors += f"- Pre-Harvest Parity Failure: {msg_pre}\n"
-
-        # 2. Fetch Inventory
+        # 1. Fetch Inventory
         symbol_map = get_symbol_map_from_db(archive_client)
         inventory_list = list(symbol_map.keys())
         
@@ -156,7 +145,7 @@ def main():
             critical_errors += f"- {msg}\n"
             return
             
-        # 3. Harvest
+        # 2. Harvest
         logger.log(f"🚀 Starting Harvest for {len(inventory_list)} symbols...")
         massive_provider = MassiveProvider(logger)
         
@@ -171,7 +160,7 @@ def main():
             session_status=session_status
         )
         
-        # 4. Dual Write & Post-Harvest Parity
+        # 3. Write to Archive
         if final_df is not None and not final_df.empty:
             # --- TARGETED CLEANING ---
             # Rule: We only clear data for symbols where we have fresh High-Quality data (MASSIVE/BINANCE).
@@ -184,27 +173,19 @@ def main():
                 from src.database.operations import clear_market_data_for_range
                 logger.log(f"🧹 High-Quality Replacement: Clearing {len(hq_symbols)} symbols before commit...")
                 clear_market_data_for_range(archive_client, session_start_utc, session_end_utc, logger, "Archive", symbols=hq_symbols)
-                clear_market_data_for_range(mirror_client, session_start_utc, session_end_utc, logger, "Mirror", symbols=hq_symbols)
             else:
                 logger.log(f"⤵️  Incremental Mode: No High-Quality sources. Appending data without clearing...")
 
-            if save_data_to_storage(final_df, logger, archive_client=archive_client, mirror_client=mirror_client):
-                logger.log(f"✅ Session data written to Archive & Mirror. Rows: {len(final_df)}")
+            if save_data_to_storage(final_df, logger, archive_client=archive_client):
+                logger.log(f"✅ Session data written to Archive. Rows: {len(final_df)}")
                 
                 # Visual Density Summary
                 try:
                     logger.print_density_summary(final_df, session_start_utc, session_end_utc)
                 except AttributeError:
                     pass # Fallback if logger doesn't have this method yet
-
-                logger.log(f"🔍 Post-Harvest Parity Check for session...")
-                ok_post, msg_post = ensure_database_parity(archive_client, mirror_client, session_start_utc, session_end_utc, logger)
-                integrity_post_msg = msg_post
-                
-                if not ok_post:
-                    critical_errors += f"- Post-Harvest Parity Failure: {msg_post}\n"
             else:
-                msg = "❌ Failed to save data to dual storage."
+                msg = "❌ Failed to save data to Archive."
                 logger.log(msg)
                 critical_errors += f"- {msg}\n"
         else:
@@ -250,17 +231,12 @@ def main():
                     total_rows=rows,
                     file_path=log_filename,
                     health_alerts=health_alerts,
-                    integrity_pre=integrity_pre_msg,
-                    integrity_post=integrity_post_msg,
                     critical_errors=critical_errors,
                     db_health_grid=db_health_grid
                 )
 
         if archive_client:
             try: archive_client.close()
-            except: pass
-        if mirror_client:
-            try: mirror_client.close()
             except: pass
         
         # Exit with error if any critical errors happened

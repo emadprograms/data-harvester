@@ -28,7 +28,6 @@ from src.utils.integrity import (
     calculate_df_md5,
     compute_fingerprint,
     verify_db_md5,
-    ensure_database_parity,
 )
 from src.database.operations import _save_to_client, save_data_to_storage
 
@@ -280,66 +279,6 @@ class TestIntegrityFixes:
         assert ">=" in query and "<" in query
 
 
-# ---------------------------------------------------------------------------
-# 6. Rollback Coverage
-# ---------------------------------------------------------------------------
-class TestRollbackCoverage:
-
-    def test_rollback_covers_full_range(self):
-        """Rollback on mirror failure must delete all timestamps, not just one date."""
-        mock_archive = MagicMock()
-        mock_mirror = MagicMock()
-        # Mirror save fails
-        mock_mirror.execute.side_effect = Exception("Mirror write error")
-        
-        # Build rows spanning two calendar dates
-        rows = [
-            ("2026-02-17 23:30:00", "AAPL", 150, 151, 149, 150.5, 1000, "POST", "MASSIVE"),
-            ("2026-02-18 10:00:00", "AAPL", 151, 152, 150, 151.5, 2000, "REG", "MASSIVE"),
-            ("2026-02-18 20:00:00", "AAPL", 152, 153, 151, 152.5, 3000, "POST", "MASSIVE"),
-        ]
-        
-        result = _save_to_client(mock_mirror, rows, MockLogger(), "Mirror")
-        assert result is False  # Should fail
-
-    @patch("src.database.operations._save_to_client")
-    @patch("src.database.operations.get_archive_db_connection")
-    @patch("src.database.operations.get_mirror_db_connection")
-    def test_rollback_uses_range_not_like(self, mock_mirror_conn, mock_archive_conn, mock_save):
-        """When mirror fails, archive rollback must use min/max timestamp range."""
-        mock_archive = MagicMock()
-        mock_mirror = MagicMock()
-        mock_archive_conn.return_value = mock_archive
-        mock_mirror_conn.return_value = mock_mirror
-        
-        # First call (archive) succeeds, second call (mirror) fails
-        mock_save.side_effect = [True, False]
-        
-        df = pd.DataFrame({
-            "timestamp": pd.to_datetime([
-                "2026-02-17 23:30:00",
-                "2026-02-18 15:00:00",
-            ], utc=True),
-            "symbol": ["AAPL", "AAPL"],
-            "open": [150.0, 151.0], "high": [151.0, 152.0],
-            "low": [149.0, 150.0], "close": [150.5, 151.5],
-            "volume": [1000.0, 2000.0],
-            "session": ["POST", "REG"],
-            "source": ["MASSIVE", "MASSIVE"],
-        })
-        
-        result = save_data_to_storage(df, MockLogger(),
-                                       archive_client=mock_archive,
-                                       mirror_client=mock_mirror)
-        assert result is False
-        
-        # Archive rollback should have been called with range DELETE
-        rollback_calls = [c for c in mock_archive.execute.call_args_list
-                         if "DELETE" in str(c)]
-        assert len(rollback_calls) >= 1, "Expected rollback DELETE on archive"
-        rollback_query = str(rollback_calls[0])
-        assert ">=" in rollback_query and "<=" in rollback_query, \
-            f"Rollback should use range (>=, <=), got: {rollback_query}"
 
 
 # ---------------------------------------------------------------------------
@@ -561,49 +500,6 @@ class TestHealthAlertsCrypto:
             f"Equity ticker should be flagged for missing Pre/Post, got: {result}"
 
 
-# ---------------------------------------------------------------------------
-# 14. Rollback Scope Includes Symbol Filter
-# ---------------------------------------------------------------------------
-class TestRollbackSymbolScope:
-
-    @patch("src.database.operations._save_to_client")
-    @patch("src.database.operations.get_archive_db_connection")
-    @patch("src.database.operations.get_mirror_db_connection")
-    def test_rollback_includes_symbol_filter(self, mock_mirror_conn, mock_archive_conn, mock_save):
-        """When mirror fails, archive rollback DELETE must include a symbol IN clause."""
-        mock_archive = MagicMock()
-        mock_mirror = MagicMock()
-        mock_archive_conn.return_value = mock_archive
-        mock_mirror_conn.return_value = mock_mirror
-
-        # First call (archive) succeeds, second call (mirror) fails
-        mock_save.side_effect = [True, False]
-
-        df = pd.DataFrame({
-            "timestamp": pd.to_datetime([
-                "2026-02-17 23:30:00",
-                "2026-02-18 15:00:00",
-            ], utc=True),
-            "symbol": ["AAPL", "AAPL"],
-            "open": [150.0, 151.0], "high": [151.0, 152.0],
-            "low": [149.0, 150.0], "close": [150.5, 151.5],
-            "volume": [1000.0, 2000.0],
-            "session": ["POST", "REG"],
-            "source": ["MASSIVE", "MASSIVE"],
-        })
-
-        result = save_data_to_storage(df, MockLogger(),
-                                       archive_client=mock_archive,
-                                       mirror_client=mock_mirror)
-        assert result is False
-
-        # Archive rollback should include symbol IN clause
-        rollback_calls = [c for c in mock_archive.execute.call_args_list
-                         if "DELETE" in str(c)]
-        assert len(rollback_calls) >= 1, "Expected rollback DELETE on archive"
-        rollback_query = str(rollback_calls[0])
-        assert "symbol IN" in rollback_query, \
-            f"Rollback should scope to symbols, got: {rollback_query}"
 
 
 # ---------------------------------------------------------------------------

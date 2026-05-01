@@ -3,7 +3,7 @@ Database schema initialization and table creation.
 Includes strict PRIMARY KEY constraints to prevent duplication.
 """
 
-from src.database.connection import get_archive_db_connection, get_mirror_db_connection
+from src.database.connection import get_archive_db_connection
 
 
 def init_db(client=None):
@@ -12,14 +12,13 @@ def init_db(client=None):
         _init_client(client)
         return
 
-    # Initialize both Turso Archive and Mirror
-    for conn_func in [get_archive_db_connection, get_mirror_db_connection]:
-        conn = conn_func()
-        if conn:
-            try:
-                _init_client(conn)
-            finally:
-                conn.close()
+    # Initialize Archive only. Mirror is handled by the sync workflow.
+    conn = get_archive_db_connection()
+    if conn:
+        try:
+            _init_client(conn)
+        finally:
+            conn.close()
 
 
 def _init_client(client):

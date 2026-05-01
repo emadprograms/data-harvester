@@ -11,16 +11,14 @@ import src.database.operations as ops_module
 class TestDatabaseSchema:
 
     @patch("src.database.schema.get_archive_db_connection")
-    @patch("src.database.schema.get_mirror_db_connection")
-    def test_init_db_creates_tables(self, mock_mirror, mock_archive):
+    def test_init_db_creates_tables(self, mock_archive):
         """init_db should call execute on the provided client or fetch ones."""
         mock_client = MagicMock()
         schema_module.init_db(mock_client)
         assert mock_client.execute.called
 
     @patch("src.database.schema.get_archive_db_connection", return_value=None)
-    @patch("src.database.schema.get_mirror_db_connection", return_value=None)
-    def test_init_db_no_connection(self, mock_mirror, mock_archive):
+    def test_init_db_no_connection(self, mock_archive):
         """init_db should not crash if connections fail."""
         schema_module.init_db()
         # Should just return without error
@@ -36,8 +34,7 @@ class TestDatabaseSchema:
 class TestDatabaseOperations:
 
     @patch("src.database.operations.get_archive_db_connection", return_value=None)
-    @patch("src.database.operations.get_mirror_db_connection", return_value=None)
-    def test_get_symbol_map_no_connection(self, mock_mirror, mock_archive):
+    def test_get_symbol_map_no_connection(self, mock_archive):
         """get_symbol_map_from_db must return empty dict if connection fails."""
         res = ops_module.get_symbol_map_from_db()
         assert res == {}
@@ -62,9 +59,8 @@ class TestDatabaseOperations:
         assert res["AAPL"]["capital_ticker"] == "AAPL"
 
     @patch("src.database.operations.get_archive_db_connection", return_value=None)
-    @patch("src.database.operations.get_mirror_db_connection", return_value=None)
-    def test_save_data_no_connection(self, mock_mirror, mock_archive, safe_test_date_str):
-        """save_data_to_storage must return False if connections fail."""
+    def test_save_data_no_connection(self, mock_archive, safe_test_date_str):
+        """save_data_to_storage must return False if connection fails."""
         df = pd.DataFrame([{"timestamp": safe_test_date_str, "symbol": "AAPL"}])
         res = ops_module.save_data_to_storage(df)
         assert not res
@@ -75,11 +71,9 @@ class TestDatabaseOperations:
         assert not res
 
     @patch("src.database.operations.get_archive_db_connection")
-    @patch("src.database.operations.get_mirror_db_connection")
-    def test_save_data_success(self, mock_mirror, mock_archive, safe_test_date_str):
-        """save_data_to_storage must return True if both saves succeed."""
+    def test_save_data_success(self, mock_archive, safe_test_date_str):
+        """save_data_to_storage must return True if save succeeds."""
         mock_archive.return_value = MagicMock()
-        mock_mirror.return_value = MagicMock()
         
         df = pd.DataFrame({
             "timestamp": [f"{safe_test_date_str} 10:00:00"],
@@ -92,8 +86,7 @@ class TestDatabaseOperations:
         assert res
 
     @patch("src.database.operations.get_archive_db_connection")
-    @patch("src.database.operations.get_mirror_db_connection")
-    def test_save_data_db_error(self, mock_mirror, mock_archive, safe_test_date_str):
+    def test_save_data_db_error(self, mock_archive, safe_test_date_str):
         """save_data_to_storage must return False if a DB error occurs."""
         mock_client = MagicMock()
         mock_client.execute.side_effect = Exception("DB Error")

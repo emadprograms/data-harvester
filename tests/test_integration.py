@@ -46,8 +46,7 @@ class TestIntegrationPipeline:
     @patch("src.data.harvester.fetch_yahoo_market_data")
     @patch("src.data.harvester.fetch_massive_data")
     @patch("src.database.connection.get_archive_db_connection")
-    @patch("src.database.connection.get_mirror_db_connection")
-    def test_full_harvest_mixed_symbols(self, mock_mirror, mock_archive, mock_massive, mock_yahoo, mock_binance, safe_test_range, safe_test_date_str):
+    def test_full_harvest_mixed_symbols(self, mock_archive, mock_massive, mock_yahoo, mock_binance, safe_test_range, safe_test_date_str):
         """Pipeline should correctly handle a mix of crypto, stock, and fallback scenarios."""
         start_dt, end_dt = safe_test_range
         
@@ -55,7 +54,6 @@ class TestIntegrationPipeline:
         mem_client = self._new_client("memdb1.db")
         init_db(mem_client)
         mock_archive.return_value = mem_client
-        mock_mirror.return_value = mem_client
         
         # Mock Massive success
         massive_df = pd.DataFrame({
@@ -99,8 +97,8 @@ class TestIntegrationPipeline:
         assert not final_df.empty
         assert len(symbol_map) >= 2
         
-        # Verify Dual Write
-        save_success = save_data_to_storage(final_df, logger, archive_client=mem_client, mirror_client=mem_client)
+        # Verify Write
+        save_success = save_data_to_storage(final_df, logger, archive_client=mem_client)
         assert save_success
         
         # Verify data hit DB

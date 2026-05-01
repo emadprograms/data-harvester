@@ -1,12 +1,13 @@
 """
-Database operations - Reverted to Stable Sequential Dual-Write.
+Database operations — Single-database write to Archive.
+Mirror is synced separately via GitHub Actions.
 """
 import pandas as pd
 import numpy as np
 import time
 import math
 from datetime import datetime
-from src.database.connection import get_archive_db_connection, get_mirror_db_connection
+from src.database.connection import get_archive_db_connection
 from src.config import UTC, US_EASTERN
 
 # --- Basic CRUD for Symbol Mapping ---
@@ -19,9 +20,7 @@ def get_symbol_map_from_db(client=None):
         own_client = True
         
     if not client:
-        client = get_mirror_db_connection()
-        if not client: return {}
-        own_client = True
+        return {}
         
     try:
         res = client.execute("""
@@ -123,25 +122,22 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
         if logger: logger.log(f"   ❌ {label} Save Error: {e}")
         return False
 
-def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mirror_client=None) -> bool:
+def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None) -> bool:
     """
-    Saves market data to BOTH Turso Archive and Turso Mirror with Tier Protection.
+    Saves market data to the Turso Archive with Tier Protection.
+    Mirror is synced separately via GitHub Actions.
     """
     if df.empty:
         return False
 
     own_archive = False
-    own_mirror = False
     
     try:
         if not archive_client:
             archive_client = get_archive_db_connection()
             own_archive = True
-        if not mirror_client:
-            mirror_client = get_mirror_db_connection()
-            own_mirror = True
 
-        if not archive_client or not mirror_client:
+        if not archive_client:
             return False
 
         # 1. Prepare Rows
@@ -170,30 +166,11 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
             ))
 
         if logger:
-            logger.log(f"   💾 Dual Committing {len(rows_to_insert)} records with Source-Tier Protection...")
+            logger.log(f"   💾 Committing {len(rows_to_insert)} records to Archive...")
 
-        # 2. Sequential Commit
-        # Archive
-        if logger: logger.log("   ➡️ Committing to ARCHIVE...")
+        # Commit to Archive
+        if logger: logger.log("   ➡️ Writing to ARCHIVE...")
         if not _save_to_client(archive_client, rows_to_insert, logger, "Archive"):
-            return False
-            
-        # Mirror
-        if logger: logger.log("   ➡️ Committing to MIRROR...")
-        if not _save_to_client(mirror_client, rows_to_insert, logger, "Mirror"):
-            # Rollback Archive if Mirror fails to maintain 1:1 parity
-            try:
-                all_timestamps = [row[0] for row in rows_to_insert]
-                min_ts = min(all_timestamps)
-                max_ts = max(all_timestamps)
-                symbols = list(set([row[1] for row in rows_to_insert]))
-                placeholders = ",".join(["?"] * len(symbols))
-                if logger: logger.log(f"   ⚠️ Mirror failed. Rolling back Archive for range {min_ts} to {max_ts}...")
-                archive_client.execute(
-                    f"DELETE FROM market_data WHERE timestamp >= ? AND timestamp <= ? AND symbol IN ({placeholders})",
-                    [min_ts, max_ts] + symbols
-                )
-            except: pass
             return False
         
         return True
@@ -204,9 +181,6 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None, mir
     finally:
         if own_archive and archive_client:
             try: archive_client.close()
-            except: pass
-        if own_mirror and mirror_client:
-            try: mirror_client.close()
             except: pass
 
 def get_session_row_counts(client, symbols, start_utc: datetime, end_utc: datetime):
@@ -231,4 +205,3 @@ def get_session_row_counts(client, symbols, start_utc: datetime, end_utc: dateti
         return {row[0]: row[1] for row in res.rows}
     except Exception:
         return {}
-

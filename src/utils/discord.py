@@ -178,7 +178,7 @@ def build_database_health_grid(db_counts, inventory_list, session_start_utc, ses
     return f"{legend}\n{grid_str}"
 
 def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows,
-                                file_path=None, health_alerts="", integrity_pre="", integrity_post="", 
+                                file_path=None, health_alerts="",
                                 critical_errors="", db_health_grid=""):
     """
     Sends a cleaned-up harvest dashboard to Discord using Embeds.
@@ -215,12 +215,6 @@ def send_discord_harvest_report(report_df: pd.DataFrame, target_date, total_rows
             overview_text += f"**Failed Symbols:** `{failed_tickers}`\n"
         embed["fields"].append({"name": "📊 Overview", "value": overview_text, "inline": False})
 
-        # Integrity Fields (Row 2)
-        val_pre = integrity_pre if integrity_pre else "Skipped"
-        val_post = integrity_post if integrity_post else "Skipped"
-        
-        embed["fields"].append({"name": "🔒 Pre-Harvest Parity", "value": f"`{val_pre}`", "inline": True})
-        embed["fields"].append({"name": "🔒 Post-Harvest Parity", "value": f"`{val_post}`", "inline": True})
 
         # Database Health Grid Field (New)
         if db_health_grid:
