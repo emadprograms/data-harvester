@@ -46,3 +46,54 @@ def get_mirror_db_connection():
     except Exception as e:
         print(f"❌ Turso Mirror Connection Error: {e}")
         return None
+
+
+def get_archive_embedded_connection(db_path="archive_local.db"):
+    """Establishes an embedded replica connection to the Archive DB using native libsql."""
+    try:
+        import libsql
+        from src.infisical_manager import InfisicalManager
+        mgr = InfisicalManager()
+        creds = mgr.get_turso_archive_creds()
+        
+        url = creds.get('url')
+        token = creds.get('token')
+        
+        if not url or not token:
+            print("❌ Missing Turso Archive credentials for embedded sync.")
+            return None
+            
+        return libsql.connect(
+            db_path,
+            sync_url=url,
+            auth_token=token
+        )
+    except Exception as e:
+        print(f"❌ Turso Archive Embedded Connection Error: {e}")
+        return None
+
+
+def get_mirror_embedded_connection(db_path="mirror_local.db"):
+    """Establishes an embedded replica connection to the Mirror DB using native libsql."""
+    try:
+        import libsql
+        from src.infisical_manager import InfisicalManager
+        mgr = InfisicalManager()
+        creds = mgr.get_turso_mirror_creds()
+        
+        url = creds.get('url')
+        token = creds.get('token')
+        
+        if not url or not token:
+            print("❌ Missing Turso Mirror credentials for embedded sync.")
+            return None
+            
+        return libsql.connect(
+            db_path,
+            sync_url=url,
+            auth_token=token
+        )
+    except Exception as e:
+        print(f"❌ Turso Mirror Embedded Connection Error: {e}")
+        return None
+

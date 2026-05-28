@@ -10,7 +10,7 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 - **Data Processing**: `pandas`, `numpy`
 - **Concurrency**: `ThreadPoolExecutor` (8 parallel workers)
 - `USFederalHolidayCalendar`: For market holiday awareness
-- **Database**: Turso (libsql) with a Dual-Write strategy (Archive + Mirror)
+- **Database**: Turso (libsql) with an isolated, native Weekly Double-Replica Caching Sync architecture (no dual-writing during harvests).
 - **Secrets Management**: Infisical SDK (`infisicalsdk`)
 - **APIs**: Polygon.io (Massive), Capital.com, Binance, Yahoo Finance
 - **Observability**: Discord Webhooks for health reports, alerts, and actual Database Health Grids (visual representation of session data coverage per symbol using a 5-step square emoji scale and row counts: 🟩 >65%, 🟨 >40%, 🟧 >15%, 🟥 >0%, ⬛ 0). Dynamically adjusted for active vs completed sessions. 
@@ -29,8 +29,10 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 - **Targeted Cleaning**: Before committing, the system only performs a surgical `DELETE` for the **specific symbols** arriving with high-fidelity data (`MASSIVE`, `BINANCE`). Lower-tier data (Capital/Yahoo) is stacked incrementally without wiping existing records.
 - **Source-Tiering Protection**: The database enforces a "Quality-First" overwrite policy via the `source` column. Data from **High-Quality** sources can never be overwritten by lower-tier sources for the same timestamp.
 - **Strict UTC Definition**: All internal logic, API requests, and database storage use pure **UTC**.
-- **Database Parity Mandate**: **Maintaining absolute 1-on-1 consistency between the Archive and Mirror databases is the single most important objective.**
-- **Self-Healing**: The engine automatically performs a surgical parity check/repair (MD5) using the **full session range** (`session_start_utc` → `session_end_utc`) before and after every harvest. This ensures all rows are verified even when a session spans multiple calendar dates (e.g., Friday 8PM ET → Monday 8PM ET).
+- **Index Optimization**: The `market_data` table has an index `idx_market_data_timestamp` on `timestamp` to ensure range deletes and Discord health count queries use lightning-fast index scans, eliminating full table scans.
+- **Database Sync Architecture**: **Maintaining absolute 1-on-1 consistency between the Archive and Mirror databases is the single most important objective.**
+    - **Primary Harvester Simplicity**: Daily harvester workflows run 6x daily, writing only to the primary Archive DB. They treat the DB as a single primary source of truth, ignoring sync concerns completely.
+    - **Dedicated Weekly Sync Workflow**: Sync is completely isolated to a weekly GitHub Actions workflow. It restores `archive_local.db` and `mirror_local.db` from the GitHub Actions Cache, performs an incremental native `.sync()` (low bandwidth, low reads), bridges missing rows locally on runner disk (0 reads), forwards written rows directly to the remote Mirror DB, and saves the updated databases back to the cache.
 
 ---
 

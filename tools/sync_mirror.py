@@ -1,15 +1,9 @@
 """
-Incremental Mirror Sync — syncs Archive → Mirror for dirty days only.
+Incremental Mirror Sync — syncs Archive → Mirror using Native Double-Replica Caching.
 
-This script is designed to be run via GitHub Actions (weekly) or manually.
-It conserves Turso reads/writes by only syncing days where Archive has
-more rows than Mirror (i.e., new data was written).
-
-Strategy:
-  1. Fetch distinct dates with data from both Archive and Mirror.
-  2. Compare row counts per date.
-  3. For "dirty" dates (Archive has more rows), delete+re-insert from Archive.
-  4. Also full-replaces symbol_map (small table, always safe).
+This script runs weekly via GitHub Actions or manually.
+It uses two local embedded replicas (archive_local.db and mirror_local.db)
+to run all analysis and row scans locally, using 0 Turso reads.
 """
 import sys
 import os
@@ -17,8 +11,7 @@ import os
 # Ensure project root is on the path when run standalone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.database.connection import get_archive_db_connection, get_mirror_db_connection
-from src.database.schema import _init_client
+from src.database.connection import get_archive_embedded_connection, get_mirror_embedded_connection
 from src.database.operations import _save_to_client
 from src.config import SCHEMA_COLS
 
@@ -32,6 +25,7 @@ class SyncLogger:
 def get_date_row_counts(client):
     """Returns a dict of {date_str: row_count} for all dates in market_data."""
     try:
+        # Executes locally on disk (0 Turso reads)
         res = client.execute(
             "SELECT DATE(timestamp) as dt, COUNT(*) as cnt FROM market_data GROUP BY DATE(timestamp)"
         )
@@ -42,10 +36,11 @@ def get_date_row_counts(client):
 
 
 def sync_symbol_map(archive, mirror, logger):
-    """Full-replaces symbol_map in Mirror from Archive."""
+    """Full-replaces symbol_map in Mirror from Archive locally."""
     logger.log("📋 Syncing symbol_map...")
     
     try:
+        # Fetch from local archive replica (0 Turso reads)
         res = archive.execute(
             "SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker FROM symbol_map"
         )
@@ -54,7 +49,7 @@ def sync_symbol_map(archive, mirror, logger):
             logger.log("   ⚠️ Archive symbol_map is empty. Skipping.")
             return
         
-        # Clear and re-insert
+        # Clear and re-insert into local mirror replica
         mirror.execute("DELETE FROM symbol_map")
         for row in res.rows:
             mirror.execute(
@@ -62,18 +57,19 @@ def sync_symbol_map(archive, mirror, logger):
                 list(row)
             )
         
-        logger.log(f"   ✅ Synced {len(res.rows)} symbols to Mirror.")
+        logger.log(f"   ✅ Synced {len(res.rows)} symbols locally.")
     except Exception as e:
         logger.log(f"   ❌ symbol_map sync failed: {e}")
 
 
 def sync_dirty_days(archive, mirror, logger):
     """
-    Compares row counts per date between Archive and Mirror.
-    For dates where Archive has more rows, re-syncs that date.
+    Compares row counts per date between local Archive and Mirror.
+    For dates where Archive has more rows, re-syncs that date locally.
     """
-    logger.log("📊 Comparing date-level row counts...")
+    logger.log("📊 Comparing date-level row counts locally...")
     
+    # Query locally (0 Turso reads)
     archive_counts = get_date_row_counts(archive)
     mirror_counts = get_date_row_counts(mirror)
     
@@ -107,13 +103,13 @@ def sync_dirty_days(archive, mirror, logger):
         logger.log(f"\n   🔄 Syncing {date_str} (Archive: {arch_count}, Mirror: {mirr_count})...")
         
         try:
-            # 1. Delete this date from Mirror
+            # 1. Delete this date from local Mirror replica (automatically sent to remote primary)
             mirror.execute(
                 "DELETE FROM market_data WHERE DATE(timestamp) = ?",
                 [date_str]
             )
             
-            # 2. Fetch from Archive
+            # 2. Fetch from local Archive replica (0 Turso reads)
             res = archive.execute(
                 f"SELECT {col_list} FROM market_data WHERE DATE(timestamp) = ?",
                 [date_str]
@@ -123,7 +119,7 @@ def sync_dirty_days(archive, mirror, logger):
                 logger.log(f"      ⚠️ No rows returned from Archive for {date_str}. Skipping.")
                 continue
             
-            # 3. Insert into Mirror
+            # 3. Insert into local Mirror replica (automatically sent to remote primary)
             rows_to_insert = [tuple(row) for row in res.rows]
             _save_to_client(mirror, rows_to_insert, logger, f"Mirror({date_str})")
             total_rows_synced += len(rows_to_insert)
@@ -137,25 +133,33 @@ def sync_dirty_days(archive, mirror, logger):
 def main():
     logger = SyncLogger()
     logger.log("=" * 60)
-    logger.log("🔄 Mirror Sync — Incremental Dirty-Day Strategy")
+    logger.log("🔄 Mirror Sync — Native Double-Replica Caching Strategy")
     logger.log("=" * 60)
     
-    archive = get_archive_db_connection()
-    mirror = get_mirror_db_connection()
+    # 1. Open local embedded replicas
+    archive = get_archive_embedded_connection()
+    mirror = get_mirror_embedded_connection()
     
     if not archive or not mirror:
-        logger.log("❌ Could not connect to both databases.")
+        logger.log("❌ Could not connect to both database replicas.")
         sys.exit(1)
     
     try:
-        # Ensure Mirror schema exists
-        _init_client(mirror)
+        # 2. Trigger native binary page synchronization (fetches only new changes)
+        logger.log("📥 Syncing local Archive replica...")
+        archive.sync()
+        logger.log("📥 Syncing local Mirror replica...")
+        mirror.sync()
         
-        # 1. Sync symbol_map (always full replace, tiny table)
+        # 3. Sync symbol_map locally
         sync_symbol_map(archive, mirror, logger)
         
-        # 2. Sync dirty days (incremental)
+        # 4. Sync dirty days locally (costs 0 Turso reads for comparison and fetching)
         days_synced, rows_synced = sync_dirty_days(archive, mirror, logger)
+        
+        # 5. Native sync to push any pending writes to the remote Mirror DB
+        logger.log("\n📤 Pushing sync writes to remote Mirror DB...")
+        mirror.sync()
         
         # Summary
         logger.log("\n" + "=" * 60)

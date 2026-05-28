@@ -63,6 +63,12 @@ def _init_client(client):
             )
         """)
         
+        # --- INDEXES ---
+        client.execute("""
+            CREATE INDEX IF NOT EXISTS idx_market_data_timestamp 
+            ON market_data (timestamp)
+        """)
+        
         # --- MIGRATION: Add 'source' column if missing ---
         try:
             columns_res = client.execute("PRAGMA table_info(market_data)")

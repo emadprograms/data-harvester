@@ -15,6 +15,16 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
+    - name: Cache Database Replicas
+      uses: actions/cache@v3
+      with:
+        path: |
+          archive_local.db
+          mirror_local.db
+        key: turso-replicas-${{ github.run_id }}
+        restore-keys: |
+          turso-replicas-
+
     - name: Set up Python 3.11
       uses: actions/setup-python@v4
       with:
