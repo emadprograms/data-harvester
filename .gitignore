@@ -36,6 +36,12 @@ logs/
 # Local Databases
 *.db
 *.sqlite
+archive_local*.db
+mirror_local*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.db-info
 
 # Temporary folders
 buy_cash/
