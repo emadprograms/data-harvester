@@ -29,7 +29,7 @@ def get_date_row_counts(client):
         res = client.execute(
             "SELECT DATE(timestamp) as dt, COUNT(*) as cnt FROM market_data GROUP BY DATE(timestamp)"
         )
-        return {row[0]: row[1] for row in res.rows}
+        return {row[0]: row[1] for row in res.fetchall()}
     except Exception as e:
         print(f"❌ Error fetching date counts: {e}")
         return {}
@@ -45,19 +45,20 @@ def sync_symbol_map(archive, mirror, logger):
             "SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker FROM symbol_map"
         )
         
-        if not res.rows:
+        rows = res.fetchall()
+        if not rows:
             logger.log("   ⚠️ Archive symbol_map is empty. Skipping.")
             return
         
         # Clear and re-insert into local mirror replica
         mirror.execute("DELETE FROM symbol_map")
-        for row in res.rows:
+        for row in rows:
             mirror.execute(
                 "INSERT INTO symbol_map (display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker) VALUES (?, ?, ?, ?, ?)",
                 list(row)
             )
         
-        logger.log(f"   ✅ Synced {len(res.rows)} symbols locally.")
+        logger.log(f"   ✅ Synced {len(rows)} symbols locally.")
     except Exception as e:
         logger.log(f"   ❌ symbol_map sync failed: {e}")
 
@@ -115,12 +116,13 @@ def sync_dirty_days(archive, mirror, logger):
                 [date_str]
             )
             
-            if not res.rows:
+            rows = res.fetchall()
+            if not rows:
                 logger.log(f"      ⚠️ No rows returned from Archive for {date_str}. Skipping.")
                 continue
             
             # 3. Insert into local Mirror replica (automatically sent to remote primary)
-            rows_to_insert = [tuple(row) for row in res.rows]
+            rows_to_insert = [tuple(row) for row in rows]
             _save_to_client(mirror, rows_to_insert, logger, f"Mirror({date_str})")
             total_rows_synced += len(rows_to_insert)
             
