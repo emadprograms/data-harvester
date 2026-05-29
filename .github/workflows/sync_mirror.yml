@@ -21,9 +21,7 @@ jobs:
         path: |
           archive_local.db
           mirror_local.db
-        key: turso-replicas-${{ github.run_id }}
-        restore-keys: |
-          turso-replicas-
+        key: turso-replicas-v1
 
     - name: Set up Python 3.11
       uses: actions/setup-python@v4

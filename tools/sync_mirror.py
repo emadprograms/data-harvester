@@ -12,7 +12,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.database.connection import get_archive_embedded_connection, get_mirror_embedded_connection
-from src.database.operations import _save_to_client
+from src.database.operations import _mirror_insert
+from src.database.schema import init_db
 from src.config import SCHEMA_COLS
 
 
@@ -104,13 +105,7 @@ def sync_dirty_days(archive, mirror, logger):
         logger.log(f"\n   🔄 Syncing {date_str} (Archive: {arch_count}, Mirror: {mirr_count})...")
         
         try:
-            # 1. Delete this date from local Mirror replica (automatically sent to remote primary)
-            mirror.execute(
-                "DELETE FROM market_data WHERE DATE(timestamp) = ?",
-                [date_str]
-            )
-            
-            # 2. Fetch from local Archive replica (0 Turso reads)
+            # 1. Fetch from local Archive replica (0 Turso reads)
             res = archive.execute(
                 f"SELECT {col_list} FROM market_data WHERE DATE(timestamp) = ?",
                 [date_str]
@@ -121,9 +116,9 @@ def sync_dirty_days(archive, mirror, logger):
                 logger.log(f"      ⚠️ No rows returned from Archive for {date_str}. Skipping.")
                 continue
             
-            # 3. Insert into local Mirror replica (automatically sent to remote primary)
+            # 2. Insert only MISSING rows into Mirror (duplicates = 0 writes)
             rows_to_insert = [tuple(row) for row in rows]
-            _save_to_client(mirror, rows_to_insert, logger, f"Mirror({date_str})")
+            _mirror_insert(mirror, rows_to_insert, logger, f"Mirror({date_str})")
             total_rows_synced += len(rows_to_insert)
             
         except Exception as e:
@@ -152,6 +147,9 @@ def main():
         archive.sync()
         logger.log("📥 Syncing local Mirror replica...")
         mirror.sync()
+        
+        # 2b. Ensure Mirror schema exists (no-op if tables already present)
+        init_db(mirror)
         
         # 3. Sync symbol_map locally
         sync_symbol_map(archive, mirror, logger)

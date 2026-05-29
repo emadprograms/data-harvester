@@ -122,6 +122,40 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DB"):
         if logger: logger.log(f"   ❌ {label} Save Error: {e}")
         return False
 
+def _mirror_insert(client, rows_to_insert, logger=None, label="Mirror"):
+    """
+    Insert-only sync for Mirror DB. Uses INSERT OR IGNORE to skip
+    rows that already exist — generating exactly 0 writes for duplicates.
+    This is critical for Turso write quota conservation.
+    """
+    if not client or not rows_to_insert:
+        return False
+
+    BATCH_SIZE = 100
+    total_rows = len(rows_to_insert)
+
+    try:
+        for i in range(0, total_rows, BATCH_SIZE):
+            batch = rows_to_insert[i : i + BATCH_SIZE]
+            placeholders = ", ".join(["(?, ?, ?, ?, ?, ?, ?, ?, ?)"] * len(batch))
+            flat_values = [item for sublist in batch for item in sublist]
+
+            query = f"""
+                INSERT OR IGNORE INTO market_data
+                (timestamp, symbol, open, high, low, close, volume, session, source)
+                VALUES {placeholders}
+            """
+            client.execute(query, flat_values)
+
+            if logger and i % 5000 == 0:
+                logger.log(f"      ➡️ {label}: Progress {min(i + BATCH_SIZE, total_rows)}/{total_rows}...")
+
+        if logger: logger.log(f"   ✅ {label}: Committed {total_rows} rows (duplicates ignored).")
+        return True
+    except Exception as e:
+        if logger: logger.log(f"   ❌ {label} Save Error: {e}")
+        return False
+
 def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None) -> bool:
     """
     Saves market data to the Turso Archive with Tier Protection.

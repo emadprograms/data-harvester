@@ -29,10 +29,10 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 - **Targeted Cleaning**: Before committing, the system only performs a surgical `DELETE` for the **specific symbols** arriving with high-fidelity data (`MASSIVE`, `BINANCE`). Lower-tier data (Capital/Yahoo) is stacked incrementally without wiping existing records.
 - **Source-Tiering Protection**: The database enforces a "Quality-First" overwrite policy via the `source` column. Data from **High-Quality** sources can never be overwritten by lower-tier sources for the same timestamp.
 - **Strict UTC Definition**: All internal logic, API requests, and database storage use pure **UTC**.
-- **Index Optimization**: The `market_data` table has an index `idx_market_data_timestamp` on `timestamp` to ensure range deletes and Discord health count queries use lightning-fast index scans, eliminating full table scans.
+- **Index Optimization**: The `market_data` table has an index `idx_market_data_timestamp` on `timestamp` to ensure range deletes and Discord health count queries use lightning-fast index scans. **This index is managed manually via the Turso CLI** (not created automatically on startup) to avoid massive write spikes on large tables.
 - **Database Sync Architecture**: **Maintaining absolute 1-on-1 consistency between the Archive and Mirror databases is the single most important objective.**
     - **Primary Harvester Simplicity**: Daily harvester workflows run 6x daily, writing only to the primary Archive DB. They treat the DB as a single primary source of truth, ignoring sync concerns completely.
-    - **Dedicated Weekly Sync Workflow**: Sync is completely isolated to a weekly GitHub Actions workflow. It restores `archive_local.db` and `mirror_local.db` from the GitHub Actions Cache, performs an incremental native `.sync()` (low bandwidth, low reads), bridges missing rows locally on runner disk (0 reads), forwards written rows directly to the remote Mirror DB, and saves the updated databases back to the cache.
+    - **Dedicated Weekly Sync Workflow**: Sync is completely isolated to a weekly GitHub Actions workflow. It restores `archive_local.db` and `mirror_local.db` from the GitHub Actions Cache (using a **stable cache key** `turso-replicas-v1`), performs an incremental native `.sync()` (low bandwidth, low reads), and uses **Surgical Sync** (`INSERT OR IGNORE`) to write only truly missing rows to the Mirror — generating **0 writes for existing rows**. This is critical because embedded replica writes are **forwarded to the remote server immediately** (not buffered locally).
 
 ---
 
@@ -45,7 +45,7 @@ The **Stock Data Harvester** is a high-performance, stateless data harvesting en
 ## 📁 2. Repository Structure
 - `main.py`: The session-aware entry point for automated harvesting.
 - `src/api/`: Provider layer (Massive, Binance, Yahoo, Capital) with 16h lookback auto-clamping for Capital.com.
-- `src/database/operations.py`: Implementation of Source-Tiering and Targeted Cleaning.
+- `src/database/operations.py`: Implementation of Source-Tiering (`_save_to_client` with `ON CONFLICT DO UPDATE`) for Archive writes, and Surgical Sync (`_mirror_insert` with `INSERT OR IGNORE`) for Mirror writes.
 - `src/utils/integrity.py`: MD5 parity and auto-repair logic.
 
 ---
