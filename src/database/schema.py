@@ -1,19 +1,17 @@
 """
-Database schema initialization and table creation.
-Includes strict PRIMARY KEY constraints to prevent duplication.
+DuckDB Database schema initialization and table creation.
+Enforces PRIMARY KEY constraints (symbol, timestamp) and fast time-series indexes.
 """
-
-from src.database.connection import get_archive_db_connection
+from src.database.connection import get_duckdb_connection
 
 
 def init_db(client=None):
-    """Initializes the database, creating tables if they don't exist."""
+    """Initializes the DuckDB database, creating tables and indexes if they don't exist."""
     if client:
         _init_client(client)
         return
 
-    # Initialize Archive only. Mirror is handled by the sync workflow.
-    conn = get_archive_db_connection()
+    conn = get_duckdb_connection()
     if conn:
         try:
             _init_client(conn)
@@ -22,20 +20,19 @@ def init_db(client=None):
 
 
 def _init_client(client):
-    """Internal helper to initialize a specific client."""
+    """Internal helper to initialize a specific DuckDB client."""
     if not client:
         return
-    
+
     try:
         # --- SYMBOL INVENTORY TABLE ---
-        # Strictly limited to ticker mapping. Priority is handled in code.
         client.execute("""
             CREATE TABLE IF NOT EXISTS symbol_map (
-                display_name TEXT PRIMARY KEY,
-                yahoo_ticker TEXT,
-                massive_ticker TEXT,
-                binance_ticker TEXT,
-                capital_ticker TEXT
+                display_name VARCHAR PRIMARY KEY,
+                yahoo_ticker VARCHAR,
+                massive_ticker VARCHAR,
+                binance_ticker VARCHAR,
+                capital_ticker VARCHAR
             )
         """)
 
@@ -50,38 +47,36 @@ def _init_client(client):
         # --- MARKET DATA TABLE ---
         client.execute("""
             CREATE TABLE IF NOT EXISTS market_data (
-                timestamp TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                open REAL, 
-                high REAL, 
-                low REAL, 
-                close REAL, 
-                volume REAL, 
-                session TEXT,
-                source TEXT,
+                timestamp TIMESTAMP NOT NULL,
+                symbol VARCHAR NOT NULL,
+                open DOUBLE, 
+                high DOUBLE, 
+                low DOUBLE, 
+                close DOUBLE, 
+                volume DOUBLE, 
+                session VARCHAR,
+                source VARCHAR,
                 PRIMARY KEY (symbol, timestamp)
             )
         """)
-        
-        # --- MIGRATION: Add 'source' column if missing ---
+
+        # --- INDEXES FOR FAST TIME-SERIES QUERIES ---
         try:
-            columns_res = client.execute("PRAGMA table_info(market_data)")
-            existing_columns = [row[1] for row in columns_res.rows] # name is at index 1
-            if 'source' not in existing_columns:
-                print("⚠️ Migrating schema: Adding 'source' column to market_data...")
-                client.execute("ALTER TABLE market_data ADD COLUMN source TEXT")
+            client.execute("CREATE INDEX IF NOT EXISTS idx_market_data_ts ON market_data (timestamp)")
+            client.execute("CREATE INDEX IF NOT EXISTS idx_market_data_sym_ts ON market_data (symbol, timestamp)")
         except Exception as e:
-            print(f"⚠️ Migration warning: {e}")
-                
+            # DuckDB automatically indexes primary keys
+            pass
+
     except Exception as e:
-        print(f"❌ DB Init Error: {e}")
+        print(f"❌ DuckDB Schema Init Error: {e}")
 
 
 def _seed_default_symbols(client):
     """Seeds default symbols into an empty database."""
     print("🌱 Seeding default symbols...")
     tickers = [
-        # Equities/ETFs (Fallback changed from Yahoo -> Capital)
+        # Equities/ETFs
         ("SPY", None, "SPY", None, "SPY"),
         ("QQQ", None, "QQQ", None, "QQQ"),
         ("IWM", None, "IWM", None, "IWM"),
@@ -102,7 +97,7 @@ def _seed_default_symbols(client):
     ]
     for disp, y, m, b, c in tickers:
         client.execute(
-            """INSERT INTO symbol_map 
+            """INSERT OR IGNORE INTO symbol_map 
                (display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker) 
                VALUES (?, ?, ?, ?, ?)""",
             [disp, y, m, b, c]

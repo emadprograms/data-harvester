@@ -1,99 +1,76 @@
 """
-Database connection management for Turso (libSQL).
+Database connection management using native DuckDB.
+Provides thread-safe local connections to data/market_data.duckdb with zero cloud dependencies.
 """
-from libsql_client import create_client_sync
+import os
+import duckdb
 
-def _sanitize_url(url: str) -> str:
-    """Converts libsql:// to https:// for the synchronous client."""
-    if not url:
-        return ""
-    return url.replace("libsql://", "https://")
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "market_data.duckdb")
 
-def get_archive_db_connection():
-    """Establishes a synchronous connection to the Turso Stock Data Archive database."""
+
+class DuckDBResult:
+    """Wrapper around DuckDB cursor to provide seamless compatibility with both .rows and .fetchall()/.fetchone()."""
+    def __init__(self, cursor):
+        self.cursor = cursor
+        self._rows = None
+
+    @property
+    def rows(self):
+        if self._rows is None:
+            self._rows = self.cursor.fetchall()
+        return self._rows
+
+    def fetchall(self):
+        return self.rows
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def df(self):
+        return self.cursor.df()
+
+    def arrow(self):
+        return self.cursor.arrow()
+
+
+class DuckDBClient:
+    """High-performance local DuckDB client wrapper."""
+    def __init__(self, db_path=None, read_only=False):
+        self.db_path = db_path or DEFAULT_DB_PATH
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self.conn = duckdb.connect(self.db_path, read_only=read_only)
+
+    def execute(self, query, params=None):
+        if params is not None:
+            cur = self.conn.execute(query, params)
+        else:
+            cur = self.conn.execute(query)
+        return DuckDBResult(cur)
+
+    def executemany(self, query, seq_of_params):
+        cur = self.conn.executemany(query, seq_of_params)
+        return DuckDBResult(cur)
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+
+
+def get_duckdb_connection(db_path=None, read_only=False):
+    """Establishes a connection to the local DuckDB database."""
     try:
-        from src.infisical_manager import InfisicalManager
-        mgr = InfisicalManager()
-        creds = mgr.get_turso_archive_creds()
-        
-        url = _sanitize_url(creds.get('url'))
-        token = creds.get('token')
-        
-        if not url or not token:
-            print("❌ Missing Turso Archive credentials.")
-            return None
-        
-        return create_client_sync(url=url, auth_token=token)
+        return DuckDBClient(db_path=db_path, read_only=read_only)
     except Exception as e:
-        print(f"❌ Turso Archive Connection Error: {e}")
-        return None
-
-def get_mirror_db_connection():
-    """Establishes a synchronous connection to the Turso Stock Data Archive Mirror 1 database."""
-    try:
-        from src.infisical_manager import InfisicalManager
-        mgr = InfisicalManager()
-        creds = mgr.get_turso_mirror_creds()
-        
-        url = _sanitize_url(creds.get('url'))
-        token = creds.get('token')
-        
-        if not url or not token:
-            print("❌ Missing Turso Mirror credentials.")
-            return None
-        
-        return create_client_sync(url=url, auth_token=token)
-    except Exception as e:
-        print(f"❌ Turso Mirror Connection Error: {e}")
-        return None
-
-
-def get_archive_embedded_connection(db_path="archive_local.db"):
-    """Establishes an embedded replica connection to the Archive DB using native libsql."""
-    try:
-        import libsql
-        from src.infisical_manager import InfisicalManager
-        mgr = InfisicalManager()
-        creds = mgr.get_turso_archive_creds()
-        
-        url = creds.get('url')
-        token = creds.get('token')
-        
-        if not url or not token:
-            print("❌ Missing Turso Archive credentials for embedded sync.")
-            return None
-            
-        return libsql.connect(
-            db_path,
-            sync_url=url,
-            auth_token=token
-        )
-    except Exception as e:
-        print(f"❌ Turso Archive Embedded Connection Error: {e}")
+        print(f"❌ DuckDB Connection Error: {e}")
         return None
 
 
-def get_mirror_embedded_connection(db_path="mirror_local.db"):
-    """Establishes an embedded replica connection to the Mirror DB using native libsql."""
-    try:
-        import libsql
-        from src.infisical_manager import InfisicalManager
-        mgr = InfisicalManager()
-        creds = mgr.get_turso_mirror_creds()
-        
-        url = creds.get('url')
-        token = creds.get('token')
-        
-        if not url or not token:
-            print("❌ Missing Turso Mirror credentials for embedded sync.")
-            return None
-            
-        return libsql.connect(
-            db_path,
-            sync_url=url,
-            auth_token=token
-        )
-    except Exception as e:
-        print(f"❌ Turso Mirror Embedded Connection Error: {e}")
-        return None
-
+# Backward-compatible alias for existing codebase callers
+def get_archive_db_connection(db_path=None):
+    """Returns local DuckDB connection (replacing legacy Turso Archive)."""
+    return get_duckdb_connection(db_path=db_path)
