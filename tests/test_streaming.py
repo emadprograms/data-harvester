@@ -210,3 +210,69 @@ class TestStreamingEngineAndParsers:
         assert epic == "AAPL"
         assert mid_price == 180.55
 
+    def test_e2e_streaming_to_candlestick_query(self, tmp_path):
+        """Validates end-to-end flow: streaming tick/bar -> write_queue -> DuckDB -> query_candlesticks."""
+        import asyncio
+        from src.stream.runner import StreamingEngine
+        from src.database.connection import get_duckdb_connection
+        from src.database.schema import init_db
+        from src.database.operations import query_candlesticks
+
+        db_file = str(tmp_path / "test_e2e.duckdb")
+        client = get_duckdb_connection(db_path=db_file)
+        init_db(client)
+
+        async def _run():
+            engine = StreamingEngine(db_path=db_file, flush_interval=0.05)
+            engine.db_conn = client
+            engine.running = True
+
+            # Process Capital tick into aggregator
+            from datetime import timezone
+            dt = datetime(2026, 1, 1, 10, 0, 10, tzinfo=timezone.utc)
+            tick = {"epic": "AAPL", "price": 180.0, "bid": 179.9, "ask": 180.1, "timestamp": dt}
+            await engine._handle_capital_tick(tick)
+
+            # Push tick in next minute to close first candle
+            dt2 = datetime(2026, 1, 1, 10, 1, 5, tzinfo=timezone.utc)
+            tick2 = {"epic": "AAPL", "price": 181.0, "bid": 180.9, "ask": 181.1, "timestamp": dt2}
+            await engine._handle_capital_tick(tick2)
+
+            # Process closed Binance bar
+            binance_bar = ("2026-01-01 10:00:00", "BTCUSDT", 90000.0, 90500.0, 89900.0, 90200.0, 10.0, "REG", "BINANCE")
+            await engine._handle_binance_bar(binance_bar, is_closed=True)
+
+            # Start writer worker and wait for flush
+            worker_task = asyncio.create_task(engine._duckdb_writer_worker())
+            await asyncio.sleep(0.2)
+
+            # Query candlesticks immediately using client
+            df_aapl = query_candlesticks("AAPL", client=engine.db_conn)
+            # Both 10:00 (closed by next tick) and 10:01 (flushed by stale sweeper) are saved
+            assert len(df_aapl) == 2
+            assert df_aapl.iloc[0]["open"] == 180.0
+            assert df_aapl.iloc[0]["symbol"] == "AAPL"
+            assert df_aapl.iloc[1]["open"] == 181.0
+
+            df_btc = query_candlesticks("BTCUSDT", client=engine.db_conn)
+            assert len(df_btc) == 1
+            assert df_btc.iloc[0]["close"] == 90200.0
+            assert df_btc.iloc[0]["symbol"] == "BTCUSDT"
+
+            # Query with secondary connection in same process (tests read_only fallback)
+            reader_conn = get_duckdb_connection(db_path=db_file, read_only=True)
+            df_btc_ro = query_candlesticks("BTCUSDT", client=reader_conn)
+            assert len(df_btc_ro) == 1
+            reader_conn.close()
+
+            engine.stop()
+            await asyncio.sleep(0.1)
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(_run())
+        client.close()
+

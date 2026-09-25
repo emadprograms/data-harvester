@@ -68,6 +68,13 @@ def get_duckdb_connection(db_path=None, read_only=False):
     try:
         return DuckDBClient(db_path=db_path, read_only=read_only)
     except Exception as e:
+        if read_only:
+            try:
+                # If read-only connection failed due to configuration conflict with an existing
+                # read-write connection in the same process, fallback to read_only=False
+                return DuckDBClient(db_path=db_path, read_only=False)
+            except Exception:
+                pass
         print(f"❌ DuckDB Connection Error: {e}")
         return None
 
