@@ -56,14 +56,14 @@ def clear_market_data_for_range(client, start_utc: datetime, end_utc: datetime, 
 
         if symbols:
             placeholders = ",".join(["?"] * len(symbols))
-            query = f"DELETE FROM market_data WHERE timestamp >= ?::TIMESTAMP AND timestamp < ?::TIMESTAMP AND symbol IN ({placeholders})"
+            query = f"DELETE FROM market_data WHERE timestamp::TIMESTAMP >= ?::TIMESTAMP AND timestamp::TIMESTAMP < ?::TIMESTAMP AND symbol IN ({placeholders})"
             params = [start_str, end_str] + list(symbols)
             client.execute(query, params)
             if logger:
                 logger.log(f"   ✅ {label}: Cleaned {len(symbols)} symbols for range: {start_str} to {end_str}")
         else:
             client.execute(
-                "DELETE FROM market_data WHERE timestamp >= ?::TIMESTAMP AND timestamp < ?::TIMESTAMP",
+                "DELETE FROM market_data WHERE timestamp::TIMESTAMP >= ?::TIMESTAMP AND timestamp::TIMESTAMP < ?::TIMESTAMP",
                 [start_str, end_str]
             )
             if logger:
@@ -190,7 +190,7 @@ def get_session_row_counts(client, symbols, start_utc: datetime, end_utc: dateti
     query = f"""
         SELECT symbol, COUNT(*) 
         FROM market_data 
-        WHERE timestamp >= ?::TIMESTAMP AND timestamp < ?::TIMESTAMP AND symbol IN ({placeholders})
+        WHERE timestamp::TIMESTAMP >= ?::TIMESTAMP AND timestamp::TIMESTAMP < ?::TIMESTAMP AND symbol IN ({placeholders})
         GROUP BY symbol
     """
     params = [start_str, end_str] + list(symbols)
@@ -233,12 +233,12 @@ def query_candlesticks(symbol: str, start_time=None, end_time=None, timeframe="1
 
         if start_time:
             start_str = start_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(start_time, datetime) else str(start_time)
-            where_clauses.append("timestamp >= ?::TIMESTAMP")
+            where_clauses.append("timestamp::TIMESTAMP >= ?::TIMESTAMP")
             params.append(start_str)
 
         if end_time:
             end_str = end_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(end_time, datetime) else str(end_time)
-            where_clauses.append("timestamp <= ?::TIMESTAMP")
+            where_clauses.append("timestamp::TIMESTAMP <= ?::TIMESTAMP")
             params.append(end_str)
 
         where_stmt = " AND ".join(where_clauses)
