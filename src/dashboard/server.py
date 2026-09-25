@@ -1,0 +1,236 @@
+"""
+Data Harvester Dashboard Server.
+Provides a lightweight, multi-threaded REST API and serves the interactive JavaScript web UI.
+Runs on localhost:8000 with zero external framework dependencies.
+"""
+import os
+import json
+import logging
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+from urllib.parse import urlparse, parse_qs, unquote
+from datetime import datetime, timezone, timedelta
+
+from src.database.operations import (
+    get_symbol_inventory_list,
+    add_symbol_to_db,
+    remove_symbol_from_db,
+    get_symbol_map_from_db,
+)
+from src.utils.integrity import (
+    get_database_health_report,
+    detect_1m_gaps,
+    detect_stream_quiet_intervals,
+    validate_ohlcv_anomalies,
+    analyze_price_drift,
+)
+
+logger = logging.getLogger("dashboard_server")
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+INDEX_PATH = os.path.join(STATIC_DIR, "index.html")
+RELOAD_SIGNAL_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", ".stream_reload.signal")
+
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """Multi-threaded HTTP server so concurrent requests do not block each other."""
+    daemon_threads = True
+
+
+class DashboardRequestHandler(BaseHTTPRequestHandler):
+    """Handles REST API and static UI serving."""
+
+    def _send_json(self, data, status=200):
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_text(self, text, content_type="text/html", status=200):
+        body = text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+
+        # 1. Static Web Dashboard Route
+        if path in ["/", "/index.html"]:
+            if os.path.exists(INDEX_PATH):
+                with open(INDEX_PATH, "r", encoding="utf-8") as f:
+                    content = f.read()
+                self._send_text(content, content_type="text/html")
+            else:
+                self._send_text("<h1>Dashboard UI under construction</h1>", status=200)
+            return
+
+        # 2. API: System & Database Health Status
+        if path == "/api/status":
+            report = get_database_health_report()
+            self._send_json(report)
+            return
+
+        # 3. API: Symbol Inventory
+        if path == "/api/symbols":
+            symbols = get_symbol_inventory_list()
+            self._send_json({"symbols": symbols, "total": len(symbols)})
+            return
+
+        # 4. API: Data Integrity & Health Audits
+        if path == "/api/integrity":
+            target_symbol = query.get("symbol", [None])[0]
+            smap = get_symbol_map_from_db()
+            symbol_list = [target_symbol] if target_symbol else list(smap.keys())[:5]
+
+            now_utc = datetime.now(timezone.utc)
+            start_utc = now_utc - timedelta(days=5)
+
+            gap_results = []
+            quiet_results = []
+            drift_results = []
+
+            for sym in symbol_list:
+                gap_results.append(detect_1m_gaps(sym, start_utc, now_utc))
+                quiet_results.append(detect_stream_quiet_intervals(sym, lookback_minutes=60, threshold_seconds=120))
+                drift_results.append(analyze_price_drift(sym))
+
+            anomaly_result = validate_ohlcv_anomalies(symbol=target_symbol)
+
+            all_passed = (
+                anomaly_result["passed"] and
+                all(g.get("passed", True) for g in gap_results) and
+                all(d.get("passed", True) for d in drift_results)
+            )
+
+            audit_response = {
+                "overall_passed": all_passed,
+                "timestamp": now_utc.strftime('%Y-%m-%d %H:%M:%S UTC'),
+                "symbols_audited": symbol_list,
+                "anomalies": anomaly_result,
+                "gaps": gap_results,
+                "quiet_intervals": quiet_results,
+                "drift": drift_results
+            }
+            self._send_json(audit_response)
+            return
+
+        self._send_json({"error": "Not Found", "path": path}, status=404)
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+        try:
+            payload = json.loads(body)
+        except Exception:
+            payload = {}
+
+        # 1. Add Symbol
+        if path == "/api/symbols":
+            disp = payload.get("display_name", "").strip().upper()
+            if not disp:
+                self._send_json({"success": False, "error": "display_name is required"}, status=400)
+                return
+
+            c_ticker = payload.get("capital_ticker") or disp
+            m_ticker = payload.get("massive_ticker") or disp
+            y_ticker = payload.get("yahoo_ticker")
+            b_ticker = payload.get("binance_ticker")
+
+            success = add_symbol_to_db(
+                display_name=disp,
+                yahoo_ticker=y_ticker,
+                massive_ticker=m_ticker,
+                binance_ticker=b_ticker,
+                capital_ticker=c_ticker
+            )
+            if success:
+                # Trigger live reload signal
+                self._trigger_reload_signal()
+                self._send_json({"success": True, "message": f"Symbol {disp} added and streamer signaled"})
+            else:
+                self._send_json({"success": False, "error": "Database write error"}, status=500)
+            return
+
+        # 2. Trigger Streamer Reload
+        if path == "/api/streamer/reload":
+            self._trigger_reload_signal()
+            self._send_json({"success": True, "message": "Live reload signal triggered successfully"})
+            return
+
+        self._send_json({"error": "Not Found", "path": path}, status=404)
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path.startswith("/api/symbols/"):
+            raw_symbol = path.replace("/api/symbols/", "").strip()
+            display_name = unquote(raw_symbol).upper()
+
+            if not display_name:
+                self._send_json({"success": False, "error": "Symbol display name is required"}, status=400)
+                return
+
+            success = remove_symbol_from_db(display_name)
+            if success:
+                self._trigger_reload_signal()
+                self._send_json({"success": True, "message": f"Symbol {display_name} deleted and streamer signaled"})
+            else:
+                self._send_json({"success": False, "error": "Failed to remove symbol"}, status=500)
+            return
+
+        self._send_json({"error": "Not Found", "path": path}, status=404)
+
+    def _trigger_reload_signal(self):
+        """Creates or touches signal file for running streamer to pick up."""
+        try:
+            os.makedirs(os.path.dirname(RELOAD_SIGNAL_FILE), exist_ok=True)
+            with open(RELOAD_SIGNAL_FILE, "w") as f:
+                f.write(datetime.now(timezone.utc).isoformat())
+        except Exception as e:
+            logger.warning(f"Could not write reload signal file: {e}")
+
+    def log_message(self, format, *args):
+        # Override to suppress default noisy console access log during testing
+        return
+
+
+def create_dashboard_server(host="127.0.0.1", port=8000):
+    """Creates a ThreadedHTTPServer instance."""
+    return ThreadedHTTPServer((host, port), DashboardRequestHandler)
+
+
+def run_dashboard_server(host="0.0.0.0", port=8000):
+    """Starts the dashboard server loop."""
+    server = create_dashboard_server(host=host, port=port)
+    print(f"🚀 Data Harvester Dashboard running on http://{host}:{port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down dashboard server...")
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    run_dashboard_server()
