@@ -189,8 +189,8 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
                 min(price) as low,
                 last(price ORDER BY timestamp ASC) as close,
                 COALESCE(sum(volume), count(*)) as volume,
-                'CAPITAL_STREAM' as source,
-                'REG' as session,
+                COALESCE(first(source ORDER BY timestamp ASC), 'CAPITAL_STREAM') as source,
+                COALESCE(first(session ORDER BY timestamp ASC), 'REG') as session,
                 count(*) as tick_count
             FROM ticks
             WHERE {where_sql}
@@ -443,6 +443,74 @@ def get_stream_tape(symbol: str = None, limit: int = 50) -> dict:
 
             ticks.append({
                 "timestamp": str(r[0])[:-3],  # Millisecond precision
+                "symbol": r[1],
+                "price": round(float(r[2]), 4) if r[2] is not None else None,
+                "volume": round(float(r[3]), 2) if r[3] is not None else 1.0,
+                "bid": round(bid, 4) if bid is not None else None,
+                "ask": round(ask, 4) if ask is not None else None,
+                "spread": spread,
+                "source": r[6] or "CAPITAL",
+                "session": r[7] or "REG"
+            })
+
+        return {
+            "symbol": symbol or "ALL",
+            "count": len(ticks),
+            "ticks": ticks
+        }
+    except Exception as e:
+        return {"ticks": [], "count": 0, "error": str(e)}
+    finally:
+        client.close()
+
+
+def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int = 10000, offset: int = 0, direction: str = "asc") -> dict:
+    """
+    Queries raw ticks from streaming.duckdb with filtering by symbol, date/time range, limit, offset, and direction.
+    """
+    limit = min(max(1, int(limit or 10000)), 100000)
+    offset = max(0, int(offset or 0))
+    direction = "DESC" if str(direction).lower() == "desc" else "ASC"
+    
+    client = get_streaming_db_connection()
+    if not client:
+        return {"ticks": [], "count": 0, "error": "Streaming DB unavailable"}
+
+    try:
+        where_clauses = []
+        params = []
+        if symbol:
+            where_clauses.append("symbol = ?")
+            params.append(symbol.strip().upper())
+        if start:
+            where_clauses.append("timestamp::TIMESTAMP >= ?::TIMESTAMP")
+            params.append(start.strip())
+        if end:
+            where_clauses.append("timestamp::TIMESTAMP <= ?::TIMESTAMP")
+            params.append(end.strip())
+
+        where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+        query = f"""
+            SELECT 
+                strftime(timestamp::TIMESTAMP, '%Y-%m-%d %H:%M:%S.%f') as time_str,
+                symbol, price, COALESCE(volume, 1.0) as volume, bid, ask, source, session
+            FROM ticks
+            {where_sql}
+            ORDER BY timestamp {direction}
+            LIMIT ? OFFSET ?
+        """
+        params.extend([limit, offset])
+        res = client.execute(query, params)
+        rows = res.rows or []
+
+        ticks = []
+        for r in rows:
+            bid = float(r[4]) if r[4] is not None else None
+            ask = float(r[5]) if r[5] is not None else None
+            spread = round(ask - bid, 4) if (ask is not None and bid is not None) else None
+
+            ticks.append({
+                "timestamp": str(r[0])[:-3],
                 "symbol": r[1],
                 "price": round(float(r[2]), 4) if r[2] is not None else None,
                 "volume": round(float(r[3]), 2) if r[3] is not None else 1.0,

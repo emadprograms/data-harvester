@@ -31,6 +31,7 @@ from src.dashboard.analytics import (
     get_historical_overview,
     get_symbols_coverage,
     get_stream_tape,
+    get_ticks,
     get_stream_status,
     get_market_session_info,
 )
@@ -285,6 +286,25 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 limit = 50
             tape = get_stream_tape(sym, limit)
             self._send_json(tape)
+            return
+
+        # 7b. API: Raw Ticks Query
+        if path == "/api/ticks":
+            sym = query.get("symbol", [None])[0]
+            start = query.get("start", query.get("start_time", [None]))[0]
+            end = query.get("end", query.get("end_time", [None]))[0]
+            try:
+                limit = int(query.get("limit", [10000])[0])
+            except ValueError:
+                limit = 10000
+            try:
+                offset = int(query.get("offset", [0])[0])
+            except ValueError:
+                offset = 0
+            direction = query.get("direction", ["asc"])[0]
+
+            ticks_res = get_ticks(sym, start, end, limit, offset, direction)
+            self._send_json(ticks_res.get("ticks", []))
             return
 
         # 8. API: Streamer Process & Health Status
