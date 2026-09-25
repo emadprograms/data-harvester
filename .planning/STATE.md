@@ -37,6 +37,12 @@ Last activity: 2026-09-25 — Completed Milestone v2.0 (Dedicated Dual-DuckDB St
 
 None. Milestone is fully complete and verified.
 
+## Quick Tasks Completed
+
+| Task | Date | Status | Description |
+|---|---|---|---|
+| `20260925-consolidate-historical-db` | 2026-09-25 | Complete ✓ | Consolidate archive_data.db and market_data.db into historical.duckdb (7.99M rows, Oct 2024–Jul 2026) |
+
 ## Operator Next Steps
 
 1. Launch Capital.com Live Streamer:
@@ -45,3 +51,4 @@ None. Milestone is fully complete and verified.
    `python -m src.dashboard.server` (then open http://localhost:8000 in your browser)
 3. Run Full Test Suite:
    `PYTHONPATH=. .venv/bin/pytest tests/`
+
