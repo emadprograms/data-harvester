@@ -439,7 +439,7 @@ def get_database_health_report(historical_path=None, streaming_path=None) -> dic
         size_mb = round(os.path.getsize(hp) / (1024 * 1024), 2)
         try:
             from src.database.connection import get_duckdb_connection
-            h_client = get_duckdb_connection(hp)
+            h_client = get_duckdb_connection(hp, read_only=True)
             if h_client:
                 res_md = h_client.execute("SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM market_data").fetchone()
                 res_sym = h_client.execute("SELECT COUNT(*) FROM symbol_map").fetchone()
@@ -470,7 +470,7 @@ def get_database_health_report(historical_path=None, streaming_path=None) -> dic
         size_mb = round(os.path.getsize(sp) / (1024 * 1024), 2)
         try:
             from src.database.connection import get_duckdb_connection
-            s_client = get_duckdb_connection(sp)
+            s_client = get_duckdb_connection(sp, read_only=True)
             if s_client:
                 res_ticks = s_client.execute("SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM ticks").fetchone()
                 s_client.close()

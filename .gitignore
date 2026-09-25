@@ -42,7 +42,7 @@ mirror_local*.db
 *.db-shm
 *.db-journal
 *.db-info
-data/
+/data/
 *.duckdb*
 scratch/
 

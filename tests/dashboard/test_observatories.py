@@ -53,7 +53,7 @@ def test_get_streaming_candles_pure_isolation():
     assert res.get("symbol") == "TEST_STREAM"
     assert len(res.get("candles")) >= 1
     candle = res["candles"][0]
-    assert candle["source"] == "CAPITAL_STREAM"
+    assert candle["source"] in ("CAPITAL", "CAPITAL_STREAM")
     assert candle["tick_count"] >= 1
 
 

@@ -35,7 +35,7 @@ Last activity: 2026-09-25 — Completed quick task 260925-vqd: Refactor index.ht
 
 ## Blockers/Concerns
 
-None. Milestone and quick tasks verified with 220/220 tests passing cleanly.
+None. Milestone and quick tasks verified with 225/225 tests passing cleanly.
 
 ### Quick Tasks Completed
 
@@ -43,6 +43,8 @@ None. Milestone and quick tasks verified with 220/220 tests passing cleanly.
 |---|-------------|------|--------|-----------|
 | 260925-vhi | Separate historical and streaming databases on dashboard | 2026-09-25 | 2acfc40b | [260925-vhi-separate-historical-and-streaming-databa](./quick/260925-vhi-separate-historical-and-streaming-databa/) |
 | 260925-vqd | Refactor index.html and expand test coverage | 2026-09-25 | 44c219c0 | [260925-vqd-refactor-index-html-and-expand-test-cove](./quick/260925-vqd-refactor-index-html-and-expand-test-cove/) |
+| 260925-wf0 | Databento tick backfill for streaming duckdb | 2026-09-25 | Pending | [260925-wf0-databento-tick-backfill-for-streaming-du](./quick/260925-wf0-databento-tick-backfill-for-streaming-du/) |
+| 260926-x1a | Restructure tests into nested domain subfolders | 2026-09-26 | Pending | [260926-x1a-restructure-tests-into-nested-subfolders](./quick/260926-x1a-restructure-tests-into-nested-subfolders/) |
 
 ## Operator Next Steps
 
