@@ -1,31 +1,23 @@
 # Data Harvester — Local DuckDB & Live Streaming Engine
 
 ## What This Is
-A high-performance, 100% local market data harvesting and streaming engine running on macOS (Mac Mini) and Windows. It captures live market ticks from Capital.com and Binance via persistent WebSockets, storing real-time tick-by-tick data in `streaming.db` and historical 1-minute bars in `market_data.duckdb` for instant analysis and candlestick charting.
+A high-performance, 100% local market data harvesting and streaming engine running on macOS (Mac Mini) and Windows. It captures live market quotes from Capital.com via persistent WebSockets, storing real-time tick-by-tick quotes in `data/streaming.duckdb` and canonical 1-minute historical bars in `data/historical.duckdb` with sub-millisecond dynamic OHLCV candlestick resampling, deep data integrity validation, and an interactive local web dashboard (`http://localhost:8000`).
 
 ## Core Value
 Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
 
-## Current Milestone: v2.0 Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard
-
-**Goal:** Decouple REST and Streaming into 100% separate dedicated DuckDB files, capture raw tick quotes exclusively from Capital.com with dynamic symbol reload, and provide an interactive JavaScript data integrity & symbol management web dashboard.
-
-**Target features:**
-- 100% separate dedicated `.duckdb` files (`data/historical.duckdb` for 1m REST bars and `data/streaming.duckdb` for raw streaming ticks) with zero write-lock contention.
-- Dedicated Capital.com WebSocket streaming engine capturing raw tick quotes (`timestamp`, `symbol`, `bid`, `ask`, `price`, `volume`, `source`) with Binance deactivated from the streaming runner.
-- Dynamic live reload of symbol subscriptions via database/API without process restarts.
-- Data integrity test engine checking missing minutes/gaps, OHLCV sanity, and REST vs stream drift.
-- Local JavaScript web dashboard for system health, integrity audits, and symbol management served on localhost:8000.
-
-## Current State (Shipped v1.0)
-- **Historical Database**: 3,949,885 rows across 40 symbols migrated into DuckDB. Sub-10ms dynamic OHLCV candlestick resampling via DuckDB `time_bucket()`.
-- **Live Streaming**: Multi-broker WebSocket streamer implemented.
-- **Test Suite**: 127 automated unit, integration, and acceptance tests passing cleanly with zero cloud dependencies.
+## Current State (Shipped v2.0)
+- **Historical Storage (`data/historical.duckdb`)**: 7,993,726 deduplicated 1-minute OHLCV bars across 40 symbols covering October 2024 to July 2026 (920 MB on disk). Sub-10ms dynamic candlestick resampling via DuckDB native `time_bucket()`.
+- **Live Streaming Storage (`data/streaming.duckdb`)**: Dedicated tick quote storage (`ticks` table) capturing bid, ask, price, and volume exclusively from Capital.com.
+- **Dynamic Subscription Hot-Reload**: Live symbol subscriptions update on the fly upon database/dashboard modification without dropping WebSocket connections.
+- **Data Integrity & Health Engine**: Automated gap detection for regular market hours, stream quiet interval monitoring, OHLCV sanity/anomaly bounds validation, and cross-database price drift reconciliation.
+- **Interactive Web Dashboard**: Zero-dependency multi-threaded Python server (`http://localhost:8000`) with modern dark-mode single-page JS/Tailwind UI for real-time KPIs, one-click integrity audits, and symbol management.
+- **Test Automation**: 163 automated unit, integration, concurrency stress, and end-to-end tests passing cleanly (0 failures).
 
 ## Requirements
 
 ### Validated
-- [x] **EXTR-01**: One-time zero-read extraction of historical data from Turso Archive into local DuckDB (3.95M rows) — v1.0
+- [x] **EXTR-01**: One-time zero-read extraction of historical data from Turso Archive into local DuckDB — v1.0
 - [x] **PURG-01**: Purged legacy Turso, Docker (`.devcontainer`), instruction (`.gemini`), and GitHub Actions files — v1.0
 - [x] **DUCK-01**: Implemented native DuckDB database layer (`market_data.duckdb`) with optimized schema and batch ingestion — v1.0
 - [x] **DUCK-02**: Implemented high-speed `time_bucket()` resampling queries for OHLCV candlesticks — v1.0
@@ -33,24 +25,30 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - [x] **STRM-02**: Implemented Binance 24/7 live WebSocket streaming for crypto and gold — v1.0
 - [x] **STRM-03**: Continuous background ingestion pipeline buffering ticks and writing cleanly to DuckDB — v1.0
 - [x] **STRM-04**: Dedicated pure tick-by-tick storage via Binance `@trade` and Capital quotes — v1.0
-- [x] **QUAL-01**: Comprehensive integration and acceptance tests verifying live streaming write and DuckDB query performance (127 tests passing) — v1.0
+- [x] **QUAL-01**: Comprehensive integration and acceptance tests verifying live streaming write and DuckDB query performance — v1.0
+- [x] **DUAL-01**: Decoupled database into 100% separate dedicated DuckDB files (`historical.duckdb` and `streaming.duckdb`) — v2.0
+- [x] **DUAL-02**: Implemented isolated connection factories with read-only concurrency support and cross-database `ATTACH` capabilities — v2.0
+- [x] **DUAL-03**: Created optimized schema and indexes for raw tick quotes in `data/streaming.duckdb` — v2.0
+- [x] **STRM-05**: Deactivated Binance from live streaming runner; stream exclusively from Capital.com — v2.0
+- [x] **STRM-06**: Ingest Capital.com raw tick quotes directly into `data/streaming.duckdb` using batched async writer — v2.0
+- [x] **STRM-07**: Implemented dynamic live reload of symbol subscriptions without restarting daemon — v2.0
+- [x] **INTG-01**: Automated gap and continuity detection for historical 1-minute bars during market trading hours — v2.0
+- [x] **INTG-02**: Stream continuity and quiet interval detector for streaming ticks — v2.0
+- [x] **INTG-03**: OHLCV sanity and anomaly detection (negative/zero prices, `high < low`, price spikes, nulls) — v2.0
+- [x] **INTG-04**: Cross-database drift analyzer comparing historical REST candle closes against streaming tick prices — v2.0
+- [x] **DASH-01**: Lightweight local Python backend server running on `http://localhost:8000` exposing REST endpoints — v2.0
+- [x] **DASH-02**: Responsive single-page JavaScript/Tailwind web dashboard displaying live streamer status, tick rates, and storage — v2.0
+- [x] **DASH-03**: Interactive Data Integrity visual audit view with one-click test execution and pass/warn/fail matrix — v2.0
+- [x] **DASH-04**: Symbol Management interface in the web dashboard allowing users to add/remove symbols with dynamic live reload — v2.0
+- [x] **QUAL-02**: Comprehensive automated test suite validating dual DuckDB files, streaming raw ticks, live symbol reload, and integrity — v2.0
+- [x] **QUAL-03**: End-to-end API tests validating dashboard endpoints, symbol lifecycle, and concurrency stress testing — v2.0
 
-### Active (v2.0)
-- [ ] **DUAL-01**: 100% separate dedicated DuckDB files (`data/historical.duckdb` and `data/streaming.duckdb`) with isolated connection pools and `ATTACH` support.
-- [ ] **DUAL-02**: Dedicated schema for `streaming.duckdb` storing raw tick quotes (`streaming_ticks` table).
-- [ ] **STRM-05**: Capital.com exclusive streaming runner with Binance deactivated.
-- [ ] **STRM-06**: Dynamic live reload of symbol subscriptions without restarting the streaming runner process.
-- [ ] **INTG-01**: Automated gap and continuity detection for historical 1-minute bars during trading sessions.
-- [ ] **INTG-02**: OHLCV data anomaly and sanity validator (negative prices, high < low, price spikes, nulls).
-- [ ] **INTG-03**: REST vs WebSocket price drift and reconciliation analyzer.
-- [ ] **DASH-01**: Lightweight local web server exposing REST endpoints for database health, integrity metrics, and symbol management.
-- [ ] **DASH-02**: Interactive JavaScript single-page web dashboard displaying live heartbeat, integrity test results, and gap analysis.
-- [ ] **DASH-03**: Full Symbol Management in web dashboard allowing users to add, remove, and trigger dynamic subscription reloads.
-- [ ] **QUAL-02**: Comprehensive automated test suite validating dual DuckDB files, streaming raw ticks, live symbol reload, integrity checks, and dashboard APIs.
+### Active
+*(Ready for next milestone cycle — initialize via `/gsd-new-milestone`)*
 
 ### Out of Scope
-- Direct `market-rewind` frontend modifications (deferred per user instruction: focus on database, streamer, and dashboard first)
-- Cloudflare R2 / S3 remote object storage (user decided on 100% local architecture)
+- Direct `market-rewind` frontend modifications (deferred per user instruction: focus on data harvesting, storage, and integrity dashboard)
+- Cloudflare R2 / S3 remote object storage (preserving 100% local, zero-cloud architecture)
 - Turso dual-replica synchronization and mirror database (deprecated and purged)
 - GitHub Actions scheduled runs (deprecated in favor of persistent local daemon)
 - Binance live streaming writes (streaming table is dedicated exclusively to Capital.com)
@@ -60,6 +58,7 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - In v2.0, the user specifically requested 100% separate dedicated `.duckdb` files to avoid DuckDB single-writer lock contention between the 24/7 streaming engine and historical batch harvesting or web dashboard queries.
 - Raw tick quotes are stored for Capital.com to retain granular bid/ask/price precision without quantization.
 - A modern local web dashboard provides immediate observability into database health, data integrity, and interactive symbol management.
+- Multi-year historical data from release assets was consolidated into `historical.duckdb`, giving a unified continuous archive from October 2024 through July 2026.
 
 ## Constraints
 - **Zero Cloud Limits**: No dependence on cloud database quotas.
@@ -73,28 +72,14 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 | Migrate from Turso to DuckDB | Eliminates cloud read/write quotas, prevents CPU overheating, provides native `time_bucket` resampling | ✓ Good |
 | Switch from 6x daily REST batch to 24/7 WebSockets | Captures real-time ticks, eliminates Capital.com 16-hour lookback clipping, avoids REST rate limit spikes | ✓ Good |
 | Pure local storage on SSD | Zero egress costs, no network latency, works on Mac Mini and Windows | ✓ Good |
-| 100% Separate Dedicated DuckDB Files | Completely avoids DuckDB file write-lock contention between 24/7 streamer and REST harvester/web dashboard | Pending Phase 5 |
-| Raw Tick Quotes for Capital.com Streaming | Retains full price/quote fidelity at tick level in dedicated `streaming.duckdb` | Pending Phase 6 |
-| Deactivate Binance from Streaming Runner | User specified webstreaming only saves data from Capital.com | Pending Phase 6 |
-| Dynamic Live Reload for Subscriptions | Enables adding/removing tracked symbols without stopping the always-on daemon | Pending Phase 6 |
-| Lightweight Python API + Vanilla JS/Tailwind Dashboard | Zero-build simplicity, instant browser access on localhost:8000, easy maintenance | Pending Phase 8 |
-
-## Evolution
-
-This document evolves at phase transitions and milestone boundaries.
-
-**After each phase transition** (via `/gsd-transition`):
-1. Requirements invalidated? → Move to Out of Scope with reason
-2. Requirements validated? → Move to Validated with phase reference
-3. New requirements emerged? → Add to Active
-4. Decisions to log? → Add to Key Decisions
-5. "What This Is" still accurate? → Update if drifted
-
-**After each milestone** (via `/gsd-complete-milestone`):
-1. Full review of all sections
-2. Core Value check — still the right priority?
-3. Audit Out of Scope — reasons still valid?
-4. Update Context with current state
+| 100% Separate Dedicated DuckDB Files | Completely avoids DuckDB file write-lock contention between 24/7 streamer and REST harvester/web dashboard | ✓ Good |
+| Raw Tick Quotes for Capital.com Streaming | Retains full price/quote fidelity at tick level in dedicated `streaming.duckdb` | ✓ Good |
+| Deactivate Binance from Streaming Runner | User specified webstreaming only saves data from Capital.com | ✓ Good |
+| Dynamic Live Reload for Subscriptions | Enables adding/removing tracked symbols without stopping the always-on daemon | ✓ Good |
+| Lightweight Python API + Vanilla JS/Tailwind Dashboard | Zero-build simplicity, instant browser access on localhost:8000, easy maintenance | ✓ Good |
+| In-Process Adaptive Configuration Matching | Solves DuckDB's in-process `read_only` configuration conflict by adaptively matching existing open mode | ✓ Good |
+| Intermittent Flush Locking in Runner | Opens connection only during ~5ms flush window, keeping file unlocked 99.5% of the time for readers | ✓ Good |
+| Vectorized Release Data Consolidation | Uses DuckDB's native SQLite scanner to merge, deduplicate, and tier 9.4M rows in 11.64s | ✓ Good |
 
 ---
-*Last updated: 2026-09-25 after v2.0 milestone initialization*
+*Last updated: 2026-09-25 after v2.0 milestone completion*

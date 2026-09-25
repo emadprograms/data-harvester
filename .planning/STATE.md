@@ -3,7 +3,7 @@ gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard
 status: complete
-last_updated: "2026-09-25T20:46:00.000Z"
+last_updated: "2026-09-25T21:20:00.000Z"
 last_activity: 2026-09-25
 progress:
   total_phases: 5
@@ -15,12 +15,19 @@ progress:
 
 # Project State: Data Harvester
 
+## Project Reference
+
+See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-09-25)
+
+**Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.  
+**Current focus:** Shipped v2.0 — Planning next milestone (`/gsd-new-milestone`).  
+
 ## Current Position
 
-Phase: All Phases Complete (Phases 5 to 9)
-Plan: All Plans Complete
-Status: Milestone v2.0 Complete ✅
-Last activity: 2026-09-25 — Completed Milestone v2.0 (Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard)
+Phase: All Phases Complete (Phases 5 to 9)  
+Plan: All Plans Complete  
+Status: Milestone v2.0 Shipped & Archived ✅  
+Last activity: 2026-09-25 — Archived Milestone v2.0 and tagged `v2.0`  
 
 ## Milestone Summary
 
@@ -35,7 +42,7 @@ Last activity: 2026-09-25 — Completed Milestone v2.0 (Dedicated Dual-DuckDB St
 
 ## Blockers/Concerns
 
-None. Milestone is fully complete and verified.
+None. Milestone is fully complete, verified, and archived.
 
 ## Quick Tasks Completed
 
@@ -48,7 +55,6 @@ None. Milestone is fully complete and verified.
 1. Launch Capital.com Live Streamer:
    `python -m src.stream.runner`
 2. Launch Interactive Web Dashboard:
-   `python -m src.dashboard.server` (then open http://localhost:8000 in your browser)
-3. Run Full Test Suite:
-   `PYTHONPATH=. .venv/bin/pytest tests/`
-
+   `python -m src.dashboard.server` (open http://localhost:8000 in your browser)
+3. Start Next Milestone:
+   `/gsd-new-milestone`
