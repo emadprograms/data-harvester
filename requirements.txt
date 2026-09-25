@@ -1,7 +1,7 @@
 pandas
 yfinance
-libsql-client
-libsql
+duckdb
+websockets
 requests
 urllib3
 pytz

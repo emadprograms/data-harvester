@@ -42,6 +42,9 @@ mirror_local*.db
 *.db-shm
 *.db-journal
 *.db-info
+data/
+*.duckdb*
+scratch/
 
 # Temporary folders
 buy_cash/
