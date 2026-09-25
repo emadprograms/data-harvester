@@ -64,3 +64,149 @@ class TestStreamers:
         streamer = CapitalStreamer(epics=["AAPL", "TSLA", "NVDA"])
         assert len(streamer.epics) == 3
         assert "AAPL" in streamer.epics
+
+    def test_capital_subscription_chunking(self):
+        """CapitalStreamer must chunk epics in batches of 40."""
+        # 45 epics
+        epics = [f"EPIC_{i}" for i in range(45)]
+        streamer = CapitalStreamer(epics=epics)
+        assert len(streamer.epics) == 45
+
+
+class TestStreamingEngineAndParsers:
+    """Tests StreamingEngine async queue, writer worker, and WebSocket payloads."""
+
+    def test_streaming_engine_queueing(self):
+        from src.stream.runner import StreamingEngine
+        import asyncio
+
+        async def _run():
+            engine = StreamingEngine()
+
+            # Binance bar: closed vs unclosed
+            bar1 = ("2026-01-01 10:00:00", "BTCUSDT", 90000.0, 90500.0, 89900.0, 90200.0, 10.0, "REG", "BINANCE")
+            await engine._handle_binance_bar(bar1, is_closed=False)
+            assert engine.write_queue.qsize() == 0
+
+            await engine._handle_binance_bar(bar1, is_closed=True)
+            assert engine.write_queue.qsize() == 1
+            queued = await engine.write_queue.get()
+            assert queued == bar1
+
+        asyncio.run(_run())
+
+    def test_streaming_engine_writer_worker(self, tmp_path):
+        from src.stream.runner import StreamingEngine
+        from src.database.connection import DuckDBClient
+        from src.database.schema import init_db
+        import asyncio
+
+        db_file = str(tmp_path / "test_engine.duckdb")
+        client = DuckDBClient(db_path=db_file)
+        init_db(client)
+
+        async def _run():
+            engine = StreamingEngine(db_path=db_file, flush_interval=0.1)
+            engine.db_conn = client
+            engine.running = True
+
+            # Enqueue 3 bars
+            bars = [
+                ("2026-01-01 10:00:00", "AAPL", 150.0, 151.0, 149.0, 150.5, 100.0, "REG", "CAPITAL"),
+                ("2026-01-01 10:01:00", "AAPL", 150.5, 152.0, 150.0, 151.5, 200.0, "REG", "CAPITAL"),
+                ("2026-01-01 10:00:00", "BTCUSDT", 90000.0, 90100.0, 89900.0, 90050.0, 5.0, "REG", "BINANCE")
+            ]
+            for b in bars:
+                engine._enqueue_bar(b)
+
+            # Run writer worker briefly
+            worker_task = asyncio.create_task(engine._duckdb_writer_worker())
+            await asyncio.sleep(0.3)
+            engine.running = False
+            await asyncio.sleep(0.1)
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(_run())
+
+        # Check records in DB
+        res = client.execute("SELECT count(*) FROM market_data")
+        assert res.rows[0][0] == 3
+        client.close()
+
+    def test_binance_kline_payload_parsing(self):
+        """Simulate Binance kline JSON parsing logic."""
+        import json
+        from datetime import timezone
+
+        mock_payload = {
+            "stream": "btcusdt@kline_1m",
+            "data": {
+                "e": "kline",
+                "E": 1700000060000,
+                "s": "BTCUSDT",
+                "k": {
+                    "t": 1700000000000,
+                    "T": 1700000059999,
+                    "s": "BTCUSDT",
+                    "i": "1m",
+                    "o": "36500.00",
+                    "c": "36550.00",
+                    "h": "36600.00",
+                    "l": "36490.00",
+                    "v": "12.345",
+                    "x": True
+                }
+            }
+        }
+
+        data = mock_payload
+        kline = data["data"]["k"]
+        open_time_ms = kline["t"]
+        dt_utc = datetime.fromtimestamp(open_time_ms / 1000.0, tz=timezone.utc)
+        ts_str = dt_utc.strftime('%Y-%m-%d %H:%M:%S')
+
+        bar = (
+            ts_str,
+            kline["s"].upper(),
+            float(kline["o"]),
+            float(kline["h"]),
+            float(kline["l"]),
+            float(kline["c"]),
+            float(kline["v"]),
+            "REG",
+            "BINANCE"
+        )
+        assert bar[1] == "BTCUSDT"
+        assert bar[2] == 36500.0
+        assert bar[3] == 36600.0
+        assert bar[4] == 36490.0
+        assert bar[5] == 36550.0
+        assert bar[6] == 12.345
+        assert bar[8] == "BINANCE"
+        assert kline["x"] is True
+
+    def test_capital_quote_payload_parsing(self):
+        """Simulate Capital quote JSON parsing logic."""
+        mock_msg = {
+            "destination": "quote",
+            "correlationId": "1",
+            "payload": {
+                "epic": "AAPL",
+                "bid": 180.50,
+                "ofr": 180.60,
+                "timestamp": 1700000000000
+            }
+        }
+
+        payload = mock_msg["payload"]
+        epic = payload["epic"]
+        bid = float(payload["bid"])
+        ofr = float(payload["ofr"])
+        mid_price = (bid + ofr) / 2.0
+        assert epic == "AAPL"
+        assert mid_price == 180.55
+

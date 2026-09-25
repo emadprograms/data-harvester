@@ -145,3 +145,84 @@ class TestDuckDBStorage:
 
         finally:
             client.close()
+
+    def test_candlestick_various_intervals_and_filters(self):
+        """query_candlesticks must support 1m, 15m, 1h, 1d timeframes and date bounds."""
+        client = self._new_client()
+        try:
+            schema_module.init_db(client)
+
+            # Insert 15 minutes of bars
+            bars = []
+            for i in range(15):
+                bars.append((
+                    f"2026-01-01 10:{i:02d}:00",
+                    "NVDA",
+                    100.0 + i,
+                    101.0 + i,
+                    99.0 + i,
+                    100.5 + i,
+                    100.0,
+                    "REG",
+                    "MASSIVE"
+                ))
+            ops_module._save_to_client(client, bars)
+
+            # 1m query
+            df_1m = ops_module.query_candlesticks("NVDA", timeframe="1m", client=client)
+            assert len(df_1m) == 15
+
+            # 15m query
+            df_15m = ops_module.query_candlesticks("NVDA", timeframe="15m", client=client)
+            assert len(df_15m) == 1
+            assert df_15m.iloc[0]["open"] == 100.0
+            assert df_15m.iloc[0]["close"] == 114.5
+            assert df_15m.iloc[0]["volume"] == 1500.0
+
+            # 1h query
+            df_1h = ops_module.query_candlesticks("NVDA", timeframe="1h", client=client)
+            assert len(df_1h) == 1
+
+            # Date range filtering
+            df_filtered = ops_module.query_candlesticks(
+                "NVDA",
+                start_time=datetime(2026, 1, 1, 10, 5, 0),
+                end_time=datetime(2026, 1, 1, 10, 9, 0),
+                timeframe="1m",
+                client=client
+            )
+            assert len(df_filtered) == 5
+
+            # Non-existent symbol
+            df_empty = ops_module.query_candlesticks("UNKNOWN_SYM", client=client)
+            assert df_empty.empty
+            assert list(df_empty.columns) == ["time", "symbol", "open", "high", "low", "close", "volume"]
+
+        finally:
+            client.close()
+
+    def test_save_data_to_storage_dataframe(self):
+        """save_data_to_storage must successfully persist a pandas DataFrame with NaNs handled."""
+        client = self._new_client()
+        try:
+            schema_module.init_db(client)
+
+            df = pd.DataFrame([
+                {"timestamp": pd.Timestamp("2026-01-01 12:00:00"), "symbol": "MSFT", "open": 300.0, "high": 305.0, "low": 299.0, "close": 304.0, "volume": 1000.0, "session": "REG", "source": "CAPITAL"},
+                {"timestamp": pd.Timestamp("2026-01-01 12:01:00"), "symbol": "MSFT", "open": 304.0, "high": 306.0, "low": 303.0, "close": 305.0, "volume": float("nan"), "session": "REG", "source": "CAPITAL"}
+            ])
+
+            success = ops_module.save_data_to_storage(df, archive_client=client)
+            assert success is True
+
+            counts = ops_module.get_session_row_counts(
+                client,
+                symbols=["MSFT"],
+                start_utc=datetime(2026, 1, 1, 12, 0, 0),
+                end_utc=datetime(2026, 1, 1, 12, 2, 0)
+            )
+            assert counts.get("MSFT") == 2
+
+        finally:
+            client.close()
+

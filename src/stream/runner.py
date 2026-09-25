@@ -60,9 +60,10 @@ class StreamingEngine:
 
         while self.running or not self.write_queue.empty():
             try:
-                # Wait for items with timeout
+                # Wait for items with dynamic timeout
+                wait_time = min(0.5, self.flush_interval) if buffer else 1.0
                 try:
-                    bar = await asyncio.wait_for(self.write_queue.get(), timeout=1.0)
+                    bar = await asyncio.wait_for(self.write_queue.get(), timeout=wait_time)
                     buffer.append(bar)
                     self.write_queue.task_done()
                 except asyncio.TimeoutError:
@@ -90,6 +91,18 @@ class StreamingEngine:
             except Exception as e:
                 logger.error(f"DuckDB writer worker error: {e}")
                 await asyncio.sleep(1)
+
+        # Flush any remaining buffer when worker terminates
+        if buffer:
+            try:
+                count = len(buffer)
+                _save_to_client(self.db_conn, buffer, label="DuckDB-Stream")
+                self.total_bars_saved += count
+                logger.info(f"💾 Final flush: committed {count} bars to DuckDB.")
+                buffer.clear()
+            except Exception as e:
+                logger.error(f"Error during final buffer flush: {e}")
+
 
     async def start(self):
         self.running = True
