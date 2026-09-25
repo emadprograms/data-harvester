@@ -97,14 +97,10 @@ def add_symbol_to_db(display_name: str, yahoo_ticker=None, massive_ticker=None, 
         return False
 
     try:
+        client.execute("DELETE FROM symbol_map WHERE display_name = ?", [display_name])
         client.execute("""
             INSERT INTO symbol_map (display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker)
             VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT (display_name) DO UPDATE SET
-                yahoo_ticker = excluded.yahoo_ticker,
-                massive_ticker = excluded.massive_ticker,
-                binance_ticker = excluded.binance_ticker,
-                capital_ticker = excluded.capital_ticker
         """, [display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker])
         return True
     except Exception as e:

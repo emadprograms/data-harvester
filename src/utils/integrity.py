@@ -128,7 +128,7 @@ def detect_1m_gaps(symbol: str, start_utc: datetime, end_utc: datetime, client=N
         res = client.execute("""
             SELECT timestamp::TIMESTAMP as ts
             FROM market_data
-            WHERE symbol = ? AND timestamp >= ?::TIMESTAMP AND timestamp < ?::TIMESTAMP
+            WHERE symbol = ? AND timestamp::TIMESTAMP >= ?::TIMESTAMP AND timestamp::TIMESTAMP < ?::TIMESTAMP
             ORDER BY timestamp ASC
         """, [symbol, start_str, end_str])
 
