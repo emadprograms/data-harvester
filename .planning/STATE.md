@@ -35,7 +35,13 @@ Last activity: 2026-09-25 — Completed Milestone v3.0 (Observability Command Ce
 
 ## Blockers/Concerns
 
-None. Milestone is fully complete and verified with 182/182 tests passing cleanly.
+None. Milestone is fully complete and verified with 187/187 tests passing cleanly.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260925-vhi | Separate historical and streaming databases on dashboard | 2026-09-25 | 2acfc40b | [260925-vhi-separate-historical-and-streaming-databa](./quick/260925-vhi-separate-historical-and-streaming-databa/) |
 
 ## Operator Next Steps
 
