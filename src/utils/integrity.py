@@ -117,7 +117,7 @@ def detect_1m_gaps(symbol: str, start_utc: datetime, end_utc: datetime, client=N
     """
     own_client = False
     if not client:
-        client = get_historical_db_connection(read_only=True)
+        client = get_historical_db_connection()
         own_client = True
 
     if not client:
@@ -194,7 +194,7 @@ def detect_stream_quiet_intervals(symbol: str, lookback_minutes: int = 60, thres
     """
     own_client = False
     if not client:
-        client = get_streaming_db_connection(read_only=True)
+        client = get_streaming_db_connection()
         own_client = True
 
     if not client:
@@ -274,7 +274,7 @@ def validate_ohlcv_anomalies(symbol: str = None, limit: int = 10000, client=None
     """
     own_client = False
     if not client:
-        client = get_historical_db_connection(read_only=True)
+        client = get_historical_db_connection()
         own_client = True
 
     if not client:
@@ -439,7 +439,7 @@ def get_database_health_report(historical_path=None, streaming_path=None) -> dic
         size_mb = round(os.path.getsize(hp) / (1024 * 1024), 2)
         try:
             from src.database.connection import get_duckdb_connection
-            h_client = get_duckdb_connection(hp, read_only=True)
+            h_client = get_duckdb_connection(hp)
             if h_client:
                 res_md = h_client.execute("SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM market_data").fetchone()
                 res_sym = h_client.execute("SELECT COUNT(*) FROM symbol_map").fetchone()
@@ -470,7 +470,7 @@ def get_database_health_report(historical_path=None, streaming_path=None) -> dic
         size_mb = round(os.path.getsize(sp) / (1024 * 1024), 2)
         try:
             from src.database.connection import get_duckdb_connection
-            s_client = get_duckdb_connection(sp, read_only=True)
+            s_client = get_duckdb_connection(sp)
             if s_client:
                 res_ticks = s_client.execute("SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM ticks").fetchone()
                 s_client.close()

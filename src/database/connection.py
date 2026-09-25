@@ -58,12 +58,40 @@ class DuckDBResult:
 
 class DuckDBClient:
     """High-performance local DuckDB client wrapper."""
-    def __init__(self, db_path=None, read_only=False):
+    def __init__(self, db_path=None, read_only=False, max_retries=5, retry_delay=0.05):
+        import time
         self.db_path = db_path or DEFAULT_DB_PATH
+        self.read_only = read_only
         dirname = os.path.dirname(self.db_path)
         if dirname:
             os.makedirs(dirname, exist_ok=True)
-        self.conn = duckdb.connect(self.db_path, read_only=read_only)
+
+        conn = None
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                conn = duckdb.connect(self.db_path, read_only=self.read_only)
+                break
+            except Exception as e:
+                err_msg = str(e)
+                last_error = e
+                # 1. Handle in-process configuration conflict: adapt to whichever mode is already open in this process
+                if "different configuration" in err_msg:
+                    try:
+                        self.read_only = not self.read_only
+                        conn = duckdb.connect(self.db_path, read_only=self.read_only)
+                        break
+                    except Exception as inner_e:
+                        last_error = inner_e
+                # 2. Handle cross-process or concurrent file lock contention: retry with backoff
+                if "lock" in err_msg.lower() and attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                break
+
+        if conn is None:
+            raise last_error or RuntimeError(f"Could not connect to DuckDB at {self.db_path}")
+        self.conn = conn
 
     def execute(self, query, params=None):
         if params is not None:
@@ -83,7 +111,13 @@ class DuckDBClient:
             os.makedirs(dirname, exist_ok=True)
         ro_clause = " (READ_ONLY)" if read_only else ""
         escaped_path = target_db_path.replace("'", "''")
-        self.conn.execute(f"ATTACH IF NOT EXISTS '{escaped_path}' AS {alias}{ro_clause}")
+        try:
+            self.conn.execute(f"ATTACH IF NOT EXISTS '{escaped_path}' AS {alias}{ro_clause}")
+        except Exception as e:
+            if "already attached" in str(e) or "Unique file handle conflict" in str(e):
+                pass
+            else:
+                raise
         return self
 
     def detach(self, alias: str):
@@ -106,13 +140,6 @@ def get_duckdb_connection(db_path=None, read_only=False):
     try:
         return DuckDBClient(db_path=db_path, read_only=read_only)
     except Exception as e:
-        if read_only:
-            try:
-                # If read-only connection failed due to configuration conflict with an existing
-                # read-write connection in the same process, fallback to read_only=False
-                return DuckDBClient(db_path=db_path, read_only=False)
-            except Exception:
-                pass
         print(f"❌ DuckDB Connection Error: {e}")
         return None
 

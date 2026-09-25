@@ -163,8 +163,10 @@ class StreamingEngine:
     async def start(self):
         self.running = True
         logger.info(f"Initializing streaming database schema ({self.db_path})...")
-        self.db_conn = get_streaming_db_connection(self.db_path)
-        init_streaming_db(self.db_conn)
+        init_conn = get_streaming_db_connection(self.db_path)
+        init_streaming_db(init_conn)
+        if init_conn:
+            init_conn.close()
 
         # Discover symbols from symbol_map
         symbol_map = get_symbol_map_from_db()
