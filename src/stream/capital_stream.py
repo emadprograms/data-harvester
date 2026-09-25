@@ -1,6 +1,7 @@
 """
 Capital.com WebSocket Streamer for Equities, Indices, and FX.
-Connects to Capital.com Streaming API, maintains heartbeats, and streams real-time market quotes.
+Connects to Capital.com Streaming API, maintains heartbeats, streams real-time market quotes,
+and supports dynamic subscription update without restarting connection.
 """
 import asyncio
 import json
@@ -22,6 +23,7 @@ class CapitalStreamer:
         self.epics = list(epics or ["AAPL", "NVDA", "TSLA", "SPY", "QQQ", "AMD", "AMZN", "MSFT"])
         self.on_tick_callback = on_tick_callback
         self.running = False
+        self.ws = None
         self._cst = None
         self._sec_token = None
         self._session_time = 0
@@ -58,10 +60,11 @@ class CapitalStreamer:
                 logger.debug(f"Capital heartbeat error: {e}")
                 break
 
-    async def _subscribe_epics(self, ws):
+    async def _subscribe_epics(self, ws, epics_to_sub=None):
         """Subscribes to market data for configured epics in chunks of 40."""
-        for i in range(0, len(self.epics), MAX_EPICS_PER_SUB):
-            chunk = self.epics[i : i + MAX_EPICS_PER_SUB]
+        target = epics_to_sub if epics_to_sub is not None else self.epics
+        for i in range(0, len(target), MAX_EPICS_PER_SUB):
+            chunk = target[i : i + MAX_EPICS_PER_SUB]
             sub_msg = {
                 "destination": "marketData.subscribe",
                 "correlationId": str(i + 1),
@@ -74,6 +77,42 @@ class CapitalStreamer:
             await ws.send(json.dumps(sub_msg))
             logger.info(f"Subscribed to Capital.com {len(chunk)} epics: {chunk[:5]}...")
 
+    async def update_subscriptions(self, new_epics: list[str]) -> bool:
+        """Dynamically updates active epic subscriptions over the live WebSocket."""
+        new_set = set(new_epics)
+        old_set = set(self.epics)
+        to_add = list(new_set - old_set)
+        to_remove = list(old_set - new_set)
+
+        self.epics = list(new_epics)
+
+        if not self.ws or not self.running:
+            logger.info(f"Streamer not connected; updated target epics to: {self.epics}")
+            return True
+
+        try:
+            if to_remove:
+                for i in range(0, len(to_remove), MAX_EPICS_PER_SUB):
+                    chunk = to_remove[i : i + MAX_EPICS_PER_SUB]
+                    unsub_msg = {
+                        "destination": "marketData.unsubscribe",
+                        "cst": self._cst,
+                        "securityToken": self._sec_token,
+                        "payload": {
+                            "epics": chunk
+                        }
+                    }
+                    await self.ws.send(json.dumps(unsub_msg))
+                    logger.info(f"Unsubscribed from Capital.com {len(chunk)} epics: {chunk}")
+
+            if to_add:
+                await self._subscribe_epics(self.ws, epics_to_sub=to_add)
+
+            return True
+        except Exception as e:
+            logger.error(f"Error updating Capital subscriptions dynamically: {e}")
+            return False
+
     async def start(self):
         self.running = True
         backoff = 1
@@ -84,13 +123,14 @@ class CapitalStreamer:
                     await asyncio.sleep(10)
                     continue
 
-                logger.info(f"Connecting to Capital.com streaming endpoint...")
+                logger.info("Connecting to Capital.com streaming endpoint...")
                 async with websockets.connect(
                     STREAMING_URL,
                     ping_interval=30,
                     ping_timeout=15,
                     close_timeout=5
                 ) as ws:
+                    self.ws = ws
                     logger.info("✅ Connected to Capital.com WebSocket stream.")
                     backoff = 1
 
@@ -135,15 +175,18 @@ class CapitalStreamer:
                                             logger.error(f"Capital callback error: {cb_err}")
 
                     finally:
+                        self.ws = None
                         ping_task.cancel()
 
             except (websockets.ConnectionClosed, asyncio.TimeoutError, OSError) as e:
+                self.ws = None
                 if not self.running:
                     break
                 logger.warning(f"Capital.com connection dropped ({e}). Reconnecting in {backoff}s...")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)
             except Exception as e:
+                self.ws = None
                 if not self.running:
                     break
                 logger.error(f"Unexpected Capital.com error: {e}. Reconnecting in {backoff}s...")
@@ -152,3 +195,9 @@ class CapitalStreamer:
 
     def stop(self):
         self.running = False
+        if self.ws:
+            try:
+                asyncio.create_task(self.ws.close())
+            except Exception:
+                pass
+        self.ws = None
