@@ -4,6 +4,7 @@ plan: 01
 title: Turso Data Migration & Legacy Purge
 status: complete
 completed_at: 2026-09-25T15:50:35Z
+requirements-completed: [MIGR-01, MIGR-02, MIGR-03]
 ---
 
 # Phase 1 Summary: Turso Data Migration & Legacy Purge
