@@ -3,7 +3,7 @@ Real-Time Tick-to-Bar Aggregator.
 Aggregates tick quotes into clean 1-minute OHLCV candlesticks for DuckDB ingestion.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +72,11 @@ class CandleAggregator:
 
     def flush_stale_candles(self, max_age_seconds: int = 120):
         """Flushes any open candles older than max_age_seconds."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         symbols_to_flush = []
 
         for symbol, current in self._current_bars.items():
-            candle_dt = datetime.strptime(current["minute_str"], '%Y-%m-%d %H:%M:%S')
+            candle_dt = datetime.strptime(current["minute_str"], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
             if (now - candle_dt).total_seconds() > max_age_seconds:
                 symbols_to_flush.append(symbol)
 
