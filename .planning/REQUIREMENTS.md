@@ -6,25 +6,25 @@
 ## v1 Requirements
 
 ### Data Migration & Legacy Purge
-- [ ] **MIGR-01**: One-time export of existing historical data from Turso Archive into local SQLite/DuckDB without burning row read quotas
-- [ ] **MIGR-02**: Purge legacy Turso, Docker (`.devcontainer`), instruction (`.gemini`), and GitHub Actions workflow files
-- [ ] **MIGR-03**: Update dependencies in `requirements.txt` to remove `libsql` and add `duckdb` and `websockets`
+- [x] **MIGR-01**: One-time export of existing historical data from Turso Archive into local SQLite/DuckDB without burning row read quotas
+- [x] **MIGR-02**: Purge legacy Turso, Docker (`.devcontainer`), instruction (`.gemini`), and GitHub Actions workflow files
+- [x] **MIGR-03**: Update dependencies in `requirements.txt` to remove `libsql` and add `duckdb` and `websockets`
 
 ### DuckDB Storage Engine
-- [ ] **DUCK-01**: Implement thread-safe DuckDB connection manager for `data/market_data.duckdb`
-- [ ] **DUCK-02**: Initialize optimized time-series table schema (`timestamp`, `symbol`, `open`, `high`, `low`, `close`, `volume`, `session`, `source`) with indexes
-- [ ] **DUCK-03**: Implement buffered batch upsert/insert operations in DuckDB
-- [ ] **DUCK-04**: Implement high-performance `time_bucket()` resampling function to produce custom candlestick timeframes (1m, 5m, 15m, 1h, 1d) in single-digit milliseconds
+- [x] **DUCK-01**: Implement thread-safe DuckDB connection manager for `data/market_data.duckdb`
+- [x] **DUCK-02**: Initialize optimized time-series table schema (`timestamp`, `symbol`, `open`, `high`, `low`, `close`, `volume`, `session`, `source`) with indexes
+- [x] **DUCK-03**: Implement buffered batch upsert/insert operations in DuckDB
+- [x] **DUCK-04**: Implement high-performance `time_bucket()` resampling function to produce custom candlestick timeframes (1m, 5m, 15m, 1h, 1d) in single-digit milliseconds
 
 ### 24/7 Live WebSocket Streaming
-- [ ] **STRM-01**: Implement Capital.com WebSocket client with authentication, token refresh, and heartbeat management
-- [ ] **STRM-02**: Implement Binance 24/7 public WebSocket client for crypto (`*USDT`) and gold (`PAXGUSDT`)
-- [ ] **STRM-03**: Implement persistent streaming runner with automatic reconnection and exponential backoff
-- [ ] **STRM-04**: Ingest streaming events into DuckDB batch queue with minimal CPU footprint
+- [x] **STRM-01**: Implement Capital.com WebSocket client with authentication, token refresh, and heartbeat management
+- [x] **STRM-02**: Implement Binance 24/7 public WebSocket client for crypto (`*USDT`) and gold (`PAXGUSDT`)
+- [x] **STRM-03**: Implement persistent streaming runner with automatic reconnection and exponential backoff
+- [x] **STRM-04**: Ingest streaming events into DuckDB batch queue with minimal CPU footprint
 
 ### Verification & Testing
-- [ ] **TEST-01**: Update test suite to run against DuckDB in-memory/temp databases
-- [ ] **TEST-02**: Validate streaming ingestion and DuckDB OHLCV aggregation queries with automated integration tests
+- [x] **TEST-01**: Update test suite to run against DuckDB in-memory/temp databases
+- [x] **TEST-02**: Validate streaming ingestion and DuckDB OHLCV aggregation queries with automated integration tests
 
 ## Out of Scope
 | Feature | Reason |
@@ -38,21 +38,21 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MIGR-01 | Phase 1 | Pending |
-| MIGR-02 | Phase 1 | Pending |
-| MIGR-03 | Phase 1 | Pending |
-| DUCK-01 | Phase 2 | Pending |
-| DUCK-02 | Phase 2 | Pending |
-| DUCK-03 | Phase 2 | Pending |
-| DUCK-04 | Phase 2 | Pending |
-| STRM-01 | Phase 3 | Pending |
-| STRM-02 | Phase 3 | Pending |
-| STRM-03 | Phase 3 | Pending |
-| STRM-04 | Phase 3 | Pending |
-| TEST-01 | Phase 4 | Pending |
-| TEST-02 | Phase 4 | Pending |
+| MIGR-01 | Phase 1 | Completed |
+| MIGR-02 | Phase 1 | Completed |
+| MIGR-03 | Phase 1 | Completed |
+| DUCK-01 | Phase 2 | Completed |
+| DUCK-02 | Phase 2 | Completed |
+| DUCK-03 | Phase 2 | Completed |
+| DUCK-04 | Phase 2 | Completed |
+| STRM-01 | Phase 3 | Completed |
+| STRM-02 | Phase 3 | Completed |
+| STRM-03 | Phase 3 | Completed |
+| STRM-04 | Phase 3 | Completed |
+| TEST-01 | Phase 4 | Completed |
+| TEST-02 | Phase 4 | Completed |
 
 **Coverage:**
 - v1 requirements: 13 total
-- Mapped to phases: 13
+- Completed: 13 ✓
 - Unmapped: 0 ✓

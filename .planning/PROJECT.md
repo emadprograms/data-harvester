@@ -9,17 +9,14 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 ## Requirements
 
 ### Validated
-- [x] Initial market data harvesting logic and provider integrations (archived on `v1-archive` branch)
-
-### Active
-- [ ] **EXTR-01**: One-time zero-read extraction of historical data from Turso Archive into local SQLite/DuckDB
-- [ ] **PURG-01**: Purge all legacy Turso, Docker (`.devcontainer`), instruction (`.gemini`), and GitHub Actions files
-- [ ] **DUCK-01**: Implement native DuckDB database layer (`market_data.duckdb`) with optimized schema and batch ingestion
-- [ ] **DUCK-02**: Implement high-speed `time_bucket()` resampling queries for OHLCV candlesticks
-- [ ] **STRM-01**: Implement Capital.com live WebSocket streaming with automatic session authentication and heartbeats
-- [ ] **STRM-02**: Implement Binance 24/7 live WebSocket streaming for crypto and gold
-- [ ] **STRM-03**: Continuous background ingestion pipeline buffering ticks and writing cleanly to DuckDB
-- [ ] **QUAL-01**: Comprehensive integration tests verifying live streaming write and DuckDB query performance
+- [x] **EXTR-01**: One-time zero-read extraction of historical data from Turso Archive into local DuckDB (3.95M rows)
+- [x] **PURG-01**: Purged legacy Turso, Docker (`.devcontainer`), instruction (`.gemini`), and GitHub Actions files
+- [x] **DUCK-01**: Implemented native DuckDB database layer (`market_data.duckdb`) with optimized schema and batch ingestion
+- [x] **DUCK-02**: Implemented high-speed `time_bucket()` resampling queries for OHLCV candlesticks
+- [x] **STRM-01**: Implemented Capital.com live WebSocket streaming with automatic session authentication and heartbeats
+- [x] **STRM-02**: Implemented Binance 24/7 live WebSocket streaming for crypto and gold
+- [x] **STRM-03**: Continuous background ingestion pipeline buffering ticks and writing cleanly to DuckDB
+- [x] **QUAL-01**: Comprehensive integration tests verifying live streaming write and DuckDB query performance (102 tests passing)
 
 ### Out of Scope
 - Direct `market-rewind` frontend modifications (deferred per user instruction: focus on database & streaming first)
