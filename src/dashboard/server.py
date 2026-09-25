@@ -26,6 +26,9 @@ from src.utils.integrity import (
 )
 from src.dashboard.analytics import (
     get_candles,
+    get_historical_candles,
+    get_streaming_candles,
+    get_historical_overview,
     get_symbols_coverage,
     get_stream_tape,
     get_stream_status,
@@ -178,16 +181,28 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
 
         # 5. API: OHLCV Candlestick Query (with native time_bucket)
-        if path == "/api/candles":
+        if path in ["/api/candles", "/api/historical/candles", "/api/streaming/candles"]:
             sym = query.get("symbol", ["SPY"])[0]
             tf = query.get("timeframe", query.get("tf", ["1m"]))[0]
             start = query.get("start", [None])[0]
             end = query.get("end", [None])[0]
+            db_source = query.get("source", query.get("db", ["historical"]))[0]
+            if path == "/api/historical/candles":
+                db_source = "historical"
+            elif path == "/api/streaming/candles":
+                db_source = "streaming"
+
             try:
                 limit = int(query.get("limit", [1000])[0])
             except ValueError:
                 limit = 1000
-            res = get_candles(sym, tf, start, end, limit)
+            res = get_candles(sym, tf, start, end, limit, db_source=db_source)
+            self._send_json(res)
+            return
+
+        # 5b. API: Dedicated Historical Database Overview
+        if path == "/api/historical/overview":
+            res = get_historical_overview()
             self._send_json(res)
             return
 

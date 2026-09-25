@@ -34,14 +34,14 @@ TIMEFRAME_MAP = {
 }
 
 
-def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000) -> dict:
+def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000) -> dict:
     """
-    Fetches OHLCV candles for a symbol, optionally aggregated with DuckDB time_bucket().
-    Returns chronological (oldest to newest) candles formatted for TradingView Lightweight Charts.
+    Fetches canonical OHLCV candles exclusively from data/historical.duckdb.
+    Zero blending with streaming data.
     """
     symbol = (symbol or "").strip().upper()
     if not symbol:
-        return {"error": "symbol parameter is required", "candles": [], "count": 0}
+        return {"error": "symbol parameter is required", "candles": [], "count": 0, "database": "historical"}
 
     timeframe = (timeframe or "1m").lower()
     interval_str = TIMEFRAME_MAP.get(timeframe)
@@ -63,9 +63,9 @@ def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str 
 
     where_sql = " AND ".join(where_clauses)
 
-    client = get_historical_db_connection()
+    client = get_historical_db_connection(read_only=True)
     if not client:
-        return {"error": "Historical DuckDB unavailable", "candles": [], "count": 0}
+        return {"error": "Historical DuckDB unavailable", "candles": [], "count": 0, "database": "historical"}
 
     try:
         if interval_str is None:
@@ -111,7 +111,6 @@ def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str 
             res = client.execute(query, params)
             rows = res.rows or []
 
-        # Rows come out newest-first from LIMIT query; reverse to oldest-first for chart plotting
         candles = []
         for r in reversed(rows):
             candles.append({
@@ -126,74 +125,167 @@ def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str 
                 "session": r[8] or "REG"
             })
 
-        # Blend real-time live candles from streaming.duckdb
-        s_client = get_streaming_db_connection()
-        if s_client:
-            try:
-                s_interval = interval_str or "1 minute"
-                s_where = ["symbol = ?"]
-                s_params = [symbol]
-
-                if rows:
-                    latest_hist_ts = rows[0][1]  # newest historical candle
-                    s_where.append("timestamp::TIMESTAMP > ?::TIMESTAMP")
-                    s_params.append(str(latest_hist_ts))
-                elif start:
-                    s_where.append("timestamp::TIMESTAMP >= ?::TIMESTAMP")
-                    s_params.append(start.strip())
-
-                if end:
-                    s_where.append("timestamp::TIMESTAMP <= ?::TIMESTAMP")
-                    s_params.append(end.strip())
-
-                s_sql = f"""
-                    SELECT 
-                        epoch(time_bucket(INTERVAL '{s_interval}', timestamp::TIMESTAMP)) as time_sec,
-                        strftime(time_bucket(INTERVAL '{s_interval}', timestamp::TIMESTAMP), '%Y-%m-%d %H:%M:%S') as time_str,
-                        first(price ORDER BY timestamp ASC) as open,
-                        max(price) as high,
-                        min(price) as low,
-                        last(price ORDER BY timestamp ASC) as close,
-                        COALESCE(sum(volume), count(*)) as volume,
-                        'CAPITAL_STREAM' as source,
-                        'REG' as session
-                    FROM ticks
-                    WHERE {' AND '.join(s_where)}
-                    GROUP BY time_bucket(INTERVAL '{s_interval}', timestamp::TIMESTAMP)
-                    ORDER BY time_sec ASC
-                    LIMIT 500
-                """
-                s_res = s_client.execute(s_sql, s_params)
-                for sr in (s_res.rows or []):
-                    candles.append({
-                        "time": int(sr[0]),
-                        "time_str": str(sr[1]),
-                        "open": round(float(sr[2]), 4) if sr[2] is not None else None,
-                        "high": round(float(sr[3]), 4) if sr[3] is not None else None,
-                        "low": round(float(sr[4]), 4) if sr[4] is not None else None,
-                        "close": round(float(sr[5]), 4) if sr[5] is not None else None,
-                        "volume": round(float(sr[6]), 2) if sr[6] is not None else 0.0,
-                        "source": sr[7],
-                        "session": sr[8]
-                    })
-            except Exception:
-                pass
-            finally:
-                s_client.close()
-
-        # Enforce chronological ordering and limit
-        candles.sort(key=lambda x: x["time"])
-        if len(candles) > limit:
-            candles = candles[-limit:]
-
         return {
             "symbol": symbol,
             "timeframe": timeframe,
+            "database": "historical",
             "count": len(candles),
             "candles": candles
         }
     except Exception as e:
-        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0}
+        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "historical"}
+    finally:
+        client.close()
+
+
+def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000) -> dict:
+    """
+    Fetches OHLCV candles resampled on-the-fly exclusively from raw ticks in data/streaming.duckdb.
+    Zero dependency on historical.duckdb.
+    """
+    symbol = (symbol or "").strip().upper()
+    if not symbol:
+        return {"error": "symbol parameter is required", "candles": [], "count": 0, "database": "streaming"}
+
+    timeframe = (timeframe or "1m").lower()
+    interval_map = {
+        "1s": "1 second",
+        "5s": "5 seconds",
+        "15s": "15 seconds",
+        "1m": "1 minute",
+        "5m": "5 minutes",
+        "15m": "15 minutes",
+        "30m": "30 minutes",
+        "1h": "1 hour",
+        "4h": "4 hours",
+        "1d": "1 day",
+    }
+    interval_str = interval_map.get(timeframe, "1 minute")
+    limit = min(max(1, int(limit or 1000)), 10000)
+
+    s_client = get_streaming_db_connection(read_only=True)
+    if not s_client:
+        return {"error": "Streaming DuckDB unavailable", "candles": [], "count": 0, "database": "streaming"}
+
+    try:
+        where_clauses = ["symbol = ?"]
+        params = [symbol]
+
+        if start:
+            where_clauses.append("timestamp::TIMESTAMP >= ?::TIMESTAMP")
+            params.append(start.strip())
+        if end:
+            where_clauses.append("timestamp::TIMESTAMP <= ?::TIMESTAMP")
+            params.append(end.strip())
+
+        where_sql = " AND ".join(where_clauses)
+
+        query = f"""
+            SELECT 
+                epoch(time_bucket(INTERVAL '{interval_str}', timestamp::TIMESTAMP)) as time_sec,
+                strftime(time_bucket(INTERVAL '{interval_str}', timestamp::TIMESTAMP), '%Y-%m-%d %H:%M:%S') as time_str,
+                first(price ORDER BY timestamp ASC) as open,
+                max(price) as high,
+                min(price) as low,
+                last(price ORDER BY timestamp ASC) as close,
+                COALESCE(sum(volume), count(*)) as volume,
+                'CAPITAL_STREAM' as source,
+                'REG' as session,
+                count(*) as tick_count
+            FROM ticks
+            WHERE {where_sql}
+            GROUP BY time_bucket(INTERVAL '{interval_str}', timestamp::TIMESTAMP)
+            ORDER BY time_sec DESC
+            LIMIT ?
+        """
+        params.append(limit)
+        res = s_client.execute(query, params)
+        rows = res.rows or []
+
+        candles = []
+        for r in reversed(rows):
+            candles.append({
+                "time": int(r[0]),
+                "time_str": str(r[1]),
+                "open": round(float(r[2]), 4) if r[2] is not None else None,
+                "high": round(float(r[3]), 4) if r[3] is not None else None,
+                "low": round(float(r[4]), 4) if r[4] is not None else None,
+                "close": round(float(r[5]), 4) if r[5] is not None else None,
+                "volume": round(float(r[6]), 2) if r[6] is not None else 0.0,
+                "source": r[7] or "CAPITAL_STREAM",
+                "session": r[8] or "REG",
+                "tick_count": int(r[9]) if len(r) > 9 and r[9] is not None else 0
+            })
+
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "database": "streaming",
+            "count": len(candles),
+            "candles": candles
+        }
+    except Exception as e:
+        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "streaming"}
+    finally:
+        s_client.close()
+
+
+def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, db_source: str = "historical") -> dict:
+    """
+    Unified entry point routing to either the canonical historical archive or the live streaming buffer.
+    Never blends both databases silently.
+    """
+    db_source = (db_source or "historical").lower().strip()
+    if db_source in ["streaming", "live", "stream", "ticks"]:
+        return get_streaming_candles(symbol, timeframe=timeframe, start=start, end=end, limit=limit)
+    return get_historical_candles(symbol, timeframe=timeframe, start=start, end=end, limit=limit)
+
+
+def get_historical_overview() -> dict:
+    """
+    Returns high-level metadata for data/historical.duckdb:
+    total rows, unique symbols, overall date span, and breakdown by source tier.
+    """
+    client = get_historical_db_connection(read_only=True)
+    if not client:
+        return {"error": "Historical database unavailable", "database": "data/historical.duckdb"}
+
+    try:
+        res_summary = client.execute("""
+            SELECT 
+                COUNT(*) as total_rows,
+                COUNT(DISTINCT symbol) as unique_symbols,
+                MIN(timestamp) as min_ts,
+                MAX(timestamp) as max_ts
+            FROM market_data
+        """).fetchone()
+
+        res_sources = client.execute("""
+            SELECT source, COUNT(*) as cnt
+            FROM market_data
+            GROUP BY source
+            ORDER BY cnt DESC
+        """).fetchall()
+
+        total = res_summary[0] if res_summary else 0
+        sources_breakdown = {}
+        for src, cnt in (res_sources or []):
+            src_name = src or "UNKNOWN"
+            sources_breakdown[src_name] = {
+                "count": cnt,
+                "percentage": round((cnt / total * 100), 2) if total > 0 else 0
+            }
+
+        return {
+            "total_rows": total,
+            "unique_symbols": res_summary[1] if res_summary else 0,
+            "min_timestamp": str(res_summary[2]) if res_summary and res_summary[2] else None,
+            "max_timestamp": str(res_summary[3]) if res_summary and res_summary[3] else None,
+            "sources": sources_breakdown,
+            "database": "data/historical.duckdb"
+        }
+    except Exception as e:
+        return {"error": str(e), "database": "data/historical.duckdb"}
     finally:
         client.close()
 

@@ -163,19 +163,19 @@
   <nav class="border-b border-slate-800 bg-slate-900/50 px-6">
     <div class="max-w-7xl mx-auto flex space-x-8 text-xs font-medium">
       <button onclick="switchTab('charts')" id="tab-btn-charts" class="py-3 border-b-2 border-emerald-500 text-white flex items-center gap-2 font-semibold">
-        <span>📊 Financial Chart & Explorer</span>
+        <span>🏛️ Historical Database (Archive)</span>
       </button>
       <button onclick="switchTab('stream')" id="tab-btn-stream" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
-        <span>⚡ Live Stream Tape & Telemetry</span>
+        <span>⚡ Streaming Database (Live Buffer)</span>
       </button>
       <button onclick="switchTab('symbols')" id="tab-btn-symbols" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
-        <span>📋 Symbol Coverage Matrix</span>
+        <span>📋 Historical Symbol Coverage</span>
       </button>
       <button onclick="switchTab('integrity')" id="tab-btn-integrity" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
-        <span>🛡️ Data Integrity Engine</span>
+        <span>🛡️ Data Integrity & Gaps</span>
       </button>
       <button onclick="switchTab('harvester')" id="tab-btn-harvester" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
-        <span>🤖 Harvester Automation & Logs</span>
+        <span>🚀 REST Harvester Runner</span>
       </button>
     </div>
   </nav>
@@ -187,6 +187,35 @@
     <!-- TAB 1: FINANCIAL CHART & DATA EXPLORER     -->
     <!-- ========================================== -->
     <section id="tab-charts" class="space-y-4">
+      <!-- Database Source Switcher Bar -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <label class="text-xs font-bold text-slate-300 uppercase tracking-wider">Database Source:</label>
+          <div class="flex items-center gap-1 bg-slate-950 border border-slate-800 p-1 rounded-lg">
+            <button onclick="setDbSource('historical')" id="src-historical" class="px-3 py-1.5 rounded text-xs font-mono font-bold bg-emerald-600 text-white flex items-center gap-1.5 shadow-sm transition">
+              <span>🏛️</span> Historical Archive (historical.duckdb)
+            </button>
+            <button onclick="setDbSource('streaming')" id="src-streaming" class="px-3 py-1.5 rounded text-xs font-mono font-bold text-slate-400 hover:text-white flex items-center gap-1.5 transition">
+              <span>⚡</span> Live Stream Buffer (streaming.duckdb)
+            </button>
+          </div>
+        </div>
+
+        <div id="db-source-badge-pill" class="px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center gap-2">
+          <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+          <span id="db-source-pill-text">Mode: CANONICAL HISTORICAL ARCHIVE</span>
+        </div>
+      </div>
+
+      <!-- Informational Explanatory Banner -->
+      <div id="db-source-notice" class="text-xs px-4 py-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800/50 text-emerald-300 font-mono flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span>🏛️</span>
+          <span><strong>Historical Archive Mode</strong>: Querying permanent canonical 1m bars from <code>data/historical.duckdb</code> with Source-Tiering (Massive, Binance, Capital REST). Fully backfillable.</span>
+        </div>
+        <span class="text-[11px] text-emerald-400/80 font-mono">Zero streaming ticks blended</span>
+      </div>
+
       <!-- Chart Controls Toolbar -->
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
         <!-- Symbol Selection & Quick Pills -->
@@ -244,6 +273,7 @@
       <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg p-4 relative">
         <!-- Interactive Hover OHLCV Legend -->
         <div id="chart-legend" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono text-slate-300 pb-2 border-b border-slate-800/80 mb-2">
+          <span id="legend-db-badge" class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold">HISTORICAL DB</span>
           <span class="text-white font-bold" id="legend-symbol">NVDA (1m)</span>
           <span id="legend-time" class="text-slate-400">--</span>
           <span>O: <span id="legend-open" class="text-white font-bold">--</span></span>
@@ -272,7 +302,7 @@
               <span>🔬 Raw OHLCV Candle Inspector</span>
               <span id="inspector-count-badge" class="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-300 font-mono">0 bars loaded</span>
             </h3>
-            <p class="text-xs text-slate-400">Inspect underlying 1-minute or aggregated bars directly from historical.duckdb.</p>
+            <p id="inspector-desc" class="text-xs text-slate-400">Inspect underlying 1-minute or aggregated bars directly from historical.duckdb.</p>
           </div>
           <div class="flex items-center gap-3">
             <input type="text" id="inspector-search" oninput="filterInspectorTable()" placeholder="Search date/time..." class="px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500 font-mono">
@@ -284,7 +314,7 @@
 
         <div class="max-h-80 overflow-y-auto">
           <table class="w-full text-left text-xs border-collapse">
-            <thead class="sticky top-0 bg-slate-850 border-b border-slate-800 text-slate-400 uppercase font-mono text-[11px] z-10">
+            <thead id="inspector-thead" class="sticky top-0 bg-slate-850 border-b border-slate-800 text-slate-400 uppercase font-mono text-[11px] z-10">
               <tr>
                 <th class="py-2.5 px-4">Timestamp (UTC)</th>
                 <th class="py-2.5 px-4 text-right">Open</th>
@@ -333,6 +363,18 @@
           <button onclick="triggerStreamReload()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-lg transition flex items-center gap-1.5 shadow">
             <span>⚡</span> Hot-Reload Subscriptions
           </button>
+        </div>
+      <!-- Ephemeral Buffer Architecture Warning/Notice -->
+      <div class="text-xs px-4 py-3 rounded-xl bg-indigo-950/40 border border-indigo-800/60 text-indigo-300 font-mono flex items-start gap-3 shadow-sm">
+        <span class="text-lg">⚠️</span>
+        <div>
+          <div class="font-bold text-white uppercase tracking-wider text-[11px] mb-0.5">Live Ephemeral Buffer Architecture:</div>
+          <p class="text-slate-300 leading-relaxed">
+            WebSocket tick quotes are stored strictly in <code class="text-indigo-400 font-bold">data/streaming.duckdb</code>. 
+            Because WebSocket streams only emit live events, if this daemon is stopped, disconnected, or the server is undeployed, 
+            <strong>ticks during downtime cannot be recovered via WebSocket</strong>.
+            Historical gaps must always be fetched and backfilled into <code class="text-emerald-400 font-bold">data/historical.duckdb</code> using the REST Harvester.
+          </p>
         </div>
       </div>
 
@@ -577,6 +619,7 @@
     let currentSymbol = 'NVDA';
     let currentTimeframe = '1m';
     let currentLimit = 500;
+    let currentDbSource = 'historical'; // 'historical' or 'streaming'
     let loadedCandles = [];
     let allSymbolsCoverage = [];
     let previousTicks = {};
@@ -715,7 +758,60 @@
       chgEl.className = change >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold';
 
       const srcEl = document.getElementById('legend-source');
-      srcEl.innerText = candle.source || 'MASSIVE';
+      srcEl.innerText = candle.source || (currentDbSource === 'historical' ? 'MASSIVE' : 'CAPITAL_STREAM');
+
+      const dbBadge = document.getElementById('legend-db-badge');
+      if (dbBadge) {
+        if (currentDbSource === 'historical') {
+          dbBadge.innerText = "HISTORICAL DB";
+          dbBadge.className = "px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold";
+        } else {
+          dbBadge.innerText = "STREAMING DB";
+          dbBadge.className = "px-2 py-0.5 rounded text-[10px] bg-indigo-950 text-indigo-400 border border-indigo-800 font-mono font-bold";
+        }
+      }
+    }
+
+    function setDbSource(source) {
+      currentDbSource = source;
+      const btnHist = document.getElementById('src-historical');
+      const btnStream = document.getElementById('src-streaming');
+      const pill = document.getElementById('db-source-badge-pill');
+      const pillText = document.getElementById('db-source-pill-text');
+      const notice = document.getElementById('db-source-notice');
+
+      if (source === 'historical') {
+        if (btnHist) btnHist.className = "px-3 py-1.5 rounded text-xs font-mono font-bold bg-emerald-600 text-white flex items-center gap-1.5 shadow-sm transition";
+        if (btnStream) btnStream.className = "px-3 py-1.5 rounded text-xs font-mono font-bold text-slate-400 hover:text-white flex items-center gap-1.5 transition";
+        if (pill) pill.className = "px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center gap-2";
+        if (pillText) pillText.innerText = "Mode: CANONICAL HISTORICAL ARCHIVE";
+        if (notice) {
+          notice.className = "text-xs px-4 py-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800/50 text-emerald-300 font-mono flex items-center justify-between";
+          notice.innerHTML = `
+            <div class="flex items-center gap-2">
+              <span>🏛️</span>
+              <span><strong>Historical Archive Mode</strong>: Querying permanent canonical 1m bars from <code>data/historical.duckdb</code> with Source-Tiering (Massive, Binance, Capital REST). Fully backfillable.</span>
+            </div>
+            <span class="text-[11px] text-emerald-400/80 font-mono">Zero streaming ticks blended</span>
+          `;
+        }
+      } else {
+        if (btnHist) btnHist.className = "px-3 py-1.5 rounded text-xs font-mono font-bold text-slate-400 hover:text-white flex items-center gap-1.5 transition";
+        if (btnStream) btnStream.className = "px-3 py-1.5 rounded text-xs font-mono font-bold bg-indigo-600 text-white flex items-center gap-1.5 shadow-sm transition";
+        if (pill) pill.className = "px-3 py-1 rounded-full text-xs font-mono font-bold bg-indigo-950 text-indigo-400 border border-indigo-800 flex items-center gap-2";
+        if (pillText) pillText.innerText = "Mode: LIVE STREAM TICK BUFFER";
+        if (notice) {
+          notice.className = "text-xs px-4 py-2.5 rounded-lg bg-indigo-950/30 border border-indigo-800/50 text-indigo-300 font-mono flex items-center justify-between";
+          notice.innerHTML = `
+            <div class="flex items-center gap-2">
+              <span>⚡</span>
+              <span><strong>Live Stream Buffer Mode</strong>: Querying dynamic resampled candles from <code>data/streaming.duckdb</code> (Capital.com WebSocket). Ephemeral session data (not backfillable if offline).</span>
+            </div>
+            <span class="text-[11px] text-indigo-400/80 font-mono">Dynamic tick-to-bar aggregation</span>
+          `;
+        }
+      }
+      loadChartData();
     }
 
     async function loadChartData() {
@@ -726,7 +822,7 @@
       currentLimit = limitSelect ? parseInt(limitSelect.value) : 500;
 
       try {
-        const res = await fetch(`${API_BASE}/api/candles?symbol=${encodeURIComponent(currentSymbol)}&tf=${currentTimeframe}&limit=${currentLimit}`);
+        const res = await fetch(`${API_BASE}/api/candles?symbol=${encodeURIComponent(currentSymbol)}&tf=${currentTimeframe}&limit=${currentLimit}&source=${currentDbSource}`);
         if (!res.ok) throw new Error("Failed to fetch candle data");
         const data = await res.json();
 
@@ -796,10 +892,51 @@
     function renderInspectorTable(candles) {
       const tbody = document.getElementById('inspector-table-body');
       const badge = document.getElementById('inspector-count-badge');
+      const thead = document.getElementById('inspector-thead');
+      const desc = document.getElementById('inspector-desc');
       if (!tbody) return;
       tbody.innerHTML = '';
 
-      if (badge) badge.innerText = `${candles.length.toLocaleString()} bars loaded`;
+      if (thead) {
+        if (currentDbSource === 'streaming') {
+          thead.innerHTML = `
+            <tr>
+              <th class="py-2.5 px-4">Timestamp (UTC)</th>
+              <th class="py-2.5 px-4 text-right">Open</th>
+              <th class="py-2.5 px-4 text-right">High</th>
+              <th class="py-2.5 px-4 text-right">Low</th>
+              <th class="py-2.5 px-4 text-right">Close</th>
+              <th class="py-2.5 px-4 text-right">Volume</th>
+              <th class="py-2.5 px-4 text-center">Ticks</th>
+              <th class="py-2.5 px-4 text-center">Source</th>
+            </tr>
+          `;
+        } else {
+          thead.innerHTML = `
+            <tr>
+              <th class="py-2.5 px-4">Timestamp (UTC)</th>
+              <th class="py-2.5 px-4 text-right">Open</th>
+              <th class="py-2.5 px-4 text-right">High</th>
+              <th class="py-2.5 px-4 text-right">Low</th>
+              <th class="py-2.5 px-4 text-right">Close</th>
+              <th class="py-2.5 px-4 text-right">Volume</th>
+              <th class="py-2.5 px-4 text-center">Session</th>
+              <th class="py-2.5 px-4 text-center">Source</th>
+            </tr>
+          `;
+        }
+      }
+
+      if (desc) {
+        desc.innerText = currentDbSource === 'historical'
+          ? "Inspect underlying 1-minute or aggregated bars directly from data/historical.duckdb."
+          : "Inspect dynamically resampled candles from raw tick quotes in data/streaming.duckdb.";
+      }
+
+      if (badge) {
+        const dbName = currentDbSource === 'historical' ? 'historical.duckdb' : 'streaming.duckdb';
+        badge.innerText = `${candles.length.toLocaleString()} bars (${dbName})`;
+      }
 
       if (!candles || candles.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-slate-500">No bars found for current selection.</td></tr>';
@@ -813,6 +950,10 @@
         tr.className = "hover:bg-slate-800/40 transition";
         const isUp = c.close >= c.open;
 
+        const tagCol = currentDbSource === 'streaming'
+          ? `<span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-indigo-400 font-mono font-bold">${c.tick_count || 1} ticks</span>`
+          : `<span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 font-mono">${c.session || 'REG'}</span>`;
+
         tr.innerHTML = `
           <td class="py-2.5 px-4 font-mono text-slate-300">${c.time_str}</td>
           <td class="py-2.5 px-4 text-right font-mono">${c.open ? c.open.toFixed(2) : '--'}</td>
@@ -821,14 +962,16 @@
           <td class="py-2.5 px-4 text-right font-mono font-bold ${isUp ? 'text-emerald-400' : 'text-rose-400'}">${c.close ? c.close.toFixed(2) : '--'}</td>
           <td class="py-2.5 px-4 text-right font-mono text-slate-400">${Number(c.volume || 0).toLocaleString()}</td>
           <td class="py-2.5 px-4 text-center">
-            <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 font-mono">${c.session || 'REG'}</span>
+            ${tagCol}
           </td>
           <td class="py-2.5 px-4 text-center">
             <span class="px-2 py-0.5 rounded text-[10px] ${
               c.source === 'MASSIVE' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' :
-              c.source === 'CAPITAL' ? 'bg-indigo-950 text-indigo-400 border border-indigo-800' :
+              c.source === 'BINANCE' ? 'bg-amber-950 text-amber-400 border border-amber-800' :
+              c.source === 'CAPITAL_STREAM' ? 'bg-indigo-950 text-indigo-400 border border-indigo-800' :
+              c.source === 'CAPITAL' ? 'bg-blue-950 text-blue-400 border border-blue-800' :
               'bg-slate-800 text-slate-300'
-            } font-mono">${c.source || 'UNKNOWN'}</span>
+            } font-mono font-bold">${c.source || 'UNKNOWN'}</span>
           </td>
         `;
         tbody.appendChild(tr);
@@ -1135,8 +1278,21 @@
         if (!res.ok) return;
         const data = await res.json();
 
-        if (data.historical && data.historical.size_mb) {
-          document.getElementById('kpi-hist-size').innerText = `${data.historical.size_mb} MB`;
+        if (data.historical) {
+          if (data.historical.size_mb) {
+            document.getElementById('kpi-hist-size').innerText = `${data.historical.size_mb} MB`;
+          }
+          if (data.historical.market_data_rows) {
+            document.getElementById('kpi-hist-rows').innerText = Number(data.historical.market_data_rows).toLocaleString();
+          }
+          if (data.historical.min_timestamp && data.historical.max_timestamp) {
+            const dMin = data.historical.min_timestamp.slice(0, 7);
+            const dMax = data.historical.max_timestamp.slice(0, 7);
+            document.getElementById('kpi-hist-span').innerText = `${dMin} → ${dMax}`;
+          }
+          if (data.historical.symbols_count) {
+            document.getElementById('kpi-symbols-count').innerText = `${data.historical.symbols_count} symbols`;
+          }
         }
         if (data.streaming) {
           document.getElementById('kpi-stream-rows').innerText = Number(data.streaming.ticks_rows || 0).toLocaleString();
