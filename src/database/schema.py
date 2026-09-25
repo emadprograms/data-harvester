@@ -1,43 +1,24 @@
 """
-DuckDB Database schema initialization and table creation.
-Enforces PRIMARY KEY constraints (symbol, timestamp) and fast time-series indexes.
+DuckDB Database schema initialization and table creation for Dedicated Dual-DuckDB Architecture.
+- historical.duckdb: symbol_map inventory and canonical 1-minute market_data candles.
+- streaming.duckdb: high-frequency raw tick quotes (ticks table / streaming_ticks view).
 """
-from src.database.connection import get_duckdb_connection
+from src.database.connection import (
+    get_duckdb_connection,
+    get_historical_db_connection,
+    get_streaming_db_connection,
+)
 
-get_archive_db_connection = get_duckdb_connection
-
-
-def init_db(client=None):
-    """Initializes the DuckDB database, creating tables and indexes if they don't exist."""
-    if client:
-        _init_client(client)
-        return
-
-    conn = get_duckdb_connection()
-    if conn:
-        try:
-            _init_client(conn)
-        finally:
-            conn.close()
+get_archive_db_connection = get_historical_db_connection
 
 
-def init_streaming_db(client=None, db_path=None):
-    """Initializes the streaming.db database for high-throughput tick-by-tick storage."""
-    if client:
-        _init_client(client)
-        return
+def init_historical_db(client=None):
+    """Initializes the historical DuckDB database (symbol_map and market_data tables)."""
+    own_client = False
+    if not client:
+        client = get_archive_db_connection()
+        own_client = True
 
-    from src.database.connection import get_streaming_db_connection
-    conn = get_streaming_db_connection(db_path=db_path)
-    if conn:
-        try:
-            _init_client(conn)
-        finally:
-            conn.close()
-
-
-def _init_client(client):
-    """Internal helper to initialize a specific DuckDB client."""
     if not client:
         return
 
@@ -61,7 +42,7 @@ def _init_client(client):
         except Exception as e:
             print(f"⚠️ Seeding warning: {e}")
 
-        # --- MARKET DATA TABLE ---
+        # --- HISTORICAL MARKET DATA TABLE ---
         client.execute("""
             CREATE TABLE IF NOT EXISTS market_data (
                 timestamp TIMESTAMP NOT NULL,
@@ -81,11 +62,28 @@ def _init_client(client):
         try:
             client.execute("CREATE INDEX IF NOT EXISTS idx_market_data_ts ON market_data (timestamp)")
             client.execute("CREATE INDEX IF NOT EXISTS idx_market_data_sym_ts ON market_data (symbol, timestamp)")
-        except Exception as e:
-            # DuckDB automatically indexes primary keys
+        except Exception:
             pass
 
-        # --- RAW TICKS TABLE (streaming.db tick-by-tick storage) ---
+    except Exception as e:
+        print(f"❌ Historical DuckDB Schema Init Error: {e}")
+    finally:
+        if own_client:
+            client.close()
+
+
+def init_streaming_db(client=None, db_path=None):
+    """Initializes the dedicated streaming DuckDB database (ticks table and streaming_ticks view)."""
+    own_client = False
+    if not client:
+        client = get_streaming_db_connection(db_path=db_path)
+        own_client = True
+
+    if not client:
+        return
+
+    try:
+        # --- RAW TICKS TABLE (streaming.duckdb tick-by-tick storage) ---
         client.execute("""
             CREATE TABLE IF NOT EXISTS ticks (
                 timestamp TIMESTAMP NOT NULL,
@@ -99,14 +97,39 @@ def _init_client(client):
             )
         """)
 
+        # --- FAST TIME-SERIES INDEXES ---
         try:
             client.execute("CREATE INDEX IF NOT EXISTS idx_ticks_ts ON ticks (timestamp)")
             client.execute("CREATE INDEX IF NOT EXISTS idx_ticks_sym_ts ON ticks (symbol, timestamp)")
         except Exception:
             pass
 
+        # --- COMPATIBILITY VIEW ---
+        try:
+            client.execute("CREATE VIEW IF NOT EXISTS streaming_ticks AS SELECT * FROM ticks")
+        except Exception:
+            pass
+
     except Exception as e:
-        print(f"❌ DuckDB Schema Init Error: {e}")
+        print(f"❌ Streaming DuckDB Schema Init Error: {e}")
+    finally:
+        if own_client:
+            client.close()
+
+
+def init_db(client=None, streaming_client=None):
+    """
+    Initializes database tables.
+    If called with a single client, initializes historical schema for backward compatibility.
+    If called with no args, initializes both historical and streaming databases.
+    """
+    if client and not streaming_client:
+        # Backward compatibility: single client passed in
+        init_historical_db(client)
+        return
+
+    init_historical_db(client)
+    init_streaming_db(streaming_client)
 
 
 def _seed_default_symbols(client):
