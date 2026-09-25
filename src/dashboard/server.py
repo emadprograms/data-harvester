@@ -71,10 +71,65 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_bytes(self, data: bytes, content_type="application/octet-stream", status=200):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _serve_static_file(self, rel_path: str):
+        # Normalize and unquote to safely resolve relative path
+        norm_rel = os.path.normpath(unquote(rel_path)).lstrip("/\\")
+        file_path = os.path.abspath(os.path.join(STATIC_DIR, norm_rel))
+        static_dir_abs = os.path.abspath(STATIC_DIR)
+
+        # Strictly enforce directory traversal prevention
+        try:
+            common = os.path.commonpath([static_dir_abs, file_path])
+        except ValueError:
+            self._send_json({"error": "Forbidden: Path traversal detected"}, status=403)
+            return
+
+        if common != static_dir_abs:
+            self._send_json({"error": "Forbidden: Path traversal detected"}, status=403)
+            return
+
+        if not os.path.isfile(file_path):
+            self._send_json({"error": "Not Found", "file": rel_path}, status=404)
+            return
+
+        mime_types = {
+            ".html": "text/html",
+            ".css": "text/css",
+            ".js": "application/javascript",
+            ".json": "application/json",
+            ".svg": "image/svg+xml",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".ico": "image/x-icon",
+            ".txt": "text/plain",
+        }
+        _, ext = os.path.splitext(file_path)
+        content_type = mime_types.get(ext.lower(), "application/octet-stream")
+
+        try:
+            with open(file_path, "rb") as f:
+                data = f.read()
+            self._send_bytes(data, content_type=content_type)
+        except Exception as e:
+            self._send_json({"error": f"Error reading static file: {str(e)}"}, status=500)
+
+    def do_HEAD(self):
+        # Support HEAD requests identically to GET for monitoring and status checks
+        self.do_GET()
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS, HEAD")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
@@ -91,6 +146,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_text(content, content_type="text/html")
             else:
                 self._send_text("<h1>Dashboard UI under construction</h1>", status=200)
+            return
+
+        # 1b. Static Assets (/static/*, /css/*, /js/*, /favicon.ico)
+        if path.startswith("/static/"):
+            rel = path[len("/static/"):]
+            self._serve_static_file(rel)
+            return
+        elif path.startswith("/js/") or path.startswith("/css/") or path == "/favicon.ico":
+            self._serve_static_file(path.lstrip("/"))
             return
 
         # 2. API: System & Database Health Status
