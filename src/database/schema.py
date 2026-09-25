@@ -4,6 +4,8 @@ Enforces PRIMARY KEY constraints (symbol, timestamp) and fast time-series indexe
 """
 from src.database.connection import get_duckdb_connection
 
+get_archive_db_connection = get_duckdb_connection
+
 
 def init_db(client=None):
     """Initializes the DuckDB database, creating tables and indexes if they don't exist."""

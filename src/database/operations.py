@@ -7,7 +7,7 @@ import numpy as np
 import time
 import math
 from datetime import datetime
-from src.database.connection import get_duckdb_connection, DuckDBClient
+from src.database.connection import get_duckdb_connection, DuckDBClient, get_archive_db_connection
 from src.config import UTC, US_EASTERN
 
 # --- Symbol Inventory Operations ---
@@ -16,7 +16,7 @@ def get_symbol_map_from_db(client=None):
     """Fetches the complete symbol inventory from the symbol_map table."""
     own_client = False
     if not client:
-        client = get_duckdb_connection()
+        client = get_archive_db_connection()
         own_client = True
 
     if not client:
@@ -130,7 +130,7 @@ def save_data_to_storage(df: pd.DataFrame, logger=None, archive_client=None) -> 
 
     try:
         if not client:
-            client = get_duckdb_connection()
+            client = get_archive_db_connection()
             own_client = True
 
         if not client:

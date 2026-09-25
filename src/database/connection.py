@@ -37,7 +37,9 @@ class DuckDBClient:
     """High-performance local DuckDB client wrapper."""
     def __init__(self, db_path=None, read_only=False):
         self.db_path = db_path or DEFAULT_DB_PATH
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        dirname = os.path.dirname(self.db_path)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
         self.conn = duckdb.connect(self.db_path, read_only=read_only)
 
     def execute(self, query, params=None):
@@ -74,3 +76,11 @@ def get_duckdb_connection(db_path=None, read_only=False):
 def get_archive_db_connection(db_path=None):
     """Returns local DuckDB connection (replacing legacy Turso Archive)."""
     return get_duckdb_connection(db_path=db_path)
+
+
+def create_client_sync(url=None, auth_token=None):
+    """Backward-compatible client factory for tests and legacy callers."""
+    if url and str(url).startswith("file:"):
+        path = str(url).replace("file:", "")
+        return DuckDBClient(db_path=path)
+    return DuckDBClient()
