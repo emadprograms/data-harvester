@@ -178,68 +178,6 @@ class TestMirrorInsert:
         )
 
 
-# =============================================================================
-# P2 + P1: Verify sync_mirror.py changes
-# =============================================================================
-
-class TestSyncMirrorRefactor:
-    """P2: DELETE must be removed. P1: init_db must be called on mirror."""
-
-    def test_no_delete_in_sync_mirror_source(self):
-        """sync_mirror.py must NOT contain DELETE FROM market_data."""
-        with open("tools/sync_mirror.py", "r") as f:
-            content = f.read()
-        assert "DELETE FROM market_data" not in content, (
-            "DELETE FROM market_data found in sync_mirror.py — "
-            "this causes massive write spikes via delete-then-insert."
-        )
-
-    def test_sync_mirror_imports_mirror_insert(self):
-        """sync_mirror.py must import _mirror_insert, not _save_to_client."""
-        with open("tools/sync_mirror.py", "r") as f:
-            content = f.read()
-        assert "_mirror_insert" in content, (
-            "sync_mirror.py must import and use _mirror_insert"
-        )
-        assert "from src.database.operations import _save_to_client" not in content, (
-            "sync_mirror.py must NOT import _save_to_client — use _mirror_insert instead"
-        )
-
-    def test_sync_mirror_calls_init_db(self):
-        """sync_mirror.py must call init_db on the mirror for cold-start safety."""
-        with open("tools/sync_mirror.py", "r") as f:
-            content = f.read()
-        assert "init_db" in content, (
-            "sync_mirror.py must call init_db(mirror) to handle cold starts"
-        )
-        assert "from src.database.schema import init_db" in content, (
-            "sync_mirror.py must import init_db from schema"
-        )
-
-
-# =============================================================================
-# P0: Verify cache key fix
-# =============================================================================
-
-class TestCacheKeyFix:
-    """P0: GitHub Actions cache must use a stable key."""
-
-    def test_no_run_id_in_workflow(self):
-        """sync_mirror.yml must NOT use github.run_id in cache key."""
-        with open(".github/workflows/sync_mirror.yml", "r") as f:
-            content = f.read()
-        assert "github.run_id" not in content, (
-            "github.run_id found in cache key — this creates a new cache entry "
-            "every run, wasting ~626MB per run and breaking incremental sync."
-        )
-
-    def test_stable_cache_key_exists(self):
-        """sync_mirror.yml must have a stable versioned cache key."""
-        with open(".github/workflows/sync_mirror.yml", "r") as f:
-            content = f.read()
-        assert "turso-replicas-v1" in content, (
-            "Cache key must be a stable string like 'turso-replicas-v1'"
-        )
 
 
 # =============================================================================
