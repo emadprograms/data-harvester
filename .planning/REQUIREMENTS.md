@@ -8,34 +8,34 @@ Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Da
 
 ### Dedicated Dual-DuckDB Storage Layer
 
-- [ ] **DUAL-01**: Decouple database into 100% separate dedicated DuckDB files (`data/historical.duckdb` for 1m REST bars and `data/streaming.duckdb` for raw streaming ticks) with zero write-lock contention.
-- [ ] **DUAL-02**: Implement isolated connection factories (`get_historical_db_connection`, `get_streaming_db_connection`) with read-only concurrency support and multi-database `ATTACH` capabilities for cross-database queries.
-- [ ] **DUAL-03**: Create optimized schema and indexes for raw tick quotes in `data/streaming.duckdb` (`streaming_ticks` table: `timestamp`, `symbol`, `bid`, `ask`, `price`, `volume`, `source`).
+- [x] **DUAL-01**: Decouple database into 100% separate dedicated DuckDB files (`data/historical.duckdb` for 1m REST bars and `data/streaming.duckdb` for raw streaming ticks) with zero write-lock contention.
+- [x] **DUAL-02**: Implement isolated connection factories (`get_historical_db_connection`, `get_streaming_db_connection`) with read-only concurrency support and multi-database `ATTACH` capabilities for cross-database queries.
+- [x] **DUAL-03**: Create optimized schema and indexes for raw tick quotes in `data/streaming.duckdb` (`streaming_ticks` table: `timestamp`, `symbol`, `bid`, `ask`, `price`, `volume`, `source`).
 
 ### Capital.com Exclusive WebSocket Streaming & Dynamic Reload
 
-- [ ] **STRM-05**: Deactivate Binance from the live streaming runner; stream exclusively from Capital.com.
-- [ ] **STRM-06**: Ingest Capital.com raw tick quotes directly into `data/streaming.duckdb` using batched async writer.
-- [ ] **STRM-07**: Implement dynamic live reload of symbol subscriptions without restarting the streaming runner process.
+- [x] **STRM-05**: Deactivate Binance from the live streaming runner; stream exclusively from Capital.com.
+- [x] **STRM-06**: Ingest Capital.com raw tick quotes directly into `data/streaming.duckdb` using batched async writer.
+- [x] **STRM-07**: Implement dynamic live reload of symbol subscriptions without restarting the streaming runner process.
 
 ### Data Integrity & Health Engine
 
-- [ ] **INTG-01**: Automated gap and continuity detection for historical 1-minute bars during market trading hours (09:30–16:00 ET).
-- [ ] **INTG-02**: Stream continuity and quiet interval detector for streaming ticks.
-- [ ] **INTG-03**: OHLCV sanity and anomaly detection (negative/zero prices, `high < low`, out-of-bounds open/close, nulls).
-- [ ] **INTG-04**: Cross-database drift analyzer comparing historical REST candle closes against streaming tick prices for overlapping intervals.
+- [x] **INTG-01**: Automated gap and continuity detection for historical 1-minute bars during market trading hours (09:30–16:00 ET).
+- [x] **INTG-02**: Stream continuity and quiet interval detector for streaming ticks.
+- [x] **INTG-03**: OHLCV sanity and anomaly detection (negative/zero prices, `high < low`, out-of-bounds open/close, nulls).
+- [x] **INTG-04**: Cross-database drift analyzer comparing historical REST candle closes against streaming tick prices for overlapping intervals.
 
 ### Interactive JavaScript Web Dashboard & Symbol Management
 
-- [ ] **DASH-01**: Lightweight local Python backend server running on `http://localhost:8000` exposing REST endpoints for health, metrics, integrity audits, and symbol CRUD.
-- [ ] **DASH-02**: Responsive single-page JavaScript/Tailwind web dashboard displaying live streamer status, tick rates, latest prices, and storage sizes.
-- [ ] **DASH-03**: Interactive Data Integrity visual audit view with one-click test execution and pass/warn/fail matrix.
-- [ ] **DASH-04**: Symbol Management interface in the web dashboard allowing users to add/remove symbols with dynamic live streamer reload.
+- [x] **DASH-01**: Lightweight local Python backend server running on `http://localhost:8000` exposing REST endpoints for health, metrics, integrity audits, and symbol CRUD.
+- [x] **DASH-02**: Responsive single-page JavaScript/Tailwind web dashboard displaying live streamer status, tick rates, latest prices, and storage sizes.
+- [x] **DASH-03**: Interactive Data Integrity visual audit view with one-click test execution and pass/warn/fail matrix.
+- [x] **DASH-04**: Symbol Management interface in the web dashboard allowing users to add/remove symbols with dynamic live streamer reload.
 
 ### Quality & Comprehensive Testing
 
-- [ ] **QUAL-02**: Comprehensive automated test suite validating dual DuckDB file isolation, streaming raw ticks, live symbol reload, and integrity algorithms.
-- [ ] **QUAL-03**: End-to-end API tests validating dashboard endpoints, symbol lifecycle, and live reload signals.
+- [x] **QUAL-02**: Comprehensive automated test suite validating dual DuckDB file isolation, streaming raw ticks, live symbol reload, and integrity algorithms.
+- [x] **QUAL-03**: End-to-end API tests validating dashboard endpoints, symbol lifecycle, and live reload signals.
 
 ## Out of Scope
 
@@ -50,24 +50,24 @@ Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Da
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DUAL-01 | Phase 5 | Pending |
-| DUAL-02 | Phase 5 | Pending |
-| DUAL-03 | Phase 5 | Pending |
-| STRM-05 | Phase 6 | Pending |
-| STRM-06 | Phase 6 | Pending |
-| STRM-07 | Phase 6 | Pending |
-| INTG-01 | Phase 7 | Pending |
-| INTG-02 | Phase 7 | Pending |
-| INTG-03 | Phase 7 | Pending |
-| INTG-04 | Phase 7 | Pending |
-| DASH-01 | Phase 8 | Pending |
-| DASH-02 | Phase 8 | Pending |
-| DASH-03 | Phase 8 | Pending |
-| DASH-04 | Phase 8 | Pending |
-| QUAL-02 | Phase 9 | Pending |
-| QUAL-03 | Phase 9 | Pending |
+| DUAL-01 | Phase 5 | Completed |
+| DUAL-02 | Phase 5 | Completed |
+| DUAL-03 | Phase 5 | Completed |
+| STRM-05 | Phase 6 | Completed |
+| STRM-06 | Phase 6 | Completed |
+| STRM-07 | Phase 6 | Completed |
+| INTG-01 | Phase 7 | Completed |
+| INTG-02 | Phase 7 | Completed |
+| INTG-03 | Phase 7 | Completed |
+| INTG-04 | Phase 7 | Completed |
+| DASH-01 | Phase 8 | Completed |
+| DASH-02 | Phase 8 | Completed |
+| DASH-03 | Phase 8 | Completed |
+| DASH-04 | Phase 8 | Completed |
+| QUAL-02 | Phase 9 | Completed |
+| QUAL-03 | Phase 9 | Completed |
 
 **Coverage:**
 - v2 requirements: 16 total
-- Mapped to phases: 16 ✓
+- Completed: 16 ✓
 - Unmapped: 0 ✓
