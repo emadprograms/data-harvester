@@ -24,6 +24,15 @@ from src.utils.integrity import (
     validate_ohlcv_anomalies,
     analyze_price_drift,
 )
+from src.dashboard.analytics import (
+    get_candles,
+    get_symbols_coverage,
+    get_stream_tape,
+    get_stream_status,
+    get_market_session_info,
+)
+from src.dashboard.harvester_job import harvester_manager
+from src.database.connection import get_historical_db_connection
 
 logger = logging.getLogger("dashboard_server")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -96,20 +105,57 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         # 4. API: Data Integrity & Health Audits
         if path == "/api/integrity":
             target_symbol = query.get("symbol", [None])[0]
+            start_param = query.get("start", [None])[0]
+            end_param = query.get("end", [None])[0]
+
             smap = get_symbol_map_from_db()
             symbol_list = [target_symbol] if target_symbol else list(smap.keys())[:5]
 
             now_utc = datetime.now(timezone.utc)
-            start_utc = now_utc - timedelta(days=5)
-
             gap_results = []
             quiet_results = []
             drift_results = []
 
+            # Smart date range resolution per symbol or user-provided
+            client = get_historical_db_connection()
+
             for sym in symbol_list:
-                gap_results.append(detect_1m_gaps(sym, start_utc, now_utc))
+                sym_start = None
+                sym_end = None
+
+                if start_param and end_param:
+                    try:
+                        sym_start = datetime.fromisoformat(start_param.replace("Z", "+00:00"))
+                        sym_end = datetime.fromisoformat(end_param.replace("Z", "+00:00"))
+                    except Exception:
+                        pass
+
+                if not sym_start or not sym_end:
+                    # Discover latest recorded timestamp for this symbol
+                    if client:
+                        try:
+                            max_ts_row = client.execute("SELECT MAX(timestamp) FROM market_data WHERE symbol = ?", [sym]).fetchone()
+                            if max_ts_row and max_ts_row[0]:
+                                max_dt = max_ts_row[0]
+                                if isinstance(max_dt, str):
+                                    max_dt = datetime.strptime(max_dt.split('.')[0], "%Y-%m-%d %H:%M:%S")
+                                if max_dt.tzinfo is None:
+                                    max_dt = max_dt.replace(tzinfo=timezone.utc)
+                                sym_end = max_dt
+                                sym_start = max_dt - timedelta(days=5)
+                        except Exception:
+                            pass
+
+                if not sym_start or not sym_end:
+                    sym_end = now_utc
+                    sym_start = now_utc - timedelta(days=5)
+
+                gap_results.append(detect_1m_gaps(sym, sym_start, sym_end, client=client))
                 quiet_results.append(detect_stream_quiet_intervals(sym, lookback_minutes=60, threshold_seconds=120))
                 drift_results.append(analyze_price_drift(sym))
+
+            if client:
+                client.close()
 
             anomaly_result = validate_ohlcv_anomalies(symbol=target_symbol)
 
@@ -129,6 +175,61 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 "drift": drift_results
             }
             self._send_json(audit_response)
+            return
+
+        # 5. API: OHLCV Candlestick Query (with native time_bucket)
+        if path == "/api/candles":
+            sym = query.get("symbol", ["SPY"])[0]
+            tf = query.get("timeframe", query.get("tf", ["1m"]))[0]
+            start = query.get("start", [None])[0]
+            end = query.get("end", [None])[0]
+            try:
+                limit = int(query.get("limit", [1000])[0])
+            except ValueError:
+                limit = 1000
+            res = get_candles(sym, tf, start, end, limit)
+            self._send_json(res)
+            return
+
+        # 6. API: Symbol Coverage & Health Summary
+        if path == "/api/symbols/coverage":
+            cov = get_symbols_coverage()
+            self._send_json(cov)
+            return
+
+        # 7. API: Live Stream Tape
+        if path == "/api/stream/tape":
+            sym = query.get("symbol", [None])[0]
+            try:
+                limit = int(query.get("limit", [50])[0])
+            except ValueError:
+                limit = 50
+            tape = get_stream_tape(sym, limit)
+            self._send_json(tape)
+            return
+
+        # 8. API: Streamer Process & Health Status
+        if path == "/api/stream/status":
+            st = get_stream_status()
+            self._send_json(st)
+            return
+
+        # 9. API: Market Session Status & Clock
+        if path == "/api/market/session":
+            mkt = get_market_session_info()
+            self._send_json(mkt)
+            return
+
+        # 10. API: Harvester Job Status
+        if path == "/api/harvester/status":
+            job = harvester_manager.get_status()
+            self._send_json(job)
+            return
+
+        # 11. API: Harvester Job Full Logs
+        if path == "/api/harvester/logs":
+            logs = harvester_manager.get_all_logs()
+            self._send_json({"logs": logs, "total_lines": len(logs)})
             return
 
         self._send_json({"error": "Not Found", "path": path}, status=404)
@@ -175,6 +276,16 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/streamer/reload":
             self._trigger_reload_signal()
             self._send_json({"success": True, "message": "Live reload signal triggered successfully"})
+            return
+
+        # 3. Trigger Harvest Job
+        if path == "/api/harvester/run":
+            target_date = payload.get("date")
+            if target_date:
+                target_date = target_date.strip()
+            ok, msg, job_status = harvester_manager.start_job(target_date)
+            status_code = 200 if ok else 409
+            self._send_json({"success": ok, "message": msg, "job": job_status}, status=status_code)
             return
 
         self._send_json({"error": "Not Found", "path": path}, status=404)

@@ -43,6 +43,20 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - [x] **QUAL-02**: Comprehensive automated test suite validating dual DuckDB files, streaming raw ticks, live symbol reload, and integrity — v2.0
 - [x] **QUAL-03**: End-to-end API tests validating dashboard endpoints, symbol lifecycle, and concurrency stress testing — v2.0
 
+- [x] **CHRT-01**: High-performance backend DuckDB candle query API (`/api/candles`) with time bucketing — v3.0
+- [x] **CHRT-02**: Interactive Candlestick & Volume Chart powered by TradingView Lightweight Charts — v3.0
+- [x] **CHRT-03**: Interactive Raw Candle Inspector & Exporter with search, pagination, and CSV download — v3.0
+- [x] **STRM-08**: Live Stream Telemetry & Ticker Tape API (`/api/stream/tape`, `/api/stream/status`) — v3.0
+- [x] **STRM-09**: Real-time Ticker Wall & Streamer Control UI with flash feedback — v3.0
+- [x] **MKT-01**: Market Session Status API (`/api/market/session`) with session phase calculations — v3.0
+- [x] **MKT-02**: Live Market Clock & Session Bar in dashboard header — v3.0
+- [x] **HRVST-01**: Harvester Runner API (`/api/harvester/run`, `/api/harvester/status`) — v3.0
+- [x] **HRVST-02**: Real-time Log Console Drawer in web UI — v3.0
+- [x] **SYMB-01**: Symbol Coverage & Health API (`/api/symbols/coverage`) — v3.0
+- [x] **SYMB-02**: Rich Per-Symbol Data Matrix UI with search and quick actions — v3.0
+- [x] **INTG-05**: Context-aware Gap & Integrity Auditor with market-hours awareness — v3.0
+- [x] **QUAL-04**: Comprehensive automated test suite in `tests/test_dashboard_v3.py` (182 total passing tests) — v3.0
+
 ### Active
 *(Ready for next milestone cycle — initialize via `/gsd-new-milestone`)*
 

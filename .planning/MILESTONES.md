@@ -32,3 +32,23 @@
 - Consolidated multi-year historical dataset from `market-rewind` release assets (`archive_data.db` and `market_data.db`) into `data/historical.duckdb`, scaling canonical storage to 7,993,726 1-minute candles covering over 21 continuous months.
 
 ---
+
+## v3.0 Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard (Shipped: 2026-09-25)
+
+**Phases completed:** 5 phases (Phases 10–14), 5 plans, 13/13 requirements verified  
+**Tests:** 182 automated tests passing (0 failures, 0 warnings)  
+**Dataset Scale:** 7,993,726 canonical 1-minute OHLCV candles (October 2024 → July 2026) + Live Tick Stream  
+
+**Key accomplishments:**
+
+- Integrated **TradingView Lightweight Charts** (v4.1.3) into the web dashboard with responsive dark-slate design, providing sub-25ms dynamic rendering of candlesticks and volume histograms across all ~8M historical candles.
+- Implemented multi-timeframe analytical resampling API (`/api/candles`) supporting `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D` intervals via native DuckDB `time_bucket()` with date filtering, limit clamping, and chronological ordering.
+- Built **Raw OHLCV Candle Inspector** with interactive search filter, session badges, source tiering pills (`MASSIVE`, `CAPITAL`, `BINANCE`, `YAHOO`), and browser-side "Export CSV" functionality.
+- Implemented **Live Price Tape Wall** with flashing uptick/downtick animations, real-time incoming tick feed table (last 50 quotes with bid/ask/spread), and streamer process telemetry (`/api/stream/tape`, `/api/stream/status`).
+- Built **Market Session Clock & Telemetry Bar** in header calculating live US Eastern & UTC times, market phase pills (`REGULAR`, `PRE_MARKET`, `AFTER_HOURS`, `CLOSED`), and countdown to the 8:00 PM ET session cutoff.
+- Implemented **Harvester Automation Console & Live Terminal** (`/api/harvester/run`, `/api/harvester/status`, `/api/harvester/logs`) enabling web-triggered execution of `main.py` with real-time stdout/stderr log streaming.
+- Transformed symbol table into a comprehensive **Symbol Coverage Matrix** (`/api/symbols/coverage`) with search, asset classes, stored bar counts, date ranges, latest close prices, freshness status, and one-click chart/audit navigation.
+- Upgraded the **Data Integrity Engine** with symbol-specific targeting and recorded-date discovery, eliminating false gap warnings on historical data.
+- Expanded the automated test suite with 19 new integration and endpoint tests (`tests/test_dashboard_v3.py`), bringing total passing tests to 182/182 (100% pass rate).
+
+---
