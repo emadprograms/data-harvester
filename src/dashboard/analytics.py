@@ -126,6 +126,66 @@ def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str 
                 "session": r[8] or "REG"
             })
 
+        # Blend real-time live candles from streaming.duckdb
+        s_client = get_streaming_db_connection()
+        if s_client:
+            try:
+                s_interval = interval_str or "1 minute"
+                s_where = ["symbol = ?"]
+                s_params = [symbol]
+
+                if rows:
+                    latest_hist_ts = rows[0][1]  # newest historical candle
+                    s_where.append("timestamp::TIMESTAMP > ?::TIMESTAMP")
+                    s_params.append(str(latest_hist_ts))
+                elif start:
+                    s_where.append("timestamp::TIMESTAMP >= ?::TIMESTAMP")
+                    s_params.append(start.strip())
+
+                if end:
+                    s_where.append("timestamp::TIMESTAMP <= ?::TIMESTAMP")
+                    s_params.append(end.strip())
+
+                s_sql = f"""
+                    SELECT 
+                        epoch(time_bucket(INTERVAL '{s_interval}', timestamp::TIMESTAMP)) as time_sec,
+                        strftime(time_bucket(INTERVAL '{s_interval}', timestamp::TIMESTAMP), '%Y-%m-%d %H:%M:%S') as time_str,
+                        first(price ORDER BY timestamp ASC) as open,
+                        max(price) as high,
+                        min(price) as low,
+                        last(price ORDER BY timestamp ASC) as close,
+                        COALESCE(sum(volume), count(*)) as volume,
+                        'CAPITAL_STREAM' as source,
+                        'REG' as session
+                    FROM ticks
+                    WHERE {' AND '.join(s_where)}
+                    GROUP BY time_bucket(INTERVAL '{s_interval}', timestamp::TIMESTAMP)
+                    ORDER BY time_sec ASC
+                    LIMIT 500
+                """
+                s_res = s_client.execute(s_sql, s_params)
+                for sr in (s_res.rows or []):
+                    candles.append({
+                        "time": int(sr[0]),
+                        "time_str": str(sr[1]),
+                        "open": round(float(sr[2]), 4) if sr[2] is not None else None,
+                        "high": round(float(sr[3]), 4) if sr[3] is not None else None,
+                        "low": round(float(sr[4]), 4) if sr[4] is not None else None,
+                        "close": round(float(sr[5]), 4) if sr[5] is not None else None,
+                        "volume": round(float(sr[6]), 2) if sr[6] is not None else 0.0,
+                        "source": sr[7],
+                        "session": sr[8]
+                    })
+            except Exception:
+                pass
+            finally:
+                s_client.close()
+
+        # Enforce chronological ordering and limit
+        candles.sort(key=lambda x: x["time"])
+        if len(candles) > limit:
+            candles = candles[-limit:]
+
         return {
             "symbol": symbol,
             "timeframe": timeframe,
