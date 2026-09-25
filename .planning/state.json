@@ -1,33 +1,12 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v1.0",
-  "phases": [
-    {
-      "number": "1",
-      "name": "Turso Data Migration & Legacy Purge",
-      "status": "complete"
-    },
-    {
-      "number": "2",
-      "name": "DuckDB Storage Engine",
-      "status": "complete"
-    },
-    {
-      "number": "3",
-      "name": "24/7 Live WebSocket Streaming",
-      "status": "complete"
-    },
-    {
-      "number": "4",
-      "name": "Test Suite Migration & Verification",
-      "status": "complete"
-    }
-  ],
+  "milestone": "v2.0",
+  "phases": [],
   "next": {
-    "command": "/gsd-progress",
-    "label": "Show progress",
-    "reason": "Unsure of state — showing progress"
+    "command": "/gsd-discuss-phase",
+    "label": "Discuss the first phase",
+    "reason": "Project initialized — plan your first phase"
   },
-  "updated_at": "2026-09-25T17:04:14.145Z"
+  "updated_at": "2026-09-25T17:23:38.103Z"
 }

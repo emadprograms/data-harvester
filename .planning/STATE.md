@@ -1,45 +1,43 @@
 ---
 gsd_state_version: "1.0"
-milestone: v1.0
-status: Awaiting next milestone
-last_updated: "2026-09-25T17:04:14.123Z"
+milestone: v2.0
+milestone_name: Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard
+status: active
+last_updated: "2026-09-25T20:25:00.000Z"
 last_activity: 2026-09-25
-last_activity_desc: Milestone v1.0 completed and archived
-state_head: ad21582ba65b801e23f0e42a7e5901354b0c6ab5
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
-milestone_name: Local DuckDB Market Data Engine & Streaming Ingestion
-total_phases: 4
-completed_phases: 4
-current_phase: 4
+  percent: 0
 ---
 
 # Project State: Data Harvester
 
 ## Current Position
 
-Phase: Milestone v1.0 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-09-25 — Milestone v1.0 completed and archived
+Phase: Phase 5 — Dedicated Dual-DuckDB Storage Layer
+Plan: Not planned yet
+Status: In progress
+Last activity: 2026-09-25 — Milestone v2.0 started, preparing Phase 5
 
 ## Milestone Summary
 
-- Milestone: v1.0
-- Goal: Build a 100% local market data harvesting and 24/7 WebSocket streaming engine with DuckDB storage.
-- Number of phases: 4 (All 4 complete)
-  - Phase 1: Turso Data Migration & Legacy Purge (3.95M rows migrated to DuckDB)
-  - Phase 2: DuckDB Storage Engine (Schema, Source-Tiering, Resampling)
-  - Phase 3: 24/7 Live WebSocket Streaming (Capital.com + Binance Streamers)
-  - Phase 4: Test Suite Migration & Verification (102 tests passing, 0 warnings)
+- Milestone: v2.0
+- Goal: Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard
+- Number of phases: 5 (Phases 5 to 9)
+  - Phase 5: Dedicated Dual-DuckDB Storage Layer
+  - Phase 6: Capital.com Exclusive WebSocket Streamer & Dynamic Reload
+  - Phase 7: Data Integrity & Health Engine
+  - Phase 8: Interactive JavaScript Web Dashboard & Symbol Management
+  - Phase 9: End-to-End Verification & Full Test Suite
 
 ## Blockers/Concerns
 
-None. Milestone is fully complete and verified.
+None. Requirements and roadmap are defined.
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Execute Phase 5: Dedicated Dual-DuckDB Storage Layer
+
