@@ -262,3 +262,149 @@ def query_candlesticks(symbol: str, start_time=None, end_time=None, timeframe="1
     finally:
         if own_client and client:
             client.close()
+
+
+def save_ticks_to_storage(client, ticks, logger=None, label="DuckDB-Ticks") -> bool:
+    """
+    Saves a batch of raw tick records into streaming.db ticks table.
+    Each tick is a tuple: (timestamp, symbol, price, volume, bid, ask, source, session)
+    """
+    if not client or not ticks:
+        return False
+
+    BATCH_SIZE = 1000
+    total_ticks = len(ticks)
+
+    try:
+        for i in range(0, total_ticks, BATCH_SIZE):
+            batch = ticks[i : i + BATCH_SIZE]
+            placeholders = ", ".join(["(?, ?, ?, ?, ?, ?, ?, ?)"] * len(batch))
+            flat_values = [item for sublist in batch for item in sublist]
+
+            query = f"""
+                INSERT INTO ticks 
+                (timestamp, symbol, price, volume, bid, ask, source, session) 
+                VALUES {placeholders}
+            """
+            client.execute(query, flat_values)
+
+        if logger:
+            logger.log(f"   ✅ {label}: Successfully committed {total_ticks} ticks.")
+        return True
+    except Exception as e:
+        if logger:
+            logger.log(f"   ❌ {label} Save Error: {e}")
+        return False
+
+
+def query_ticks(symbol: str, start_time=None, end_time=None, limit=1000, client=None):
+    """
+    Queries raw tick-by-tick records from streaming.db for a given symbol.
+    Returns a pandas DataFrame.
+    """
+    own_client = False
+    if not client:
+        from src.database.connection import get_streaming_db_connection
+        client = get_streaming_db_connection(read_only=True)
+        own_client = True
+
+    if not client:
+        return pd.DataFrame()
+
+    try:
+        where_clauses = ["symbol = ?"]
+        params = [symbol]
+
+        if start_time:
+            start_str = start_time.strftime('%Y-%m-%d %H:%M:%S.%f') if isinstance(start_time, datetime) else str(start_time)
+            where_clauses.append("timestamp::TIMESTAMP >= ?::TIMESTAMP")
+            params.append(start_str)
+
+        if end_time:
+            end_str = end_time.strftime('%Y-%m-%d %H:%M:%S.%f') if isinstance(end_time, datetime) else str(end_time)
+            where_clauses.append("timestamp::TIMESTAMP <= ?::TIMESTAMP")
+            params.append(end_str)
+
+        where_stmt = " AND ".join(where_clauses)
+        limit_clause = f"LIMIT {int(limit)}" if limit else ""
+
+        query = f"""
+            SELECT timestamp, symbol, price, volume, bid, ask, source, session
+            FROM ticks
+            WHERE {where_stmt}
+            ORDER BY timestamp ASC
+            {limit_clause}
+        """
+        res = client.execute(query, params)
+        return res.df()
+    finally:
+        if own_client and client:
+            client.close()
+
+
+def query_candlesticks_from_ticks(symbol: str, timeframe="1m", start_time=None, end_time=None, client=None):
+    """
+    Dynamically resamples raw tick-by-tick data from streaming.db into OHLCV candlesticks using time_bucket().
+    Supported timeframes: '1s', '5s', '15s', '1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'.
+    Returns a pandas DataFrame.
+    """
+    own_client = False
+    if not client:
+        from src.database.connection import get_streaming_db_connection
+        client = get_streaming_db_connection(read_only=True)
+        own_client = True
+
+    if not client:
+        return pd.DataFrame()
+
+    try:
+        interval_map = {
+            "1s": "1 second",
+            "5s": "5 seconds",
+            "15s": "15 seconds",
+            "1m": "1 minute",
+            "3m": "3 minutes",
+            "5m": "5 minutes",
+            "15m": "15 minutes",
+            "30m": "30 minutes",
+            "1h": "1 hour",
+            "4h": "4 hours",
+            "1d": "1 day",
+        }
+        interval_str = interval_map.get(timeframe.lower(), "1 minute")
+
+        where_clauses = ["symbol = ?"]
+        params = [symbol]
+
+        if start_time:
+            start_str = start_time.strftime('%Y-%m-%d %H:%M:%S.%f') if isinstance(start_time, datetime) else str(start_time)
+            where_clauses.append("timestamp::TIMESTAMP >= ?::TIMESTAMP")
+            params.append(start_str)
+
+        if end_time:
+            end_str = end_time.strftime('%Y-%m-%d %H:%M:%S.%f') if isinstance(end_time, datetime) else str(end_time)
+            where_clauses.append("timestamp::TIMESTAMP <= ?::TIMESTAMP")
+            params.append(end_str)
+
+        where_stmt = " AND ".join(where_clauses)
+
+        query = f"""
+            SELECT 
+                time_bucket(INTERVAL '{interval_str}', timestamp::TIMESTAMP) AS time,
+                symbol,
+                first(price ORDER BY timestamp) AS open,
+                max(price) AS high,
+                min(price) AS low,
+                last(price ORDER BY timestamp) AS close,
+                sum(coalesce(volume, 1.0)) AS volume
+            FROM ticks
+            WHERE {where_stmt}
+            GROUP BY time, symbol
+            ORDER BY time ASC
+        """
+        res = client.execute(query, params)
+        return res.df()
+    finally:
+        if own_client and client:
+            client.close()
+

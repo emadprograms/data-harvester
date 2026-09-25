@@ -21,6 +21,21 @@ def init_db(client=None):
             conn.close()
 
 
+def init_streaming_db(client=None, db_path=None):
+    """Initializes the streaming.db database for high-throughput tick-by-tick storage."""
+    if client:
+        _init_client(client)
+        return
+
+    from src.database.connection import get_streaming_db_connection
+    conn = get_streaming_db_connection(db_path=db_path)
+    if conn:
+        try:
+            _init_client(conn)
+        finally:
+            conn.close()
+
+
 def _init_client(client):
     """Internal helper to initialize a specific DuckDB client."""
     if not client:
@@ -68,6 +83,26 @@ def _init_client(client):
             client.execute("CREATE INDEX IF NOT EXISTS idx_market_data_sym_ts ON market_data (symbol, timestamp)")
         except Exception as e:
             # DuckDB automatically indexes primary keys
+            pass
+
+        # --- RAW TICKS TABLE (streaming.db tick-by-tick storage) ---
+        client.execute("""
+            CREATE TABLE IF NOT EXISTS ticks (
+                timestamp TIMESTAMP NOT NULL,
+                symbol VARCHAR NOT NULL,
+                price DOUBLE NOT NULL,
+                volume DOUBLE,
+                bid DOUBLE,
+                ask DOUBLE,
+                source VARCHAR,
+                session VARCHAR DEFAULT 'REG'
+            )
+        """)
+
+        try:
+            client.execute("CREATE INDEX IF NOT EXISTS idx_ticks_ts ON ticks (timestamp)")
+            client.execute("CREATE INDEX IF NOT EXISTS idx_ticks_sym_ts ON ticks (symbol, timestamp)")
+        except Exception:
             pass
 
     except Exception as e:

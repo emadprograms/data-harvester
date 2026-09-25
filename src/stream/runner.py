@@ -9,9 +9,10 @@ import signal
 import sys
 import time
 from datetime import datetime
-from src.database.connection import get_duckdb_connection
-from src.database.schema import init_db
-from src.database.operations import _save_to_client, get_symbol_map_from_db
+import os
+from src.database.connection import get_streaming_db_connection, DEFAULT_STREAMING_DB_PATH
+from src.database.schema import init_streaming_db
+from src.database.operations import save_ticks_to_storage, get_symbol_map_from_db
 from src.stream.binance_stream import BinanceStreamer
 from src.stream.capital_stream import CapitalStreamer
 from src.stream.aggregator import CandleAggregator
@@ -24,91 +25,103 @@ logger = logging.getLogger("stream_runner")
 
 
 class StreamingEngine:
-    """Master streaming orchestrator."""
-    def __init__(self, db_path=None, flush_interval=5.0):
-        self.db_path = db_path
+    """Master streaming orchestrator saving pure tick-by-tick data into streaming.db."""
+    def __init__(self, db_path=None, flush_interval=2.0):
+        self.db_path = db_path or DEFAULT_STREAMING_DB_PATH
         self.flush_interval = flush_interval
         self.running = False
         self.write_queue = asyncio.Queue()
         self.db_conn = None
-        self.aggregator = CandleAggregator(on_candle_closed=self._enqueue_bar)
+        self.total_ticks_saved = 0
 
         self.binance_streamer = None
         self.capital_streamer = None
-        self.total_bars_saved = 0
+
+    def _enqueue_tick(self, tick_tuple):
+        """Pushes an individual tick into the async write queue."""
+        self.write_queue.put_nowait(tick_tuple)
 
     def _enqueue_bar(self, bar_tuple):
-        """Pushes a closed 1-minute bar into the async write queue."""
+        """Backward-compatible bar enqueueing."""
         self.write_queue.put_nowait(bar_tuple)
 
-    async def _handle_binance_bar(self, bar_tuple, is_closed):
-        """Handles a bar emitted by Binance."""
+    async def _handle_binance_tick(self, tick_tuple):
+        """Feeds a raw trade tick from Binance directly into the write queue."""
+        self._enqueue_tick(tick_tuple)
+
+    async def _handle_binance_bar(self, bar_tuple, is_closed=True):
+        """Backward-compatible handler for Binance bars."""
         if is_closed:
-            self._enqueue_bar(bar_tuple)
+            self._enqueue_tick(bar_tuple)
 
     async def _handle_capital_tick(self, tick):
-        """Feeds a tick from Capital.com into the aggregator."""
-        symbol = tick["epic"]
-        price = tick["price"]
-        ts = tick["timestamp"]
-        self.aggregator.process_tick(symbol, price, ts, volume=1.0, source="CAPITAL")
+        """Feeds a tick from Capital.com directly into the write queue."""
+        if isinstance(tick, dict):
+            symbol = tick.get("epic", "")
+            price = float(tick.get("price", 0.0))
+            ts = tick.get("timestamp")
+            ts_str = ts.strftime('%Y-%m-%d %H:%M:%S.%f') if isinstance(ts, datetime) else str(ts)
+            bid = tick.get("bid")
+            ask = tick.get("ask")
+            tick_tuple = (ts_str, symbol, price, 1.0, bid, ask, "CAPITAL", "REG")
+        else:
+            tick_tuple = tick
+        self._enqueue_tick(tick_tuple)
 
     async def _duckdb_writer_worker(self):
-        """Worker that drains the write queue and batches writes into DuckDB."""
+        """Worker that drains the write queue and batches raw tick writes into streaming.db."""
         buffer = []
         last_flush = time.time()
 
         while self.running or not self.write_queue.empty():
             try:
-                # Wait for items with dynamic timeout
-                wait_time = min(0.5, self.flush_interval) if buffer else 1.0
+                wait_time = min(0.2, self.flush_interval) if buffer else 0.5
                 try:
-                    bar = await asyncio.wait_for(self.write_queue.get(), timeout=wait_time)
-                    buffer.append(bar)
+                    tick = await asyncio.wait_for(self.write_queue.get(), timeout=wait_time)
+                    # Normalize if 9-element bar tuple from legacy callers: (ts, sym, o, h, l, c, v, sess, src)
+                    if len(tick) == 9:
+                        # (ts, sym, close, vol, None, None, src, sess)
+                        tick = (tick[0], tick[1], tick[5], tick[6], None, None, tick[8], tick[7])
+                    buffer.append(tick)
                     self.write_queue.task_done()
                 except asyncio.TimeoutError:
                     pass
 
-                # Check if we should flush buffer
                 now = time.time()
                 should_flush = (
-                    len(buffer) >= 50 or
+                    len(buffer) >= 100 or
                     (buffer and (now - last_flush) >= self.flush_interval) or
                     (not self.running and buffer)
                 )
 
                 if should_flush:
                     count = len(buffer)
-                    _save_to_client(self.db_conn, buffer, label="DuckDB-Stream")
-                    self.total_bars_saved += count
-                    logger.info(f"💾 Committed {count} bars to DuckDB (Total session: {self.total_bars_saved})")
+                    save_ticks_to_storage(self.db_conn, buffer, label="DuckDB-Ticks")
+                    self.total_ticks_saved += count
+                    logger.info(f"💾 Committed {count} ticks to streaming.db (Total session: {self.total_ticks_saved})")
                     buffer.clear()
                     last_flush = now
 
-                # Flush any stale candles from aggregator
-                self.aggregator.flush_stale_candles(max_age_seconds=90)
-
             except Exception as e:
                 logger.error(f"DuckDB writer worker error: {e}")
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
 
-        # Flush any remaining buffer when worker terminates
+        # Flush any remaining buffer on shutdown
         if buffer:
             try:
                 count = len(buffer)
-                _save_to_client(self.db_conn, buffer, label="DuckDB-Stream")
-                self.total_bars_saved += count
-                logger.info(f"💾 Final flush: committed {count} bars to DuckDB.")
+                save_ticks_to_storage(self.db_conn, buffer, label="DuckDB-Ticks")
+                self.total_ticks_saved += count
+                logger.info(f"💾 Final flush: committed {count} ticks to streaming.db.")
                 buffer.clear()
             except Exception as e:
                 logger.error(f"Error during final buffer flush: {e}")
 
-
     async def start(self):
         self.running = True
-        logger.info("Initializing DuckDB database schema...")
-        self.db_conn = get_duckdb_connection(self.db_path)
-        init_db(self.db_conn)
+        logger.info(f"Initializing streaming database schema ({self.db_path})...")
+        self.db_conn = get_streaming_db_connection(self.db_path)
+        init_streaming_db(self.db_conn)
 
         # Discover symbols from symbol_map
         symbol_map = get_symbol_map_from_db(self.db_conn)
@@ -130,13 +143,14 @@ class StreamingEngine:
         if not capital_symbols:
             capital_symbols = ["AAPL", "NVDA", "TSLA", "SPY", "QQQ", "AMD", "AMZN", "MSFT"]
 
-        logger.info(f"Targeting {len(binance_symbols)} Binance symbols: {binance_symbols}")
-        logger.info(f"Targeting {len(capital_symbols)} Capital.com symbols: {capital_symbols[:6]}...")
+        logger.info(f"Targeting {len(binance_symbols)} Binance symbols for live ticks: {binance_symbols}")
+        logger.info(f"Targeting {len(capital_symbols)} Capital.com symbols for live quotes: {capital_symbols[:6]}...")
 
-        # Initialize streamers
+        # Initialize streamers for real-time tick streaming
         self.binance_streamer = BinanceStreamer(
             symbols=binance_symbols,
-            on_bar_callback=self._handle_binance_bar
+            stream_type="trade",
+            on_tick_callback=self._handle_binance_tick
         )
         self.capital_streamer = CapitalStreamer(
             epics=capital_symbols,
@@ -150,7 +164,7 @@ class StreamingEngine:
             asyncio.create_task(self.capital_streamer.start())
         ]
 
-        logger.info("🚀 24/7 Streaming Engine started successfully.")
+        logger.info("🚀 24/7 Tick-by-Tick Streaming Engine started successfully.")
         try:
             await asyncio.gather(*tasks)
         except asyncio.CancelledError:

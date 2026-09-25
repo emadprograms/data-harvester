@@ -9,7 +9,7 @@ import pytest
 import websockets
 from datetime import datetime, timezone
 from src.database.connection import get_duckdb_connection
-from src.database.schema import init_db
+from src.database.schema import init_db, init_streaming_db
 from src.database.operations import query_candlesticks, get_symbol_map_from_db
 from src.stream.runner import StreamingEngine
 
@@ -50,11 +50,11 @@ class TestLiveWebSocketIngestion:
     def test_end_to_end_multistream_ingestion_and_resampling(self, tmp_path):
         """
         Verify complete flow:
-        Simulated Capital tick + Binance bar -> StreamingEngine write_queue -> DuckDB writer -> query_candlesticks.
+        Simulated Capital tick + Binance trade tick -> StreamingEngine write_queue -> DuckDB writer -> query_ticks.
         """
         db_file = str(tmp_path / "test_stream_ingest.duckdb")
         client = get_duckdb_connection(db_file)
-        init_db(client)
+        init_streaming_db(client)
 
         async def _lifecycle_run():
             engine = StreamingEngine(db_path=db_file, flush_interval=0.05)
@@ -71,19 +71,18 @@ class TestLiveWebSocketIngestion:
             t3 = datetime(2026, 1, 1, 10, 1, 10, tzinfo=timezone.utc)
             await engine._handle_capital_tick({"epic": "NVDA", "price": 402.0, "timestamp": t3})
 
-            # 2. Feed closed Binance kline bar
-            binance_bar = (
-                "2026-01-01 10:00:00",
+            # 2. Feed Binance trade tick
+            binance_tick = (
+                "2026-01-01 10:00:00.500000",
                 "BTCUSDT",
-                92000.0,
-                92500.0,
-                91900.0,
                 92300.0,
-                15.5,
-                "REG",
-                "BINANCE"
+                0.15,
+                None,
+                None,
+                "BINANCE",
+                "REG"
             )
-            await engine._handle_binance_bar(binance_bar, is_closed=True)
+            await engine._handle_binance_tick(binance_tick)
 
             # 3. Start writer worker and wait for queue drain
             worker_task = asyncio.create_task(engine._duckdb_writer_worker())
@@ -100,27 +99,32 @@ class TestLiveWebSocketIngestion:
 
         asyncio.run(_lifecycle_run())
 
-        # 5. Query persisted data via query_candlesticks
-        df_nvda = query_candlesticks("NVDA", client=client)
-        assert len(df_nvda) >= 1
-        assert df_nvda.iloc[0]["open"] == 400.0
-        assert df_nvda.iloc[0]["high"] == 405.0
-        assert df_nvda.iloc[0]["symbol"] == "NVDA"
+        # 5. Query persisted data via query_ticks and query_candlesticks_from_ticks
+        from src.database.operations import query_ticks, query_candlesticks_from_ticks
+        ticks_nvda = query_ticks("NVDA", client=client)
+        assert len(ticks_nvda) == 3
+        assert ticks_nvda.iloc[0]["price"] == 400.0
+        assert ticks_nvda.iloc[1]["price"] == 405.0
 
-        df_btc = query_candlesticks("BTCUSDT", client=client)
-        assert len(df_btc) == 1
-        assert df_btc.iloc[0]["high"] == 92500.0
-        assert df_btc.iloc[0]["close"] == 92300.0
-        assert df_btc.iloc[0]["symbol"] == "BTCUSDT"
+        ticks_btc = query_ticks("BTCUSDT", client=client)
+        assert len(ticks_btc) == 1
+        assert ticks_btc.iloc[0]["price"] == 92300.0
+        assert ticks_btc.iloc[0]["source"] == "BINANCE"
+
+        # Candlestick dynamic aggregation directly from ticks
+        candles_nvda = query_candlesticks_from_ticks("NVDA", timeframe="1m", client=client)
+        assert len(candles_nvda) == 2
+        assert candles_nvda.iloc[0]["open"] == 400.0
+        assert candles_nvda.iloc[0]["high"] == 405.0
 
         client.close()
 
     def test_live_binance_public_websocket_connectivity(self):
         """
-        Verify live connection to Binance 24/7 public WebSocket endpoint.
+        Verify live connection to Binance 24/7 public trade WebSocket endpoint.
         Gracefully skips if network or DNS is unreachable.
         """
-        url = "wss://stream.binance.com:9443/stream?streams=btcusdt@kline_1m"
+        url = "wss://stream.binance.com:9443/stream?streams=btcusdt@trade"
 
         async def _connect():
             async with websockets.connect(url) as ws:
@@ -131,10 +135,11 @@ class TestLiveWebSocketIngestion:
         try:
             data = asyncio.run(_connect())
             assert "stream" in data
-            assert data["stream"] == "btcusdt@kline_1m"
+            assert data["stream"] == "btcusdt@trade"
             assert "data" in data
-            kline = data["data"]["k"]
-            assert kline["s"] == "BTCUSDT"
-            assert "c" in kline
+            trade = data["data"]
+            assert trade["s"] == "BTCUSDT"
+            assert "p" in trade
+            assert "q" in trade
         except (OSError, asyncio.TimeoutError) as e:
             pytest.skip(f"Live network test skipped due to network/timeout: {e}")

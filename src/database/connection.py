@@ -6,6 +6,7 @@ import os
 import duckdb
 
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "market_data.duckdb")
+DEFAULT_STREAMING_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "streaming.db")
 
 
 class DuckDBResult:
@@ -92,6 +93,11 @@ def get_duckdb_connection(db_path=None, read_only=False):
                 pass
         print(f"❌ DuckDB Connection Error: {e}")
         return None
+
+
+def get_streaming_db_connection(db_path=None, read_only=False):
+    """Establishes a connection to the local DuckDB streaming database (streaming.db)."""
+    return get_duckdb_connection(db_path=db_path or DEFAULT_STREAMING_DB_PATH, read_only=read_only)
 
 
 # Backward-compatible alias for existing codebase callers
