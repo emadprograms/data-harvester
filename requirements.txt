@@ -5,8 +5,6 @@ websockets
 requests
 urllib3
 pytz
-infisicalsdk
-toml
 python-dotenv
 pytest
 polygon-api-client

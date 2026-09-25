@@ -34,14 +34,10 @@ def main():
     log_filename = f"logs/harvest_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
     
     try:
-        # 0. Initialize Logger and Secrets
+        # 0. Initialize Logger and Environment
         logger = CLILogger(log_path=log_filename)
-        from src.infisical_manager import InfisicalManager
-        mgr = InfisicalManager()
-        
-        discord_webhook = mgr.get_secret("discord_captain_data_webhook_url")
-        if discord_webhook:
-            os.environ["DISCORD_WEBHOOK_URL"] = discord_webhook
+        from dotenv import load_dotenv
+        load_dotenv()
             
         # 0. Initialize Database Client (Archive Only)
         from src.database.connection import get_archive_db_connection

@@ -6,17 +6,16 @@ import threading
 from datetime import datetime, timedelta
 from polygon import RESTClient
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from src.infisical_manager import InfisicalManager
+from src.credentials import get_massive_keys
 from src.config import SCHEMA_COLS, UTC, US_EASTERN
 
 class MassiveProvider:
     def __init__(self, logger):
         self.logger = logger
         self._lock = threading.Lock()
-        mgr = InfisicalManager()
-        self.api_keys = mgr.get_massive_keys()
+        self.api_keys = get_massive_keys()
         if not self.api_keys:
-            self.logger.log("❌ No Massive API keys found in Infisical.")
+            self.logger.log("❌ No Massive API keys found in .env.")
         self.clients = [RESTClient(key) for key in self.api_keys]
         self._key_index = 0
 

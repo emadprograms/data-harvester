@@ -11,14 +11,12 @@ import pandas as pd
 class TestMainSmoke:
 
     @patch("src.database.connection.get_archive_db_connection")
-    @patch("src.infisical_manager.InfisicalManager")
     @patch("src.utils.logger.CLILogger")
     @patch("sys.exit")
     def test_main_exits_gracefully_without_credentials(
         self,
         mock_exit,          # Bottom-most patch
         mock_logger_cls,
-        mock_infisical_cls,
         mock_archive_conn
     ):
         """Entrypoint should return cleanly when DB credentials are unavailable."""
@@ -27,10 +25,6 @@ class TestMainSmoke:
 
         mock_logger = MagicMock()
         mock_logger_cls.return_value = mock_logger
-
-        mock_infisical = MagicMock()
-        mock_infisical.get_secret.return_value = "https://discord.com/fake"
-        mock_infisical_cls.return_value = mock_infisical
 
         # Connection Failure
         mock_archive_conn.return_value = None
@@ -46,7 +40,6 @@ class TestMainSmoke:
     @patch("src.database.operations.get_session_row_counts")
     @patch("src.api.massive.MassiveProvider")
     @patch("src.utils.logger.CLILogger")
-    @patch("src.infisical_manager.InfisicalManager")
     @patch("src.database.connection.get_archive_db_connection")
     @patch("src.database.schema.init_db")
     @patch("src.database.operations.get_symbol_map_from_db")
@@ -65,7 +58,6 @@ class TestMainSmoke:
         mock_get_map,
         mock_init_db,
         mock_archive_conn,
-        mock_infisical_cls,
         mock_logger_cls,
         mock_massive_cls,
         mock_get_row_counts,
@@ -78,10 +70,6 @@ class TestMainSmoke:
         # 1. Setup Mocks
         mock_logger = MagicMock()
         mock_logger_cls.return_value = mock_logger
-        
-        mock_infisical = MagicMock()
-        mock_infisical.get_secret.return_value = "https://discord.com/webhook"
-        mock_infisical_cls.return_value = mock_infisical
         
         mock_archive = MagicMock()
         mock_archive_conn.return_value = mock_archive
