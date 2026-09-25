@@ -45,7 +45,7 @@ class TestDatabaseOperations:
         mock_client = MagicMock()
         mock_conn.return_value = mock_client
         
-        # Mocking the ResultSet object from libsql-client
+        # Mocking the DuckDBResult object
         mock_res = MagicMock()
         mock_res.rows = [
             ("AAPL", None, "AAPL", None, "AAPL"),

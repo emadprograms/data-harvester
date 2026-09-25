@@ -226,3 +226,48 @@ class TestDuckDBStorage:
         finally:
             client.close()
 
+    def test_duckdb_result_proxying_and_executemany(self):
+        """DuckDBResult must support .rows, .fetchall(), .fetchone(), .df(), and .arrow()."""
+        client = self._new_client()
+        try:
+            schema_module.init_db(client)
+
+            # Test executemany
+            sql = "INSERT OR REPLACE INTO symbol_map (display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker) VALUES (?, ?, ?, ?, ?)"
+            params = [
+                ("TEST1", "T1", None, None, None),
+                ("TEST2", "T2", None, None, None),
+            ]
+            client.executemany(sql, params)
+            client.commit()
+
+            res = client.execute("SELECT display_name, yahoo_ticker FROM symbol_map WHERE display_name IN ('TEST1', 'TEST2') ORDER BY display_name")
+            assert len(res.rows) == 2
+            assert res.fetchall() == res.rows
+            assert res.fetchone() == ("TEST1", "T1")
+
+            # Test df()
+            df = res.df()
+            assert len(df) == 2
+            assert list(df["display_name"]) == ["TEST1", "TEST2"]
+
+            # Test arrow()
+            arrow_table = res.arrow()
+            assert arrow_table.num_rows == 2
+
+        finally:
+            client.close()
+
+    def test_get_duckdb_connection_factory_and_fallback(self):
+        """get_duckdb_connection must open database and gracefully handle read_only fallback."""
+        conn1 = get_duckdb_connection(db_path=self.db_path, read_only=False)
+        assert conn1 is not None
+
+        # Requesting read_only on an actively open file falls back to read_only=False seamlessly
+        conn2 = get_duckdb_connection(db_path=self.db_path, read_only=True)
+        assert conn2 is not None
+
+        conn1.close()
+        conn2.close()
+
+

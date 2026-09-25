@@ -10,7 +10,7 @@ import pandas as pd
 import os
 from datetime import date, datetime
 from unittest.mock import patch, MagicMock
-from src.database.connection import create_client_sync
+from src.database.connection import DuckDBClient
 from src.database.operations import get_symbol_map_from_db, save_data_to_storage
 from src.data.harvester import run_harvest_logic
 from src.database.schema import init_db
@@ -20,7 +20,7 @@ class TestIntegrationPipeline:
 
     @pytest.fixture(autouse=True)
     def setup_teardown(self):
-        self.db_files = ["memdb1.db", "memdb2.db"]
+        self.db_files = ["test_integration.duckdb"]
         self._clients = []
         for f in self.db_files:
             if os.path.exists(f):
@@ -38,7 +38,7 @@ class TestIntegrationPipeline:
                 except: pass
 
     def _new_client(self, db_path: str):
-        client = create_client_sync(url=f"file:{db_path}")
+        client = DuckDBClient(db_path=db_path)
         self._clients.append(client)
         return client
 

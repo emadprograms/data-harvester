@@ -13,11 +13,15 @@ class DuckDBResult:
     def __init__(self, cursor):
         self.cursor = cursor
         self._rows = None
+        self._df = None
 
     @property
     def rows(self):
         if self._rows is None:
-            self._rows = self.cursor.fetchall()
+            if self._df is not None:
+                self._rows = [tuple(x) for x in self._df.to_numpy()]
+            else:
+                self._rows = self.cursor.fetchall()
         return self._rows
 
     def fetchall(self):
@@ -27,10 +31,21 @@ class DuckDBResult:
         return self.rows[0] if self.rows else None
 
     def df(self):
-        return self.cursor.df()
+        if self._df is None:
+            if self._rows is not None:
+                import pandas as pd
+                cols = [desc[0] for desc in self.cursor.description] if self.cursor.description else []
+                self._df = pd.DataFrame(self._rows, columns=cols)
+            else:
+                self._df = self.cursor.df()
+        return self._df
 
     def arrow(self):
-        return self.cursor.arrow()
+        try:
+            return self.cursor.arrow()
+        except Exception:
+            import pyarrow as pa
+            return pa.Table.from_pandas(self.df())
 
 
 class DuckDBClient:

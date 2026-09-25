@@ -49,6 +49,35 @@ class TestCandleAggregator:
         assert len(closed) == 1
         assert closed[0][1] == "NVDA"
 
+    def test_multi_symbol_interleaved_aggregation(self):
+        """Aggregator must maintain independent state for multiple symbols simultaneously."""
+        closed = []
+        agg = CandleAggregator(on_candle_closed=lambda c: closed.append(c))
+
+        # AAPL at 10:00:10
+        agg.process_tick("AAPL", 150.0, datetime(2026, 1, 1, 10, 0, 10))
+        # TSLA at 10:00:15
+        agg.process_tick("TSLA", 200.0, datetime(2026, 1, 1, 10, 0, 15))
+        # AAPL at 10:00:40
+        agg.process_tick("AAPL", 155.0, datetime(2026, 1, 1, 10, 0, 40))
+
+        assert len(closed) == 0
+
+        # AAPL moves to 10:01:05 -> closes AAPL 10:00 only
+        agg.process_tick("AAPL", 154.0, datetime(2026, 1, 1, 10, 1, 5))
+        assert len(closed) == 1
+        assert closed[0][1] == "AAPL"
+        assert closed[0][2] == 150.0  # Open
+        assert closed[0][3] == 155.0  # High
+        assert closed[0][5] == 155.0  # Close
+
+        # TSLA moves to 10:01:10 -> closes TSLA 10:00
+        agg.process_tick("TSLA", 205.0, datetime(2026, 1, 1, 10, 1, 10))
+        assert len(closed) == 2
+        assert closed[1][1] == "TSLA"
+        assert closed[1][2] == 200.0
+
+
 
 class TestStreamers:
     """Tests streamer configuration and URL formatting."""
