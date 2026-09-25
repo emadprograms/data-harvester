@@ -14,15 +14,9 @@ class TestDuckDBStorage:
     """Verifies local DuckDB operations, schema initialization, and source-tiering."""
 
     @pytest.fixture(autouse=True)
-    def setup_teardown(self):
-        self.db_path = "test_duckdb_storage.duckdb"
-        if os.path.exists(self.db_path):
-            try: os.remove(self.db_path)
-            except: pass
+    def setup_teardown(self, tmp_path):
+        self.db_path = str(tmp_path / "test_duckdb_storage.duckdb")
         yield
-        if os.path.exists(self.db_path):
-            try: os.remove(self.db_path)
-            except: pass
 
     def _new_client(self):
         return DuckDBClient(db_path=self.db_path)

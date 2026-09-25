@@ -18,40 +18,20 @@ from src.database.schema import init_db
 
 class TestIntegrationPipeline:
 
-    @pytest.fixture(autouse=True)
-    def setup_teardown(self):
-        self.db_files = ["test_integration.duckdb"]
-        self._clients = []
-        for f in self.db_files:
-            if os.path.exists(f):
-                try: os.remove(f)
-                except: pass
-        
-        yield
-        
-        for client in self._clients:
-            try: client.close()
-            except: pass
-        for f in self.db_files:
-            if os.path.exists(f):
-                try: os.remove(f)
-                except: pass
-
     def _new_client(self, db_path: str):
-        client = DuckDBClient(db_path=db_path)
-        self._clients.append(client)
-        return client
+        return DuckDBClient(db_path=db_path)
 
     @patch("src.data.harvester.fetch_binance_range")
     @patch("src.data.harvester.fetch_yahoo_market_data")
     @patch("src.data.harvester.fetch_massive_data")
     @patch("src.database.connection.get_archive_db_connection")
-    def test_full_harvest_mixed_symbols(self, mock_archive, mock_massive, mock_yahoo, mock_binance, safe_test_range, safe_test_date_str):
+    def test_full_harvest_mixed_symbols(self, mock_archive, mock_massive, mock_yahoo, mock_binance, safe_test_range, safe_test_date_str, tmp_path):
         """Pipeline should correctly handle a mix of crypto, stock, and fallback scenarios."""
         start_dt, end_dt = safe_test_range
         
-        # 0. Setup Mock DB
-        mem_client = self._new_client("memdb1.db")
+        # 0. Setup Mock DB in isolated temporary folder
+        db_file = str(tmp_path / "test_integration.duckdb")
+        mem_client = self._new_client(db_file)
         init_db(mem_client)
         mock_archive.return_value = mem_client
         
