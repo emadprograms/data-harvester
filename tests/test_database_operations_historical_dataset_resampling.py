@@ -1,5 +1,5 @@
 """
-Milestone Acceptance Tests for DuckDB Database Storage and Resampling Operations.
+Tests for DuckDB Database Historical Dataset Integrity and Candlestick Resampling Operations.
 Verifies historical database dataset integrity, schema conformity, candle mathematical
 invariants, and sub-100ms multi-timeframe OHLCV resampling benchmarks.
 """
@@ -16,8 +16,8 @@ historical_db_exists = os.path.exists(HISTORICAL_DB_PATH)
 
 
 @pytest.mark.skipif(not historical_db_exists, reason="Historical database data/market_data.duckdb not found.")
-class TestDuckDBMilestoneAcceptance:
-    """Acceptance tests against the 3.95M+ row historical dataset."""
+class TestHistoricalDatasetAndResampling:
+    """Tests against the 3.95M+ row historical dataset."""
 
     @pytest.fixture(scope="class")
     def db_client(self):

@@ -1,5 +1,5 @@
 """
-Milestone Acceptance Tests for 24/7 Live WebSocket Streaming Engine.
+Tests for 24/7 Live WebSocket Streaming Engine and Multistream Ingestion.
 Verifies streamer symbol discovery, async multi-broker buffering, writer batching,
 and live public Binance WebSocket connectivity.
 """
@@ -14,8 +14,8 @@ from src.database.operations import query_candlesticks, get_symbol_map_from_db
 from src.stream.runner import StreamingEngine
 
 
-class TestStreamingEngineMilestoneAcceptance:
-    """Verifies streaming engine lifecycle, symbol mapping, and ingestion."""
+class TestLiveWebSocketIngestion:
+    """Verifies streaming engine lifecycle, symbol mapping, and live ingestion."""
 
     def test_engine_symbol_discovery_from_db(self, tmp_path):
         """StreamingEngine must discover both Binance and Capital symbols from seeded DB."""
