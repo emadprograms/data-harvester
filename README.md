@@ -12,7 +12,7 @@ A high-performance market data harvesting, 24/7 live tick streaming, and telemet
 - **UTC Storage Mandate**: every stored timestamp is pure UTC, and every DuckDB connection pins the session `TimeZone` to `UTC`, so query semantics never depend on the host OS timezone. Exchange-local rendering happens only at query/UI time.
 
 ### 🌐 Observability Command Center Dashboard
-- Zero-dependency local multi-threaded HTTP server (`http://localhost:8000`).
+- Zero-dependency local multi-threaded HTTP server (`http://localhost:8420`, configurable via `--port` or `DASHBOARD_PORT`).
 - **TradingView Lightweight Charts** (v4.1.3) with dark-slate UI, multi-timeframe analytical resampling (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`), volume histograms, and session breakdown.
 - **NYSE Exchange-Time Rendering**: chart X-axis ticks, crosshair badge, hover legend, raw candle inspector and CSV export are all labelled in `America/New_York` (EST/EDT), so the 09:30 opening bell — and its volume spike — always render at 09:30 ET no matter which timezone the server or the browser runs in. Candle API contract: `time` is a true UTC epoch, `time_str` is the exchange-local label, `timezone`/`time_epoch_basis` declare it.
 - **Live Stream Tape**: Real-time tick wall with bid/ask/spread, process telemetry, and dynamic symbol reload.
@@ -76,7 +76,7 @@ Start the web dashboard server:
 ```bash
 python3 -m src.dashboard.server
 ```
-Then navigate to **http://localhost:8000** in your browser.
+Then navigate to **http://localhost:8420** in your browser (or pass `--port <PORT>` to bind to another port).
 
 ### 3. Launch the 24/7 Capital.com Streamer
 Start the continuous live tick ingestion engine:
@@ -97,4 +97,4 @@ python3 main.py --date 2026-04-15
 ---
 
 ## 📜 Milestones & Roadmap
-Full details on shipped milestones (v1.0, v2.0, v3.0) are tracked in [MILESTONES.md](MILESTONES.md).
+Full details on shipped milestones (v1.0, v2.0, v3.0) are tracked in [.planning/MILESTONES.md](.planning/MILESTONES.md).

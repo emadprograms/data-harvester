@@ -1,7 +1,7 @@
 """
 Data Harvester Dashboard Server.
 Provides a lightweight, multi-threaded REST API and serves the interactive JavaScript web UI.
-Runs on localhost:8000 with zero external framework dependencies.
+Runs on localhost:8420 with zero external framework dependencies.
 """
 import os
 import json
@@ -477,7 +477,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         return
 
 
-def create_dashboard_server(host="127.0.0.1", port=8000):
+def create_dashboard_server(host="127.0.0.1", port=8420):
     """Creates a ThreadedHTTPServer instance."""
     return ThreadedHTTPServer((host, port), DashboardRequestHandler)
 
@@ -490,14 +490,14 @@ def run_dashboard_server(host="0.0.0.0", port=None):
         parser.add_argument("--port", type=int, default=None, help="Port to listen on")
         parser.add_argument("--host", type=str, default=None, help="Host to bind to")
         args, _ = parser.parse_known_args()
-        port = args.port or int(os.getenv("DASHBOARD_PORT") or os.getenv("PORT") or 8000)
+        port = args.port or int(os.getenv("DASHBOARD_PORT") or os.getenv("PORT") or 8420)
         if args.host:
             host = args.host
 
     server = None
     target_ports = [port]
-    if port == 8000:
-        target_ports.extend([8001, 8080])
+    if port == 8420:
+        target_ports.extend([8421, 8422, 8425])
 
     for p in target_ports:
         try:
@@ -505,7 +505,9 @@ def run_dashboard_server(host="0.0.0.0", port=None):
             port = p
             break
         except OSError as e:
-            if e.errno == 48 and len(target_ports) > 1:
+            # errno 48 is Unix EADDRINUSE; 10048 is Windows WSAEADDRINUSE
+            is_addr_in_use = e.errno in (48, 10048) or getattr(e, "winerror", None) == 10048
+            if is_addr_in_use and len(target_ports) > 1:
                 logger.warning(f"Port {p} is in use, attempting next port...")
                 continue
             raise
