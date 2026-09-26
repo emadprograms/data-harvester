@@ -5,6 +5,7 @@ Provides thread-safe local connections to dedicated DuckDB files:
 - data/streaming.duckdb: 24/7 live WebSocket raw tick quotes
 """
 import os
+import re
 import duckdb
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
@@ -21,6 +22,22 @@ DEFAULT_DB_PATH = DEFAULT_HISTORICAL_DB_PATH if os.path.exists(DEFAULT_HISTORICA
 # machine the harvester or the dashboard runs on. Exchange-local rendering (America/New_York) is
 # applied explicitly in query SQL, never via the session timezone.
 SESSION_TIMEZONE = "UTC"
+
+_SYMBOL_MAP_WRITE_RE = re.compile(
+    r"\b(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+symbol_map\b",
+    re.IGNORECASE,
+)
+
+
+def _redirect_symbol_map_writes(query: str) -> str:
+    """
+    DuckDB does not allow mutating VIEWs (raises Catalog Error: symbol_map is not an table).
+    To provide seamless backward compatibility when symbol_map is a VIEW of historical_symbol_map,
+    redirect write statements (INSERT, UPDATE, DELETE) targeting symbol_map to historical_symbol_map.
+    """
+    if isinstance(query, str) and "symbol_map" in query:
+        return _SYMBOL_MAP_WRITE_RE.sub(r"\1 historical_symbol_map", query)
+    return query
 
 
 class DuckDBResult:
@@ -109,6 +126,7 @@ class DuckDBClient:
         self.conn = conn
 
     def execute(self, query, params=None):
+        query = _redirect_symbol_map_writes(query)
         if params is not None:
             cur = self.conn.execute(query, params)
         else:
@@ -116,6 +134,7 @@ class DuckDBClient:
         return DuckDBResult(cur)
 
     def executemany(self, query, seq_of_params):
+        query = _redirect_symbol_map_writes(query)
         cur = self.conn.executemany(query, seq_of_params)
         return DuckDBResult(cur)
 

@@ -33,11 +33,34 @@ EXCLUDED_SYMBOLS = {
 }
 
 
-def get_target_stock_symbols(historical_client=None) -> List[str]:
+def get_target_stock_symbols(historical_client=None, streaming_client=None) -> List[str]:
     """
-    Retrieves tracked symbols from symbol_map, filtering strictly for single-stock equities.
-    Filters out all ETFs, crypto pairs, commodities, and synthetic tickers.
+    Retrieves tracked symbols from streaming_symbol_map in streaming.duckdb.
+    Falls back to historical symbol_map with EXCLUDED_SYMBOLS filter if streaming table not found.
     """
+    # 1. Try dedicated streaming_symbol_map first
+    s_client = streaming_client
+    own_s_client = False
+    if s_client is None:
+        s_client = get_streaming_db_connection(read_only=True)
+        own_s_client = True
+
+    if s_client:
+        try:
+            tables = [t[0] for t in s_client.execute("SHOW TABLES").fetchall()]
+            if "streaming_symbol_map" in tables:
+                rows = s_client.execute(
+                    "SELECT display_name FROM streaming_symbol_map WHERE is_active = TRUE ORDER BY display_name"
+                ).fetchall()
+                if rows:
+                    return [r[0].strip().upper() for r in rows]
+        except Exception:
+            pass
+        finally:
+            if own_s_client:
+                s_client.close()
+
+    # 2. Fallback to historical symbol_map with exclusions
     own_client = False
     if historical_client is None:
         historical_client = get_historical_db_connection(read_only=True)
@@ -47,8 +70,13 @@ def get_target_stock_symbols(historical_client=None) -> List[str]:
         return []
 
     try:
+        table_name = "historical_symbol_map"
+        tables = [t[0] for t in historical_client.execute("SHOW TABLES").fetchall()]
+        if "historical_symbol_map" not in tables and "symbol_map" in tables:
+            table_name = "symbol_map"
+
         rows = historical_client.execute(
-            "SELECT display_name FROM symbol_map ORDER BY display_name"
+            f"SELECT display_name FROM {table_name} ORDER BY display_name"
         ).fetchall()
         stock_symbols = []
         for r in rows:

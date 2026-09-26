@@ -168,6 +168,12 @@ def audit_streaming_db(db_path: str = "data/streaming.duckdb") -> bool:
     print_check("Zero severely crossed quotes (bid > ask*1.05)", p_cross, f"{null_sanity[6]} found")
     all_passed = all_passed and p_cross
 
+    # 2b. Dedicated streaming_symbol_map check
+    s_map_count = con.execute("SELECT COUNT(*) FROM streaming_symbol_map").fetchone()[0]
+    p_s_map = (s_map_count == 19)
+    print_check("Streaming symbol map table (streaming_symbol_map)", p_s_map, f"{s_map_count} configured streaming symbols")
+    all_passed = all_passed and p_s_map
+
     # 3. Asset Scope Check for Databento
     db_symbols = con.execute("""
         SELECT DISTINCT symbol 
@@ -400,15 +406,24 @@ def audit_historical_db(db_path: str = "data/historical.duckdb") -> bool:
     # 4. Symbol map integrity
     sym_map_stats = con.execute("""
         SELECT COUNT(*), COUNT(DISTINCT display_name), COUNT(DISTINCT capital_ticker)
-        FROM symbol_map
+        FROM historical_symbol_map
     """).fetchone()
     p_map = sym_map_stats[0] > 0
     print_check(
-        "Symbol Map integrity",
+        "Historical Symbol Map table (historical_symbol_map)",
         p_map,
         f"{sym_map_stats[0]} mappings ({sym_map_stats[1]} unique symbols, {sym_map_stats[2]} capital tickers)"
     )
     all_passed = all_passed and p_map
+
+    view_stats = con.execute("SELECT COUNT(*) FROM symbol_map").fetchone()
+    p_view = view_stats[0] == sym_map_stats[0]
+    print_check(
+        "Backward-compatible symbol_map VIEW",
+        p_view,
+        f"{view_stats[0]} mappings accessible via symbol_map view"
+    )
+    all_passed = all_passed and p_view
 
     con.close()
     return all_passed

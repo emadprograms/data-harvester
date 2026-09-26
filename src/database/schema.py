@@ -23,20 +23,31 @@ def init_historical_db(client=None):
         return
 
     try:
-        # --- SYMBOL INVENTORY TABLE ---
-        client.execute("""
-            CREATE TABLE IF NOT EXISTS symbol_map (
-                display_name VARCHAR PRIMARY KEY,
-                yahoo_ticker VARCHAR,
-                massive_ticker VARCHAR,
-                binance_ticker VARCHAR,
-                capital_ticker VARCHAR
-            )
-        """)
+        # --- HISTORICAL SYMBOL INVENTORY TABLE ---
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        if "symbol_map" in tables and "historical_symbol_map" not in tables:
+            # Check if symbol_map is a table (not view) and migrate
+            client.execute("CREATE TABLE historical_symbol_map AS SELECT * FROM symbol_map")
+            client.execute("DROP TABLE symbol_map")
+            client.execute("CREATE VIEW symbol_map AS SELECT * FROM historical_symbol_map")
+        else:
+            client.execute("""
+                CREATE TABLE IF NOT EXISTS historical_symbol_map (
+                    display_name VARCHAR PRIMARY KEY,
+                    yahoo_ticker VARCHAR,
+                    massive_ticker VARCHAR,
+                    binance_ticker VARCHAR,
+                    capital_ticker VARCHAR
+                )
+            """)
+            try:
+                client.execute("CREATE VIEW IF NOT EXISTS symbol_map AS SELECT * FROM historical_symbol_map")
+            except Exception:
+                pass
 
         # --- SEEDING ---
         try:
-            res = client.execute("SELECT count(*) FROM symbol_map")
+            res = client.execute("SELECT count(*) FROM historical_symbol_map")
             if res.rows and res.rows[0][0] == 0:
                 _seed_default_symbols(client)
         except Exception as e:
@@ -83,6 +94,25 @@ def init_streaming_db(client=None, db_path=None):
         return
 
     try:
+        # --- STREAMING SYMBOL INVENTORY TABLE ---
+        client.execute("""
+            CREATE TABLE IF NOT EXISTS streaming_symbol_map (
+                display_name VARCHAR PRIMARY KEY,
+                capital_ticker VARCHAR,
+                databento_ticker VARCHAR,
+                binance_ticker VARCHAR,
+                is_active BOOLEAN DEFAULT TRUE
+            )
+        """)
+
+        # --- SEED DEFAULT STREAMING SYMBOLS (19 single-stock equities) ---
+        try:
+            res = client.execute("SELECT count(*) FROM streaming_symbol_map")
+            if res.rows and res.rows[0][0] == 0:
+                _seed_streaming_symbols(client)
+        except Exception as e:
+            print(f"⚠️ Streaming seeding warning: {e}")
+
         # --- RAW TICKS TABLE (streaming.duckdb tick-by-tick storage) ---
         client.execute("""
             CREATE TABLE IF NOT EXISTS ticks (
@@ -132,9 +162,42 @@ def init_db(client=None, streaming_client=None):
     init_streaming_db(streaming_client)
 
 
+def _seed_streaming_symbols(client):
+    """Seeds default streaming symbols (19 pure single stocks) into streaming_symbol_map."""
+    print("🌱 Seeding default streaming symbols (19 single-stock equities)...")
+    symbols = [
+        ("AAPL", "AAPL", "AAPL", None, True),
+        ("ADBE", "ADBE", "ADBE", None, True),
+        ("AMD", "AMD", "AMD", None, True),
+        ("AMZN", "AMZN", "AMZN", None, True),
+        ("APP", "APP", "APP", None, True),
+        ("AVGO", "AVGO", "AVGO", None, True),
+        ("BABA", "BABA", "BABA", None, True),
+        ("GOOGL", "GOOGL", "GOOGL", None, True),
+        ("META", "META", "META", None, True),
+        ("MSFT", "MSFT", "MSFT", None, True),
+        ("MU", "MU", "MU", None, True),
+        ("NDAQ", "US100", "NDAQ", None, True),
+        ("NVDA", "NVDA", "NVDA", None, True),
+        ("ORCL", "ORCL", "ORCL", None, True),
+        ("PANW", "PANW", "PANW", None, True),
+        ("QCOM", "QCOM", "QCOM", None, True),
+        ("SHOP", "SHOP", "SHOP", None, True),
+        ("TSLA", "TSLA", "TSLA", None, True),
+        ("TSM", "TSM", "TSM", None, True),
+    ]
+    for disp, cap, dbn, binance, active in symbols:
+        client.execute(
+            """INSERT OR IGNORE INTO streaming_symbol_map 
+               (display_name, capital_ticker, databento_ticker, binance_ticker, is_active) 
+               VALUES (?, ?, ?, ?, ?)""",
+            [disp, cap, dbn, binance, active]
+        )
+
+
 def _seed_default_symbols(client):
-    """Seeds default symbols into an empty database."""
-    print("🌱 Seeding default symbols...")
+    """Seeds default symbols into an empty historical database."""
+    print("🌱 Seeding default historical symbols...")
     tickers = [
         # Equities/ETFs
         ("SPY", None, "SPY", None, "SPY"),
@@ -157,7 +220,7 @@ def _seed_default_symbols(client):
     ]
     for disp, y, m, b, c in tickers:
         client.execute(
-            """INSERT OR IGNORE INTO symbol_map 
+            """INSERT OR IGNORE INTO historical_symbol_map 
                (display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker) 
                VALUES (?, ?, ?, ?, ?)""",
             [disp, y, m, b, c]

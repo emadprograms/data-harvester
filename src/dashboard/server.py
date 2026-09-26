@@ -16,6 +16,9 @@ from src.database.operations import (
     add_symbol_to_db,
     remove_symbol_from_db,
     get_symbol_map_from_db,
+    get_streaming_symbol_inventory_list,
+    add_streaming_symbol_to_db,
+    remove_streaming_symbol_from_db,
 )
 from src.utils.integrity import (
     get_database_health_report,
@@ -169,9 +172,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
 
         # 3. API: Symbol Inventory
-        if path == "/api/symbols":
+        if path in ["/api/symbols", "/api/historical/symbols"]:
             symbols = get_symbol_inventory_list()
-            self._send_json({"symbols": symbols, "total": len(symbols)})
+            self._send_json({"symbols": symbols, "total": len(symbols), "database": "historical"})
+            return
+
+        if path == "/api/streaming/symbols":
+            symbols = get_streaming_symbol_inventory_list()
+            self._send_json({"symbols": symbols, "total": len(symbols), "database": "streaming"})
             return
 
         # 4. API: Data Integrity & Health Audits
@@ -348,8 +356,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             payload = {}
 
-        # 1. Add Symbol
-        if path == "/api/symbols":
+        # 1. Add Symbol (Historical)
+        if path in ["/api/symbols", "/api/historical/symbols"]:
             disp = payload.get("display_name", "").strip().upper()
             if not disp:
                 self._send_json({"success": False, "error": "display_name is required"}, status=400)
@@ -368,9 +376,33 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 capital_ticker=c_ticker
             )
             if success:
-                # Trigger live reload signal
+                self._send_json({"success": True, "message": f"Historical symbol {disp} added"})
+            else:
+                self._send_json({"success": False, "error": "Database write error"}, status=500)
+            return
+
+        # 1b. Add Symbol (Streaming)
+        if path == "/api/streaming/symbols":
+            disp = payload.get("display_name", "").strip().upper()
+            if not disp:
+                self._send_json({"success": False, "error": "display_name is required"}, status=400)
+                return
+
+            c_ticker = payload.get("capital_ticker") or disp
+            dbn_ticker = payload.get("databento_ticker") or disp
+            b_ticker = payload.get("binance_ticker")
+            is_active = payload.get("is_active", True)
+
+            success = add_streaming_symbol_to_db(
+                display_name=disp,
+                capital_ticker=c_ticker,
+                databento_ticker=dbn_ticker,
+                binance_ticker=b_ticker,
+                is_active=is_active
+            )
+            if success:
                 self._trigger_reload_signal()
-                self._send_json({"success": True, "message": f"Symbol {disp} added and streamer signaled"})
+                self._send_json({"success": True, "message": f"Streaming symbol {disp} added and streamer signaled"})
             else:
                 self._send_json({"success": False, "error": "Database write error"}, status=500)
             return
@@ -397,8 +429,25 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        if path.startswith("/api/symbols/"):
-            raw_symbol = path.replace("/api/symbols/", "").strip()
+        if path.startswith("/api/streaming/symbols/"):
+            raw_symbol = path.replace("/api/streaming/symbols/", "").strip()
+            display_name = unquote(raw_symbol).upper()
+
+            if not display_name:
+                self._send_json({"success": False, "error": "Symbol display name is required"}, status=400)
+                return
+
+            success = remove_streaming_symbol_from_db(display_name)
+            if success:
+                self._trigger_reload_signal()
+                self._send_json({"success": True, "message": f"Streaming symbol {display_name} deleted and streamer signaled"})
+            else:
+                self._send_json({"success": False, "error": "Failed to remove streaming symbol"}, status=500)
+            return
+
+        if path.startswith("/api/symbols/") or path.startswith("/api/historical/symbols/"):
+            prefix = "/api/historical/symbols/" if path.startswith("/api/historical/symbols/") else "/api/symbols/"
+            raw_symbol = path.replace(prefix, "").strip()
             display_name = unquote(raw_symbol).upper()
 
             if not display_name:
@@ -407,10 +456,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
             success = remove_symbol_from_db(display_name)
             if success:
-                self._trigger_reload_signal()
-                self._send_json({"success": True, "message": f"Symbol {display_name} deleted and streamer signaled"})
+                self._send_json({"success": True, "message": f"Historical symbol {display_name} deleted"})
             else:
-                self._send_json({"success": False, "error": "Failed to remove symbol"}, status=500)
+                self._send_json({"success": False, "error": "Failed to remove historical symbol"}, status=500)
             return
 
         self._send_json({"error": "Not Found", "path": path}, status=404)

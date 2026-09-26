@@ -13,7 +13,11 @@ from datetime import datetime
 import os
 from src.database.connection import get_streaming_db_connection, DEFAULT_STREAMING_DB_PATH
 from src.database.schema import init_streaming_db
-from src.database.operations import save_ticks_to_storage, get_symbol_map_from_db
+from src.database.operations import (
+    save_ticks_to_storage,
+    get_streaming_symbol_map_from_db,
+    get_symbol_map_from_db,
+)
 from src.stream.binance_stream import BinanceStreamer
 from src.stream.capital_stream import CapitalStreamer
 
@@ -38,6 +42,8 @@ class StreamingEngine:
 
         self.binance_streamer = None
         self.capital_streamer = None
+        self.active_streaming_symbols = set()
+        self.epic_to_display = {}
 
     def _enqueue_tick(self, tick_tuple):
         """Pushes an individual tick into the async write queue."""
@@ -57,9 +63,14 @@ class StreamingEngine:
             self._enqueue_tick(bar_tuple)
 
     async def _handle_capital_tick(self, tick):
-        """Feeds a tick from Capital.com directly into the write queue."""
+        """Feeds a tick from Capital.com directly into the write queue, filtering out excluded assets."""
         if isinstance(tick, dict):
-            symbol = tick.get("epic", "")
+            raw_epic = tick.get("epic", "")
+            # Excluded asset filter: ignore any tick not in streaming_symbol_map
+            if self.active_streaming_symbols and raw_epic not in self.active_streaming_symbols:
+                return
+
+            symbol = self.epic_to_display.get(raw_epic, raw_epic)
             price = float(tick.get("price", 0.0))
             ts = tick.get("timestamp")
             ts_str = ts.strftime('%Y-%m-%d %H:%M:%S.%f') if isinstance(ts, datetime) else str(ts)
@@ -123,21 +134,33 @@ class StreamingEngine:
         self.reload_event.set()
 
     async def reload_symbols(self, symbols_override=None):
-        """Re-reads symbol_map and updates live Capital.com subscriptions on the fly."""
+        """Re-reads streaming_symbol_map and updates live Capital.com subscriptions on the fly."""
         if symbols_override is not None:
             capital_symbols = list(symbols_override)
+            self.active_streaming_symbols = set(capital_symbols)
+            self.epic_to_display = {s: s for s in capital_symbols}
         else:
-            symbol_map = get_symbol_map_from_db()
+            s_map = get_streaming_symbol_map_from_db()
+            if not s_map:
+                s_map = get_symbol_map_from_db()
             capital_symbols = []
-            for display_name, tickers in symbol_map.items():
-                c_ticker = tickers.get("capital_ticker")
-                if c_ticker:
-                    capital_symbols.append(c_ticker)
+            self.active_streaming_symbols = set()
+            self.epic_to_display = {}
+            for display_name, tickers in s_map.items():
+                if tickers.get("is_active", True):
+                    self.active_streaming_symbols.add(display_name)
+                    c_ticker = tickers.get("capital_ticker")
+                    if c_ticker:
+                        capital_symbols.append(c_ticker)
+                        self.active_streaming_symbols.add(c_ticker)
+                        self.epic_to_display[c_ticker] = display_name
+                    else:
+                        self.epic_to_display[display_name] = display_name
 
         if not capital_symbols:
-            capital_symbols = ["AAPL", "NVDA", "TSLA", "SPY", "QQQ", "AMD", "AMZN", "MSFT"]
+            capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
 
-        logger.info(f"🔄 Reloading active Capital.com symbols: {capital_symbols}")
+        logger.info(f"🔄 Reloading active Capital.com streaming symbols ({len(capital_symbols)}): {capital_symbols}")
         if self.capital_streamer:
             success = await self.capital_streamer.update_subscriptions(capital_symbols)
             return success
@@ -168,17 +191,28 @@ class StreamingEngine:
         if init_conn:
             init_conn.close()
 
-        # Discover symbols from symbol_map
-        symbol_map = get_symbol_map_from_db()
-        capital_symbols = []
+        # Discover symbols from streaming_symbol_map
+        s_map = get_streaming_symbol_map_from_db()
+        if not s_map:
+            s_map = get_symbol_map_from_db()
 
-        for display_name, tickers in symbol_map.items():
-            c_ticker = tickers.get("capital_ticker")
-            if c_ticker:
-                capital_symbols.append(c_ticker)
+        capital_symbols = []
+        self.active_streaming_symbols = set()
+        self.epic_to_display = {}
+
+        for display_name, tickers in s_map.items():
+            if tickers.get("is_active", True):
+                self.active_streaming_symbols.add(display_name)
+                c_ticker = tickers.get("capital_ticker")
+                if c_ticker:
+                    capital_symbols.append(c_ticker)
+                    self.active_streaming_symbols.add(c_ticker)
+                    self.epic_to_display[c_ticker] = display_name
+                else:
+                    self.epic_to_display[display_name] = display_name
 
         if not capital_symbols:
-            capital_symbols = ["AAPL", "NVDA", "TSLA", "SPY", "QQQ", "AMD", "AMZN", "MSFT"]
+            capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
 
         logger.info(f"🎯 Target Capital.com symbols for live quotes ({len(capital_symbols)}): {capital_symbols[:6]}...")
 
