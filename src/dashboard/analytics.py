@@ -33,11 +33,106 @@ TIMEFRAME_MAP = {
     "1d": "1 day",
 }
 
+# --- Exchange-time rendering contract -------------------------------------------------------
+# Storage mandate: every timestamp in historical.duckdb / streaming.duckdb is pure UTC.
+# Presentation mandate: the Historical Database page is an exchange-local chart, so all labels
+# (X-axis ticks, crosshair, legend, inspector table, CSV) are rendered on the NYSE clock where
+# the regular session opens at 09:30 and closes at 16:00 America/New_York.
+#
+# The conversion below is deliberately built from the *physical* column type and never relies on
+# an implicit TIMESTAMPTZ -> TIMESTAMP cast: DuckDB resolves such casts with the session
+# `TimeZone` setting, which it inherits from the host OS. On a host running in US Eastern, the
+# previously used `((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP`
+# expression silently round-tripped back to the raw UTC wall clock over a tz-aware column, so the
+# 09:30 opening bell (13:30 UTC) was charted and labelled as "13:30 ET" with its volume spike.
+EXCHANGE_TZ = "America/New_York"
+TIME_EPOCH_BASIS = "utc"  # candle["time"] values are true UTC epoch seconds (not shifted wall clock)
+
+
+def detect_timestamp_column_type(client, table: str, column: str = "timestamp") -> str:
+    """
+    Introspects the physical DuckDB type of a timestamp column.
+    Returns 'TIMESTAMP' (canonical naive-UTC storage) or 'TIMESTAMP WITH TIME ZONE'
+    (e.g. a database created by a legacy tz-aware pandas backfill).
+    """
+    try:
+        res = client.execute(
+            """
+            SELECT data_type
+            FROM duckdb_columns()
+            WHERE table_name = ? AND column_name = ?
+            LIMIT 1
+            """,
+            [table, column],
+        )
+        row = res.fetchone()
+        if row and row[0]:
+            return str(row[0]).upper()
+    except Exception:
+        pass
+    return "TIMESTAMP"
+
+
+def is_tz_aware_column(column_type: str) -> bool:
+    """
+    True when the stored column already carries a timezone.
+    Accepts every spelling DuckDB and its clients use: 'TIMESTAMP WITH TIME ZONE' (canonical
+    duckdb_columns() output), 'TIMESTAMPTZ', 'TIMESTAMP_TZ', 'TIMESTAMP WITH TIMEZONE'.
+    """
+    normalized = " ".join((column_type or "").upper().replace("_", " ").split())
+    compact = normalized.replace(" ", "")
+    return "TIMEZONE" in compact or "TIMESTAMPTZ" in compact
+
+
+def build_utc_instant_sql(column_type: str, column: str = "timestamp") -> str:
+    """
+    SQL expression (TIMESTAMPTZ) resolving to the true UTC instant of a stored bar timestamp,
+    independent of the DuckDB session TimeZone.
+    """
+    if is_tz_aware_column(column_type):
+        return f"{column}::TIMESTAMPTZ"
+    # Naive TIMESTAMP columns hold UTC wall-clock values: attach UTC explicitly.
+    return f"timezone('UTC', {column}::TIMESTAMP)"
+
+
+def build_exchange_local_sql(column_type: str, column: str = "timestamp") -> str:
+    """
+    SQL expression (naive TIMESTAMP) resolving to the exchange-local (America/New_York) wall clock
+    of a stored bar timestamp. Used for human-readable labels and for time_bucket alignment so
+    intraday and daily buckets snap to NYSE session boundaries instead of UTC ones.
+    """
+    return f"timezone('{EXCHANGE_TZ}', {build_utc_instant_sql(column_type, column)})"
+
+
+def build_utc_epoch_sql(column_type: str, column: str = "timestamp") -> str:
+    """SQL expression resolving to the true UTC epoch seconds of a stored bar timestamp."""
+    return f"epoch({build_utc_instant_sql(column_type, column)})"
+
+
+def build_instant_from_exchange_local_sql(local_expr: str) -> str:
+    """SQL expression (TIMESTAMPTZ) converting an exchange-local wall clock back to its instant."""
+    return f"timezone('{EXCHANGE_TZ}', {local_expr})"
+
+
+def build_timestamp_range_clause(column_type: str, column: str, operator: str) -> str:
+    """
+    WHERE clause fragment comparing a stored timestamp against a UTC wall-clock string parameter.
+    Kept explicit per column type so naive-UTC storage still benefits from index/zone-map pruning.
+    """
+    if is_tz_aware_column(column_type):
+        return f"{column} {operator} timezone('UTC', ?::TIMESTAMP)"
+    return f"{column}::TIMESTAMP {operator} ?::TIMESTAMP"
+
 
 def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000) -> dict:
     """
     Fetches canonical OHLCV candles exclusively from data/historical.duckdb.
     Zero blending with streaming data.
+
+    Timestamp contract:
+      - stored bars are UTC; `time` is returned as true UTC epoch seconds (chart positioning),
+      - `time_str` is the same instant rendered on the NYSE clock (America/New_York, EST/EDT),
+      - `timezone` / `time_epoch_basis` describe that contract to the frontend.
     """
     symbol = (symbol or "").strip().upper()
     if not symbol:
@@ -51,43 +146,47 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
 
     limit = min(max(1, int(limit or 1000)), 10000)
 
-    where_clauses = ["symbol = ?"]
-    params = [symbol]
-
-    if start:
-        where_clauses.append("timestamp::TIMESTAMP >= ?::TIMESTAMP")
-        params.append(start.strip())
-    if end:
-        where_clauses.append("timestamp::TIMESTAMP <= ?::TIMESTAMP")
-        params.append(end.strip())
-
-    where_sql = " AND ".join(where_clauses)
-
     client = get_historical_db_connection(read_only=True)
     if not client:
         return {"error": "Historical DuckDB unavailable", "candles": [], "count": 0, "database": "historical"}
 
     try:
+        # Resolve the physical storage type first: the exchange-time conversion and the UTC range
+        # filters are both built from it so results never depend on the host/session timezone.
+        ts_type = detect_timestamp_column_type(client, "market_data")
+        instant_sql = build_utc_instant_sql(ts_type)
+        exchange_local_sql = build_exchange_local_sql(ts_type)
+
+        where_clauses = ["symbol = ?"]
+        params = [symbol]
+
+        if start:
+            where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", ">="))
+            params.append(start.strip())
+        if end:
+            where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", "<="))
+            params.append(end.strip())
+
+        where_sql = " AND ".join(where_clauses)
+
         if interval_str is None:
-            # Raw 1-minute candles in US Eastern Time (NYSE stock exchange time)
+            # Raw 1-minute candles: true UTC epoch for chart positioning + NYSE wall clock for labels
             query = f"""
                 SELECT 
-                    epoch(((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP) as time_sec,
-                    strftime(((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP, '%Y-%m-%d %H:%M:%S') as time_str,
+                    epoch({instant_sql}) as time_sec,
+                    strftime({exchange_local_sql}, '%Y-%m-%d %H:%M:%S') as time_str,
                     open, high, low, close, COALESCE(volume, 0) as volume, source, session
                 FROM market_data
                 WHERE {where_sql}
                 ORDER BY timestamp DESC
                 LIMIT ?
             """
-            params.append(limit)
-            res = client.execute(query, params)
-            rows = res.rows or []
         else:
-            # Aggregated buckets via time_bucket() in US Eastern Time (NYSE stock exchange time)
+            # Aggregated buckets via time_bucket() aligned to NYSE session boundaries, so 1h/4h/1D
+            # bars start at exchange-local hour/day edges (09:30 open bell stays its own bar).
             query = f"""
                 SELECT 
-                    epoch(bucket) as time_sec,
+                    epoch({build_instant_from_exchange_local_sql('bucket')}) as time_sec,
                     strftime(bucket, '%Y-%m-%d %H:%M:%S') as time_str,
                     first(open ORDER BY timestamp ASC) as open,
                     max(high) as high,
@@ -98,7 +197,7 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
                     string_agg(DISTINCT session, ', ') as session
                 FROM (
                     SELECT 
-                        time_bucket(INTERVAL '{interval_str}', ((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP) as bucket,
+                        time_bucket(INTERVAL '{interval_str}', {exchange_local_sql}) as bucket,
                         timestamp, open, high, low, close, volume, source, session
                     FROM market_data
                     WHERE {where_sql}
@@ -107,9 +206,10 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
                 ORDER BY bucket DESC
                 LIMIT ?
             """
-            params.append(limit)
-            res = client.execute(query, params)
-            rows = res.rows or []
+
+        params.append(limit)
+        res = client.execute(query, params)
+        rows = res.rows or []
 
         candles = []
         for r in reversed(rows):
@@ -129,12 +229,14 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
             "symbol": symbol,
             "timeframe": timeframe,
             "database": "historical",
-            "timezone": "America/New_York",
+            "timezone": EXCHANGE_TZ,
+            "time_epoch_basis": TIME_EPOCH_BASIS,
+            "storage_timestamp_type": ts_type,
             "count": len(candles),
             "candles": candles
         }
     except Exception as e:
-        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "historical", "timezone": "America/New_York"}
+        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "historical", "timezone": EXCHANGE_TZ}
     finally:
         client.close()
 
@@ -143,6 +245,8 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
     """
     Fetches OHLCV candles resampled on-the-fly exclusively from raw ticks in data/streaming.duckdb.
     Zero dependency on historical.duckdb.
+    Buckets are aligned to the NYSE clock (America/New_York) and follow the same timestamp
+    contract as get_historical_candles(): UTC epoch in `time`, exchange-local label in `time_str`.
     """
     symbol = (symbol or "").strip().upper()
     if not symbol:
@@ -169,22 +273,25 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
         return {"error": "Streaming DuckDB unavailable", "candles": [], "count": 0, "database": "streaming"}
 
     try:
+        ts_type = detect_timestamp_column_type(s_client, "ticks")
+        exchange_local_sql = build_exchange_local_sql(ts_type)
+
         where_clauses = ["symbol = ?"]
         params = [symbol]
 
         if start:
-            where_clauses.append("timestamp::TIMESTAMP >= ?::TIMESTAMP")
+            where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", ">="))
             params.append(start.strip())
         if end:
-            where_clauses.append("timestamp::TIMESTAMP <= ?::TIMESTAMP")
+            where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", "<="))
             params.append(end.strip())
 
         where_sql = " AND ".join(where_clauses)
 
         query = f"""
             SELECT 
-                epoch(time_bucket(INTERVAL '{interval_str}', ((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP)) as time_sec,
-                strftime(time_bucket(INTERVAL '{interval_str}', ((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP), '%Y-%m-%d %H:%M:%S') as time_str,
+                epoch({build_instant_from_exchange_local_sql('bucket')}) as time_sec,
+                strftime(bucket, '%Y-%m-%d %H:%M:%S') as time_str,
                 first(price ORDER BY timestamp ASC) as open,
                 max(price) as high,
                 min(price) as low,
@@ -193,10 +300,15 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
                 COALESCE(first(source ORDER BY timestamp ASC), 'CAPITAL_STREAM') as source,
                 COALESCE(first(session ORDER BY timestamp ASC), 'REG') as session,
                 count(*) as tick_count
-            FROM ticks
-            WHERE {where_sql}
-            GROUP BY time_bucket(INTERVAL '{interval_str}', ((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP)
-            ORDER BY time_sec DESC
+            FROM (
+                SELECT 
+                    time_bucket(INTERVAL '{interval_str}', {exchange_local_sql}) as bucket,
+                    timestamp, price, volume, source, session
+                FROM ticks
+                WHERE {where_sql}
+            )
+            GROUP BY bucket
+            ORDER BY bucket DESC
             LIMIT ?
         """
         params.append(limit)
@@ -222,12 +334,14 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
             "symbol": symbol,
             "timeframe": timeframe,
             "database": "streaming",
-            "timezone": "America/New_York",
+            "timezone": EXCHANGE_TZ,
+            "time_epoch_basis": TIME_EPOCH_BASIS,
+            "storage_timestamp_type": ts_type,
             "count": len(candles),
             "candles": candles
         }
     except Exception as e:
-        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "streaming", "timezone": "America/New_York"}
+        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "streaming", "timezone": EXCHANGE_TZ}
     finally:
         s_client.close()
 

@@ -299,6 +299,10 @@ def query_candlesticks(symbol: str, start_time=None, end_time=None, timeframe="1
     Queries OHLCV candlesticks from historical.duckdb resampled dynamically using DuckDB's native time_bucket().
     Supported timeframes: '1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'.
     Returns a pandas DataFrame.
+
+    NOTE: buckets are aligned to raw UTC storage time. The dashboard's Historical Database page must
+    present bars on the NYSE clock, so it uses src.dashboard.analytics.get_historical_candles()
+    (exchange-local bucketing + America/New_York labels) instead of this helper.
     """
     own_client = False
     if not client:

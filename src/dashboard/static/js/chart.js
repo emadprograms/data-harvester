@@ -1,6 +1,127 @@
 /**
  * Data Harvester Dashboard - Chart Engine (TradingView Lightweight Charts)
+ *
+ * Timestamp contract for the Historical Database page (an exchange-local chart):
+ *   - /api/candles returns `time` as a true UTC epoch (seconds) and `time_str` as the very same
+ *     instant already rendered on the NYSE clock (America/New_York, EST/EDT).
+ *   - Every label drawn here (X-axis ticks, crosshair badge, OHLCV legend) is formatted through
+ *     Intl with an explicit `timeZone`, so the 09:30 opening bell and its volume spike always read
+ *     09:30 ET — no matter which timezone the dashboard server or the operator's browser runs in.
  */
+
+const EXCHANGE_TIMEZONE = 'America/New_York';
+const EXCHANGE_TIMEZONE_LABEL = 'ET';
+
+let chartTimezone = EXCHANGE_TIMEZONE;
+const exchangeFormatterCache = {};
+
+/**
+ * Adopts the timezone advertised by the candle API (falls back to NYSE time if it is unusable).
+ * @param {string} tz - IANA timezone name from the API payload (`timezone`).
+ */
+function setChartTimezone(tz) {
+  if (!tz || typeof tz !== 'string') {
+    chartTimezone = EXCHANGE_TIMEZONE;
+    return;
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    chartTimezone = tz;
+  } catch (err) {
+    chartTimezone = EXCHANGE_TIMEZONE;
+  }
+}
+
+function getExchangeFormatter(options) {
+  const cacheKey = `${chartTimezone}|${JSON.stringify(options)}`;
+  if (!exchangeFormatterCache[cacheKey]) {
+    exchangeFormatterCache[cacheKey] = new Intl.DateTimeFormat(
+      'en-US',
+      Object.assign({ timeZone: chartTimezone, hourCycle: 'h23' }, options)
+    );
+  }
+  return exchangeFormatterCache[cacheKey];
+}
+
+/**
+ * Breaks a candle epoch into exchange-local calendar parts ({year, month, day, hour, minute, second}).
+ * @param {number} epochSeconds - True UTC epoch seconds of the bar start.
+ */
+function exchangeTimeParts(epochSeconds) {
+  const formatter = getExchangeFormatter({
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+  const parts = {};
+  formatter.formatToParts(new Date(epochSeconds * 1000)).forEach(p => { parts[p.type] = p.value; });
+  return parts;
+}
+
+/** 'YYYY-MM-DD HH:mm:ss' on the exchange clock. */
+function formatExchangeDateTime(epochSeconds) {
+  const p = exchangeTimeParts(epochSeconds);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+}
+
+/** 'HH:mm' (or 'HH:mm:ss') on the exchange clock. */
+function formatExchangeClock(epochSeconds, withSeconds = false) {
+  const p = exchangeTimeParts(epochSeconds);
+  return withSeconds ? `${p.hour}:${p.minute}:${p.second}` : `${p.hour}:${p.minute}`;
+}
+
+/** 'Jul 15' on the exchange clock. */
+function formatExchangeDay(epochSeconds) {
+  return getExchangeFormatter({ month: 'short', day: 'numeric' }).format(new Date(epochSeconds * 1000));
+}
+
+/** 'Jul' on the exchange clock. */
+function formatExchangeMonth(epochSeconds) {
+  return getExchangeFormatter({ month: 'short' }).format(new Date(epochSeconds * 1000));
+}
+
+/** '2026' on the exchange clock. */
+function formatExchangeYear(epochSeconds) {
+  return getExchangeFormatter({ year: 'numeric' }).format(new Date(epochSeconds * 1000));
+}
+
+/** True when the bar starts exactly at exchange-local midnight (i.e. a new trading day). */
+function isExchangeDayStart(epochSeconds) {
+  const p = exchangeTimeParts(epochSeconds);
+  return p.hour === '00' && p.minute === '00' && p.second === '00';
+}
+
+/** Full human-readable exchange label, e.g. '2026-07-15 09:30:00 ET'. */
+function formatExchangeLabel(epochSeconds) {
+  return `${formatExchangeDateTime(epochSeconds)} ${EXCHANGE_TIMEZONE_LABEL}`;
+}
+
+/**
+ * Resolves the display string for a candle: prefers the exchange-local string computed by the
+ * backend (single source of truth for EST/EDT) and falls back to local Intl formatting.
+ */
+function candleTimeLabel(candle) {
+  if (!candle) return '--';
+  if (candle.time_str) return `${candle.time_str} ${EXCHANGE_TIMEZONE_LABEL}`;
+  if (typeof candle.time === 'number') return formatExchangeLabel(candle.time);
+  return '--';
+}
+
+/** Keeps the legend badge honest about which exchange timezone the loaded bars are rendered in. */
+function updateTzBadge(tz) {
+  const badge = document.getElementById('legend-tz-badge');
+  if (!badge) return;
+  badge.innerText = (!tz || tz === EXCHANGE_TIMEZONE)
+    ? 'NYSE (ET)'
+    : `${tz} (${EXCHANGE_TIMEZONE_LABEL})`;
+}
+
+/** O(1) bar lookup by epoch, rebuilt on every chart load (used by the crosshair + time badge). */
+let candleTimeIndex = new Map();
+
+function findCandleByTime(time) {
+  if (candleTimeIndex.has(time)) return candleTimeIndex.get(time);
+  return (loadedCandles || []).find(c => c.time === time) || null;
+}
 
 function initChart() {
   const container = document.getElementById('tv-chart-container');
@@ -24,12 +145,10 @@ function initChart() {
     },
     localization: {
       locale: 'en-US',
+      // Crosshair time badge: exchange-local label (backend `time_str` when the bar is known)
       timeFormatter: (time) => {
-        if (typeof time === 'number') {
-          const d = new Date(time * 1000);
-          return d.toISOString().replace('T', ' ').slice(0, 16) + ' ET';
-        }
-        return String(time);
+        if (typeof time !== 'number') return time ? String(time) : '--';
+        return candleTimeLabel(findCandleByTime(time) || { time });
       }
     },
     timeScale: {
@@ -38,18 +157,20 @@ function initChart() {
       secondsVisible: false,
       tickMarkFormatter: (time, tickMarkType, locale) => {
         if (typeof time !== 'number') return null;
-        const d = new Date(time * 1000);
+        // Lightweight Charts weights tick marks on the UTC calendar; re-anchor every label to the
+        // exchange day so an evening/post-market bar never renders a stray UTC date tick.
+        const dayStart = isExchangeDayStart(time);
         switch (tickMarkType) {
           case 0: // Year
-            return String(d.getUTCFullYear());
+            return dayStart ? formatExchangeYear(time) : formatExchangeDay(time);
           case 1: // Month
-            return d.toLocaleString('en-US', { timeZone: 'UTC', month: 'short' });
+            return dayStart ? formatExchangeMonth(time) : formatExchangeDay(time);
           case 2: // DayOfMonth
-            return `${d.toLocaleString('en-US', { timeZone: 'UTC', month: 'short' })} ${d.getUTCDate()}`;
+            return dayStart ? formatExchangeDay(time) : formatExchangeClock(time);
           case 3: // Time
-            return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+            return formatExchangeClock(time);
           case 4: // TimeWithSeconds
-            return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}`;
+            return formatExchangeClock(time, true);
           default:
             return null;
         }
@@ -84,7 +205,7 @@ function initChart() {
       return;
     }
     const data = param.seriesData.get(candleSeries);
-    const candleMatch = loadedCandles.find(c => c.time === param.time);
+    const candleMatch = findCandleByTime(param.time);
     updateLegend(candleMatch || data);
   });
 
@@ -116,16 +237,7 @@ function updateLegend(candle) {
   const dbBadge = document.getElementById('legend-db-badge');
 
   if (symEl) symEl.innerText = `${currentSymbol} (${currentTimeframe.toUpperCase()})`;
-  if (timeEl) {
-    if (candle.time_str) {
-      timeEl.innerText = `${candle.time_str} ET`;
-    } else if (candle.time) {
-      const d = new Date(candle.time * 1000);
-      timeEl.innerText = `${d.toISOString().replace('T', ' ').slice(0, 19)} ET`;
-    } else {
-      timeEl.innerText = '--';
-    }
-  }
+  if (timeEl) timeEl.innerText = candleTimeLabel(candle);
   if (openEl) openEl.innerText = Number(candle.open).toFixed(2);
   if (highEl) highEl.innerText = Number(candle.high).toFixed(2);
   if (lowEl) lowEl.innerText = Number(candle.low).toFixed(2);
@@ -209,6 +321,10 @@ async function loadChartData() {
     const data = await res.json();
 
     loadedCandles = data.candles || [];
+    // Render axis/crosshair labels in the timezone the API actually converted to (NYSE time).
+    setChartTimezone(data.timezone);
+    updateTzBadge(chartTimezone);
+    candleTimeIndex = new Map(loadedCandles.map(c => [c.time, c]));
 
     if (candleSeries && volumeSeries && tvChart) {
       const chartCandles = loadedCandles.map(c => ({

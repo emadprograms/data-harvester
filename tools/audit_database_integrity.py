@@ -65,6 +65,48 @@ def print_check(name: str, passed: bool, detail: str = ""):
     print(f"{badge} {name}{detail_str}")
 
 
+EXCHANGE_TZ = "America/New_York"
+
+
+def pin_session_utc(con) -> None:
+    """
+    Pins the DuckDB session TimeZone to UTC.
+
+    DuckDB inherits this setting from the host OS and uses it to resolve every implicit
+    TIMESTAMP <-> TIMESTAMPTZ cast, so audit results would otherwise change with the machine's
+    timezone. Mirrors src.database.connection.SESSION_TIMEZONE.
+    """
+    try:
+        con.execute("SET TimeZone = 'UTC'")
+    except Exception:
+        pass
+
+
+def exchange_local_expr(con, table: str, column: str = "timestamp") -> str:
+    """
+    SQL expression returning the exchange-local (NYSE, America/New_York) wall clock of `column`.
+
+    Mirrors src.dashboard.analytics.build_exchange_local_sql(): the conversion is built from the
+    *physical* column type, because `(ts AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York'` over a
+    TIMESTAMPTZ column cancels itself out through the session-timezone-dependent trailing cast and
+    hands back raw UTC (a 09:30 ET open rendered as 13:30).
+    """
+    data_type = ""
+    try:
+        row = con.execute(
+            "SELECT data_type FROM duckdb_columns() WHERE table_name = ? AND column_name = ? LIMIT 1",
+            [table, column],
+        ).fetchone()
+        data_type = str(row[0]).upper() if row and row[0] else ""
+    except Exception:
+        data_type = ""
+
+    compact = data_type.replace(" ", "")
+    if "TIMEZONE" in compact or "TIMESTAMPTZ" in compact:
+        return f"timezone('{EXCHANGE_TZ}', {column}::TIMESTAMPTZ)"
+    return f"timezone('{EXCHANGE_TZ}', timezone('UTC', {column}::TIMESTAMP))"
+
+
 def audit_streaming_db(db_path: str = "data/streaming.duckdb") -> bool:
     print_header(f"AUDITING STREAMING DATABASE: {db_path}")
     if not os.path.exists(db_path):
@@ -75,6 +117,7 @@ def audit_streaming_db(db_path: str = "data/streaming.duckdb") -> bool:
     print(f"Database File Size: {file_size_gb:.2f} GB")
 
     con = duckdb.connect(db_path, read_only=True)
+    pin_session_utc(con)
     all_passed = True
 
     # 1. Total records and source distribution
@@ -161,10 +204,11 @@ def audit_streaming_db(db_path: str = "data/streaming.duckdb") -> bool:
     all_passed = all_passed and p_forbidden
 
     # 4. Trading Hours & Boundaries Check (ET conversion across all Databento rows)
-    hours_audit = con.execute("""
+    ny_ts_expr = exchange_local_expr(con, "ticks")
+    hours_audit = con.execute(f"""
         WITH ny_times AS (
             SELECT 
-                (timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York' as ny_ts,
+                {ny_ts_expr} as ny_ts,
                 session
             FROM ticks
             WHERE source = 'DATABENTO'
@@ -303,6 +347,7 @@ def audit_historical_db(db_path: str = "data/historical.duckdb") -> bool:
     print(f"Database File Size: {file_size_mb:.2f} MB")
 
     con = duckdb.connect(db_path, read_only=True)
+    pin_session_utc(con)
     all_passed = True
 
     # 1. Market_data table count and ranges

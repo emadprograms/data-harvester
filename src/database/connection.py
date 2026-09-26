@@ -15,6 +15,13 @@ DEFAULT_STREAMING_DB_PATH = os.path.join(DEFAULT_DATA_DIR, "streaming.duckdb")
 LEGACY_MARKET_DATA_PATH = os.path.join(DEFAULT_DATA_DIR, "market_data.duckdb")
 DEFAULT_DB_PATH = DEFAULT_HISTORICAL_DB_PATH if os.path.exists(DEFAULT_HISTORICAL_DB_PATH) or not os.path.exists(LEGACY_MARKET_DATA_PATH) else LEGACY_MARKET_DATA_PATH
 
+# DuckDB inherits its session `TimeZone` from the host OS, and that setting silently changes the
+# result of every TIMESTAMP <-> TIMESTAMPTZ cast. Pin it to UTC on every connection so storage
+# semantics (all timestamps are pure UTC) and dashboard queries stay deterministic no matter which
+# machine the harvester or the dashboard runs on. Exchange-local rendering (America/New_York) is
+# applied explicitly in query SQL, never via the session timezone.
+SESSION_TIMEZONE = "UTC"
+
 
 class DuckDBResult:
     """Wrapper around DuckDB cursor to provide seamless compatibility with both .rows and .fetchall()/.fetchone()."""
@@ -91,6 +98,14 @@ class DuckDBClient:
 
         if conn is None:
             raise last_error or RuntimeError(f"Could not connect to DuckDB at {self.db_path}")
+
+        # Deterministic timestamp semantics (see SESSION_TIMEZONE). Safe on read-only connections
+        # because it is a session-scoped setting, not a database write.
+        try:
+            conn.execute(f"SET TimeZone = '{SESSION_TIMEZONE}'")
+        except Exception:
+            pass
+
         self.conn = conn
 
     def execute(self, query, params=None):

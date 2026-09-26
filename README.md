@@ -9,10 +9,12 @@ A high-performance market data harvesting, 24/7 live tick streaming, and telemet
 ### 💾 Dual-DuckDB Storage Engine
 - **`data/historical.duckdb`**: Over 7.99 million canonical 1-minute OHLCV candles (spanning Oct 2024 to Jul 2026 across 40 symbols) with composite primary keys (`timestamp`, `symbol`), Source-Tiering quality overrides, and sub-10ms dynamic resampling (`time_bucket()`).
 - **`data/streaming.duckdb`**: 24/7 continuous raw tick quotes captured from Capital.com (`timestamp`, `symbol`, `price`, `volume`, `bid`, `ask`, `source`, `session`). Decoupled from historical storage to eliminate writer lock contention.
+- **UTC Storage Mandate**: every stored timestamp is pure UTC, and every DuckDB connection pins the session `TimeZone` to `UTC`, so query semantics never depend on the host OS timezone. Exchange-local rendering happens only at query/UI time.
 
 ### 🌐 Observability Command Center Dashboard
 - Zero-dependency local multi-threaded HTTP server (`http://localhost:8000`).
 - **TradingView Lightweight Charts** (v4.1.3) with dark-slate UI, multi-timeframe analytical resampling (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`), volume histograms, and session breakdown.
+- **NYSE Exchange-Time Rendering**: chart X-axis ticks, crosshair badge, hover legend, raw candle inspector and CSV export are all labelled in `America/New_York` (EST/EDT), so the 09:30 opening bell — and its volume spike — always render at 09:30 ET no matter which timezone the server or the browser runs in. Candle API contract: `time` is a true UTC epoch, `time_str` is the exchange-local label, `timezone`/`time_epoch_basis` declare it.
 - **Live Stream Tape**: Real-time tick wall with bid/ask/spread, process telemetry, and dynamic symbol reload.
 - **Data Integrity Engine**: Automated 1-minute historical gap detection during US trading hours, stream freshness audits, OHLCV anomaly validation, and cross-database price drift reconciliation.
 - **Harvester Console**: Browser-triggered runs of `main.py` with real-time log streaming.
