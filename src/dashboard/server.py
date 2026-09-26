@@ -47,6 +47,7 @@ RELOAD_SIGNAL_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirnam
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Multi-threaded HTTP server so concurrent requests do not block each other."""
     daemon_threads = True
+    allow_reuse_address = True
 
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
@@ -60,6 +61,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(body)
 
@@ -69,6 +71,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(body)
 
@@ -77,6 +80,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(data)
 
