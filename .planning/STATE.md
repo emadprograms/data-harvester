@@ -47,7 +47,7 @@ None. Milestone and quick tasks verified with 272 passed / 0 failed.
 | 260926-x1a | Restructure tests into nested domain subfolders | 2026-09-26 | a545e32f | [260926-x1a-restructure-tests-into-nested-subfolders](./quick/260926-x1a-restructure-tests-into-nested-subfolders/) |
 | 260926-e4s | Set chart and table timestamps on Historical Database page to US Eastern / NYSE stock exchange time | 2026-09-26 | fe46500e | [260926-e4s-the-timestamp-in-the-charts-on-the-page-](./quick/260926-e4s-the-timestamp-in-the-charts-on-the-page-/) |
 | 260926-p9d | Historical Database chart X-axis and legend must open at 09:30 ET, not 13:30 | 2026-09-26 | 70b7bc5 | [260926-p9d-historical-database-chart-x-axis-and-leg](./quick/260926-p9d-historical-database-chart-x-axis-and-leg/) |
-| 260926-y2k | Separate historical and streaming symbol maps; filter excluded assets in streaming | 2026-09-26 | pending | [260926-y2k-separate-historical-and-streaming-symbol-maps](./quick/260926-y2k-separate-historical-and-streaming-symbol-maps/) |
+| 260926-y2k | Separate historical and streaming symbol maps; filter excluded assets in streaming | 2026-09-26 | 017bce48 | [260926-y2k-separate-historical-and-streaming-symbol-maps](./quick/260926-y2k-separate-historical-and-streaming-symbol-maps/) |
 
 ## Operator Next Steps
 
