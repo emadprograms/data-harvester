@@ -434,16 +434,42 @@ def create_dashboard_server(host="127.0.0.1", port=8000):
     return ThreadedHTTPServer((host, port), DashboardRequestHandler)
 
 
-def run_dashboard_server(host="0.0.0.0", port=8000):
-    """Starts the dashboard server loop."""
-    server = create_dashboard_server(host=host, port=port)
-    print(f"🚀 Data Harvester Dashboard running on http://{host}:{port}")
+def run_dashboard_server(host="0.0.0.0", port=None):
+    """Starts the dashboard server loop with optional port fallback."""
+    if port is None:
+        import argparse
+        parser = argparse.ArgumentParser(description="Data Harvester Dashboard Server")
+        parser.add_argument("--port", type=int, default=None, help="Port to listen on")
+        parser.add_argument("--host", type=str, default=None, help="Host to bind to")
+        args, _ = parser.parse_known_args()
+        port = args.port or int(os.getenv("DASHBOARD_PORT") or os.getenv("PORT") or 8000)
+        if args.host:
+            host = args.host
+
+    server = None
+    target_ports = [port]
+    if port == 8000:
+        target_ports.extend([8001, 8080])
+
+    for p in target_ports:
+        try:
+            server = create_dashboard_server(host=host, port=p)
+            port = p
+            break
+        except OSError as e:
+            if e.errno == 48 and len(target_ports) > 1:
+                logger.warning(f"Port {p} is in use, attempting next port...")
+                continue
+            raise
+
+    print(f"🚀 Data Harvester Dashboard running on http://{host}:{port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down dashboard server...")
     finally:
-        server.server_close()
+        if server:
+            server.server_close()
 
 
 if __name__ == "__main__":
