@@ -33,32 +33,35 @@ from src.data.databento_backfill import get_target_stock_symbols
 
 
 def test_historical_symbol_map_schema_and_view():
-    """Verify historical.duckdb contains historical_symbol_map table and symbol_map view."""
+    """Verify historical.duckdb contains historical_database_symbols table and backward-compatible views."""
     client = get_historical_db_connection(read_only=True)
     assert client is not None
     try:
         tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        assert "historical_database_symbols" in tables
         assert "historical_symbol_map" in tables
         assert "symbol_map" in tables
 
-        # Table and view return same row count
-        t_count = client.execute("SELECT COUNT(*) FROM historical_symbol_map").fetchone()[0]
+        # Table and views return same row count
+        t_count = client.execute("SELECT COUNT(*) FROM historical_database_symbols").fetchone()[0]
         v_count = client.execute("SELECT COUNT(*) FROM symbol_map").fetchone()[0]
-        assert t_count == v_count
+        h_v_count = client.execute("SELECT COUNT(*) FROM historical_symbol_map").fetchone()[0]
+        assert t_count == v_count == h_v_count
         assert t_count >= 40
     finally:
         client.close()
 
 
 def test_streaming_symbol_map_schema_and_defaults():
-    """Verify streaming.duckdb contains streaming_symbol_map with default single stocks."""
+    """Verify streaming.duckdb contains streaming_database_symbols with default single stocks."""
     client = get_streaming_db_connection(read_only=True)
     assert client is not None
     try:
         tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        assert "streaming_database_symbols" in tables
         assert "streaming_symbol_map" in tables
 
-        rows = client.execute("SELECT display_name, is_active FROM streaming_symbol_map ORDER BY display_name").fetchall()
+        rows = client.execute("SELECT display_name, is_active FROM streaming_database_symbols ORDER BY display_name").fetchall()
         symbols = [r[0] for r in rows]
         assert len(symbols) == 19
 
@@ -66,7 +69,7 @@ def test_streaming_symbol_map_schema_and_defaults():
         for expected in ["AAPL", "NVDA", "MSFT", "AMZN", "GOOGL", "TSLA", "AMD"]:
             assert expected in symbols
 
-        # Ensure ETFs and Crypto are strictly absent from streaming_symbol_map
+        # Ensure ETFs and Crypto are strictly absent from streaming_database_symbols
         for excluded in ["SPY", "QQQ", "IWM", "DIA", "BTCUSDT", "ETHUSDT", "CL=F", "VIX"]:
             assert excluded not in symbols
     finally:

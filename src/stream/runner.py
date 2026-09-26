@@ -15,7 +15,9 @@ from src.database.connection import get_streaming_db_connection, DEFAULT_STREAMI
 from src.database.schema import init_streaming_db
 from src.database.operations import (
     save_ticks_to_storage,
+    get_streaming_database_symbols_from_db,
     get_streaming_symbol_map_from_db,
+    get_historical_database_symbols_from_db,
     get_symbol_map_from_db,
 )
 from src.stream.binance_stream import BinanceStreamer
@@ -140,9 +142,9 @@ class StreamingEngine:
             self.active_streaming_symbols = set(capital_symbols)
             self.epic_to_display = {s: s for s in capital_symbols}
         else:
-            s_map = get_streaming_symbol_map_from_db()
+            s_map = get_streaming_database_symbols_from_db()
             if not s_map:
-                s_map = get_symbol_map_from_db()
+                s_map = get_historical_database_symbols_from_db()
             capital_symbols = []
             self.active_streaming_symbols = set()
             self.epic_to_display = {}
@@ -191,10 +193,10 @@ class StreamingEngine:
         if init_conn:
             init_conn.close()
 
-        # Discover symbols from streaming_symbol_map
-        s_map = get_streaming_symbol_map_from_db()
+        # Discover symbols from streaming_database_symbols
+        s_map = get_streaming_database_symbols_from_db()
         if not s_map:
-            s_map = get_symbol_map_from_db()
+            s_map = get_historical_database_symbols_from_db()
 
         capital_symbols = []
         self.active_streaming_symbols = set()

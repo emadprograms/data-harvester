@@ -25,14 +25,16 @@ def init_historical_db(client=None):
     try:
         # --- HISTORICAL SYMBOL INVENTORY TABLE ---
         tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        if "symbol_map" in tables and "historical_symbol_map" not in tables:
-            # Check if symbol_map is a table (not view) and migrate
-            client.execute("CREATE TABLE historical_symbol_map AS SELECT * FROM symbol_map")
+        if "historical_symbol_map" in tables and "historical_database_symbols" not in tables:
+            # Check if historical_symbol_map is a table and migrate to historical_database_symbols
+            client.execute("CREATE TABLE historical_database_symbols AS SELECT * FROM historical_symbol_map")
+            client.execute("DROP TABLE historical_symbol_map")
+        elif "symbol_map" in tables and "historical_database_symbols" not in tables:
+            client.execute("CREATE TABLE historical_database_symbols AS SELECT * FROM symbol_map")
             client.execute("DROP TABLE symbol_map")
-            client.execute("CREATE VIEW symbol_map AS SELECT * FROM historical_symbol_map")
         else:
             client.execute("""
-                CREATE TABLE IF NOT EXISTS historical_symbol_map (
+                CREATE TABLE IF NOT EXISTS historical_database_symbols (
                     display_name VARCHAR PRIMARY KEY,
                     yahoo_ticker VARCHAR,
                     massive_ticker VARCHAR,
@@ -40,14 +42,20 @@ def init_historical_db(client=None):
                     capital_ticker VARCHAR
                 )
             """)
-            try:
-                client.execute("CREATE VIEW IF NOT EXISTS symbol_map AS SELECT * FROM historical_symbol_map")
-            except Exception:
-                pass
+
+        # Backward-compatible views
+        try:
+            client.execute("CREATE VIEW IF NOT EXISTS historical_symbol_map AS SELECT * FROM historical_database_symbols")
+        except Exception:
+            pass
+        try:
+            client.execute("CREATE VIEW IF NOT EXISTS symbol_map AS SELECT * FROM historical_database_symbols")
+        except Exception:
+            pass
 
         # --- SEEDING ---
         try:
-            res = client.execute("SELECT count(*) FROM historical_symbol_map")
+            res = client.execute("SELECT count(*) FROM historical_database_symbols")
             if res.rows and res.rows[0][0] == 0:
                 _seed_default_symbols(client)
         except Exception as e:
@@ -95,19 +103,30 @@ def init_streaming_db(client=None, db_path=None):
 
     try:
         # --- STREAMING SYMBOL INVENTORY TABLE ---
-        client.execute("""
-            CREATE TABLE IF NOT EXISTS streaming_symbol_map (
-                display_name VARCHAR PRIMARY KEY,
-                capital_ticker VARCHAR,
-                databento_ticker VARCHAR,
-                binance_ticker VARCHAR,
-                is_active BOOLEAN DEFAULT TRUE
-            )
-        """)
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        if "streaming_symbol_map" in tables and "streaming_database_symbols" not in tables:
+            client.execute("CREATE TABLE streaming_database_symbols AS SELECT * FROM streaming_symbol_map")
+            client.execute("DROP TABLE streaming_symbol_map")
+        else:
+            client.execute("""
+                CREATE TABLE IF NOT EXISTS streaming_database_symbols (
+                    display_name VARCHAR PRIMARY KEY,
+                    capital_ticker VARCHAR,
+                    databento_ticker VARCHAR,
+                    binance_ticker VARCHAR,
+                    is_active BOOLEAN DEFAULT TRUE
+                )
+            """)
+
+        # Backward-compatible view
+        try:
+            client.execute("CREATE VIEW IF NOT EXISTS streaming_symbol_map AS SELECT * FROM streaming_database_symbols")
+        except Exception:
+            pass
 
         # --- SEED DEFAULT STREAMING SYMBOLS (19 single-stock equities) ---
         try:
-            res = client.execute("SELECT count(*) FROM streaming_symbol_map")
+            res = client.execute("SELECT count(*) FROM streaming_database_symbols")
             if res.rows and res.rows[0][0] == 0:
                 _seed_streaming_symbols(client)
         except Exception as e:
@@ -188,7 +207,7 @@ def _seed_streaming_symbols(client):
     ]
     for disp, cap, dbn, binance, active in symbols:
         client.execute(
-            """INSERT OR IGNORE INTO streaming_symbol_map 
+            """INSERT OR IGNORE INTO streaming_database_symbols 
                (display_name, capital_ticker, databento_ticker, binance_ticker, is_active) 
                VALUES (?, ?, ?, ?, ?)""",
             [disp, cap, dbn, binance, active]
@@ -220,7 +239,7 @@ def _seed_default_symbols(client):
     ]
     for disp, y, m, b, c in tickers:
         client.execute(
-            """INSERT OR IGNORE INTO historical_symbol_map 
+            """INSERT OR IGNORE INTO historical_database_symbols 
                (display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker) 
                VALUES (?, ?, ?, ?, ?)""",
             [disp, y, m, b, c]

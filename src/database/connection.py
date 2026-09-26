@@ -23,20 +23,27 @@ DEFAULT_DB_PATH = DEFAULT_HISTORICAL_DB_PATH if os.path.exists(DEFAULT_HISTORICA
 # applied explicitly in query SQL, never via the session timezone.
 SESSION_TIMEZONE = "UTC"
 
-_SYMBOL_MAP_WRITE_RE = re.compile(
-    r"\b(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+symbol_map\b",
+_HISTORICAL_WRITE_RE = re.compile(
+    r"\b(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+(?:historical_symbol_map|symbol_map)\b",
+    re.IGNORECASE,
+)
+_STREAMING_WRITE_RE = re.compile(
+    r"\b(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+streaming_symbol_map\b",
     re.IGNORECASE,
 )
 
 
 def _redirect_symbol_map_writes(query: str) -> str:
     """
-    DuckDB does not allow mutating VIEWs (raises Catalog Error: symbol_map is not an table).
-    To provide seamless backward compatibility when symbol_map is a VIEW of historical_symbol_map,
-    redirect write statements (INSERT, UPDATE, DELETE) targeting symbol_map to historical_symbol_map.
+    DuckDB does not allow mutating VIEWs (raises Catalog Error: <view> is not an table).
+    To provide seamless backward compatibility when symbol_map, historical_symbol_map, or streaming_symbol_map
+    are VIEWs, redirect write statements (INSERT, UPDATE, DELETE) to their underlying base tables:
+    historical_database_symbols and streaming_database_symbols.
     """
-    if isinstance(query, str) and "symbol_map" in query:
-        return _SYMBOL_MAP_WRITE_RE.sub(r"\1 historical_symbol_map", query)
+    if isinstance(query, str):
+        if "symbol_map" in query:
+            query = _HISTORICAL_WRITE_RE.sub(r"\1 historical_database_symbols", query)
+            query = _STREAMING_WRITE_RE.sub(r"\1 streaming_database_symbols", query)
     return query
 
 

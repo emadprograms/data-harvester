@@ -21,8 +21,8 @@ from src.config import UTC, US_EASTERN
 
 # --- Symbol Inventory Operations (Historical & Streaming) ---
 
-def get_historical_symbol_map_from_db(client=None) -> dict:
-    """Fetches the complete symbol inventory from historical_symbol_map in historical.duckdb."""
+def get_historical_database_symbols_from_db(client=None) -> dict:
+    """Fetches the complete symbol inventory from historical_database_symbols in historical.duckdb."""
     own_client = False
     if not client:
         client = get_archive_db_connection()
@@ -32,10 +32,13 @@ def get_historical_symbol_map_from_db(client=None) -> dict:
         return {}
 
     try:
-        table_name = "historical_symbol_map"
+        table_name = "historical_database_symbols"
         tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        if "historical_symbol_map" not in tables and "symbol_map" in tables:
-            table_name = "symbol_map"
+        if "historical_database_symbols" not in tables:
+            if "historical_symbol_map" in tables:
+                table_name = "historical_symbol_map"
+            elif "symbol_map" in tables:
+                table_name = "symbol_map"
 
         res = client.execute(f"""
             SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker
@@ -58,9 +61,14 @@ def get_historical_symbol_map_from_db(client=None) -> dict:
             client.close()
 
 
+def get_historical_symbol_map_from_db(client=None) -> dict:
+    """Backward-compatible alias for get_historical_database_symbols_from_db."""
+    return get_historical_database_symbols_from_db(client=client)
+
+
 def get_symbol_map_from_db(client=None) -> dict:
-    """Backward-compatible alias for get_historical_symbol_map_from_db."""
-    return get_historical_symbol_map_from_db(client=client)
+    """Backward-compatible alias for get_historical_database_symbols_from_db."""
+    return get_historical_database_symbols_from_db(client=client)
 
 
 def get_symbol_inventory_list(client=None) -> list[dict]:
@@ -74,10 +82,13 @@ def get_symbol_inventory_list(client=None) -> list[dict]:
         return []
 
     try:
-        table_name = "historical_symbol_map"
+        table_name = "historical_database_symbols"
         tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        if "historical_symbol_map" not in tables and "symbol_map" in tables:
-            table_name = "symbol_map"
+        if "historical_database_symbols" not in tables:
+            if "historical_symbol_map" in tables:
+                table_name = "historical_symbol_map"
+            elif "symbol_map" in tables:
+                table_name = "symbol_map"
 
         res = client.execute(f"""
             SELECT display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker
@@ -102,7 +113,7 @@ def get_symbol_inventory_list(client=None) -> list[dict]:
 
 
 def add_symbol_to_db(display_name: str, yahoo_ticker=None, massive_ticker=None, binance_ticker=None, capital_ticker=None, client=None) -> bool:
-    """Adds or updates a symbol in historical_symbol_map."""
+    """Adds or updates a symbol in historical_database_symbols."""
     own_client = False
     if not client:
         client = get_archive_db_connection()
@@ -112,10 +123,13 @@ def add_symbol_to_db(display_name: str, yahoo_ticker=None, massive_ticker=None, 
         return False
 
     try:
-        table_name = "historical_symbol_map"
+        table_name = "historical_database_symbols"
         tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        if "historical_symbol_map" not in tables and "symbol_map" in tables:
-            table_name = "symbol_map"
+        if "historical_database_symbols" not in tables:
+            if "historical_symbol_map" in tables:
+                table_name = "historical_symbol_map"
+            elif "symbol_map" in tables:
+                table_name = "symbol_map"
 
         client.execute(f"DELETE FROM {table_name} WHERE display_name = ?", [display_name])
         client.execute(f"""
@@ -132,7 +146,7 @@ def add_symbol_to_db(display_name: str, yahoo_ticker=None, massive_ticker=None, 
 
 
 def remove_symbol_from_db(display_name: str, client=None) -> bool:
-    """Deletes a symbol from historical_symbol_map."""
+    """Deletes a symbol from historical_database_symbols."""
     own_client = False
     if not client:
         client = get_archive_db_connection()
@@ -142,10 +156,13 @@ def remove_symbol_from_db(display_name: str, client=None) -> bool:
         return False
 
     try:
-        table_name = "historical_symbol_map"
+        table_name = "historical_database_symbols"
         tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        if "historical_symbol_map" not in tables and "symbol_map" in tables:
-            table_name = "symbol_map"
+        if "historical_database_symbols" not in tables:
+            if "historical_symbol_map" in tables:
+                table_name = "historical_symbol_map"
+            elif "symbol_map" in tables:
+                table_name = "symbol_map"
 
         client.execute(f"DELETE FROM {table_name} WHERE display_name = ?", [display_name])
         return True
@@ -159,8 +176,8 @@ def remove_symbol_from_db(display_name: str, client=None) -> bool:
 
 # --- Streaming Symbol Inventory Operations ---
 
-def get_streaming_symbol_map_from_db(client=None) -> dict:
-    """Fetches the dedicated streaming symbol inventory from streaming_symbol_map in streaming.duckdb."""
+def get_streaming_database_symbols_from_db(client=None) -> dict:
+    """Fetches the dedicated streaming symbol inventory from streaming_database_symbols in streaming.duckdb."""
     own_client = False
     if not client:
         client = get_streaming_db_connection(read_only=True)
@@ -171,12 +188,16 @@ def get_streaming_symbol_map_from_db(client=None) -> dict:
 
     try:
         tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        if "streaming_symbol_map" not in tables:
-            return {}
+        table_name = "streaming_database_symbols"
+        if "streaming_database_symbols" not in tables:
+            if "streaming_symbol_map" in tables:
+                table_name = "streaming_symbol_map"
+            else:
+                return {}
 
-        res = client.execute("""
+        res = client.execute(f"""
             SELECT display_name, capital_ticker, databento_ticker, binance_ticker, is_active
-            FROM streaming_symbol_map
+            FROM {table_name}
             ORDER BY display_name
         """)
         inventory = {}
@@ -195,6 +216,11 @@ def get_streaming_symbol_map_from_db(client=None) -> dict:
             client.close()
 
 
+def get_streaming_symbol_map_from_db(client=None) -> dict:
+    """Backward-compatible alias for get_streaming_database_symbols_from_db."""
+    return get_streaming_database_symbols_from_db(client=client)
+
+
 def get_streaming_symbol_inventory_list(client=None) -> list[dict]:
     """Fetches streaming symbol inventory as a list of dictionaries."""
     own_client = False
@@ -207,12 +233,16 @@ def get_streaming_symbol_inventory_list(client=None) -> list[dict]:
 
     try:
         tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        if "streaming_symbol_map" not in tables:
-            return []
+        table_name = "streaming_database_symbols"
+        if "streaming_database_symbols" not in tables:
+            if "streaming_symbol_map" in tables:
+                table_name = "streaming_symbol_map"
+            else:
+                return []
 
-        res = client.execute("""
+        res = client.execute(f"""
             SELECT display_name, capital_ticker, databento_ticker, binance_ticker, is_active
-            FROM streaming_symbol_map
+            FROM {table_name}
             ORDER BY display_name
         """)
         return [
@@ -233,7 +263,7 @@ def get_streaming_symbol_inventory_list(client=None) -> list[dict]:
 
 
 def add_streaming_symbol_to_db(display_name: str, capital_ticker=None, databento_ticker=None, binance_ticker=None, is_active=True, client=None) -> bool:
-    """Adds or updates a symbol in streaming_symbol_map in streaming.duckdb."""
+    """Adds or updates a symbol in streaming_database_symbols in streaming.duckdb."""
     own_client = False
     if not client:
         client = get_streaming_db_connection(read_only=False)
@@ -243,9 +273,14 @@ def add_streaming_symbol_to_db(display_name: str, capital_ticker=None, databento
         return False
 
     try:
-        client.execute("DELETE FROM streaming_symbol_map WHERE display_name = ?", [display_name])
-        client.execute("""
-            INSERT INTO streaming_symbol_map (display_name, capital_ticker, databento_ticker, binance_ticker, is_active)
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        table_name = "streaming_database_symbols"
+        if "streaming_database_symbols" not in tables and "streaming_symbol_map" in tables:
+            table_name = "streaming_symbol_map"
+
+        client.execute(f"DELETE FROM {table_name} WHERE display_name = ?", [display_name])
+        client.execute(f"""
+            INSERT INTO {table_name} (display_name, capital_ticker, databento_ticker, binance_ticker, is_active)
             VALUES (?, ?, ?, ?, ?)
         """, [display_name, capital_ticker, databento_ticker, binance_ticker, is_active])
         return True
@@ -258,7 +293,7 @@ def add_streaming_symbol_to_db(display_name: str, capital_ticker=None, databento
 
 
 def remove_streaming_symbol_from_db(display_name: str, client=None) -> bool:
-    """Deletes a symbol from streaming_symbol_map in streaming.duckdb."""
+    """Deletes a symbol from streaming_database_symbols in streaming.duckdb."""
     own_client = False
     if not client:
         client = get_streaming_db_connection(read_only=False)
@@ -268,7 +303,12 @@ def remove_streaming_symbol_from_db(display_name: str, client=None) -> bool:
         return False
 
     try:
-        client.execute("DELETE FROM streaming_symbol_map WHERE display_name = ?", [display_name])
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        table_name = "streaming_database_symbols"
+        if "streaming_database_symbols" not in tables and "streaming_symbol_map" in tables:
+            table_name = "streaming_symbol_map"
+
+        client.execute(f"DELETE FROM {table_name} WHERE display_name = ?", [display_name])
         return True
     except Exception as e:
         print(f"❌ Error removing streaming symbol {display_name}: {e}")

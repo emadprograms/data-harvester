@@ -48,9 +48,10 @@ def get_target_stock_symbols(historical_client=None, streaming_client=None) -> L
     if s_client:
         try:
             tables = [t[0] for t in s_client.execute("SHOW TABLES").fetchall()]
-            if "streaming_symbol_map" in tables:
+            s_tbl = "streaming_database_symbols" if "streaming_database_symbols" in tables else ("streaming_symbol_map" if "streaming_symbol_map" in tables else None)
+            if s_tbl:
                 rows = s_client.execute(
-                    "SELECT display_name FROM streaming_symbol_map WHERE is_active = TRUE ORDER BY display_name"
+                    f"SELECT display_name FROM {s_tbl} WHERE is_active = TRUE ORDER BY display_name"
                 ).fetchall()
                 if rows:
                     return [r[0].strip().upper() for r in rows]
@@ -60,7 +61,7 @@ def get_target_stock_symbols(historical_client=None, streaming_client=None) -> L
             if own_s_client:
                 s_client.close()
 
-    # 2. Fallback to historical symbol_map with exclusions
+    # 2. Fallback to historical symbols with exclusions
     own_client = False
     if historical_client is None:
         historical_client = get_historical_db_connection(read_only=True)
@@ -70,10 +71,13 @@ def get_target_stock_symbols(historical_client=None, streaming_client=None) -> L
         return []
 
     try:
-        table_name = "historical_symbol_map"
+        table_name = "historical_database_symbols"
         tables = [t[0] for t in historical_client.execute("SHOW TABLES").fetchall()]
-        if "historical_symbol_map" not in tables and "symbol_map" in tables:
-            table_name = "symbol_map"
+        if "historical_database_symbols" not in tables:
+            if "historical_symbol_map" in tables:
+                table_name = "historical_symbol_map"
+            elif "symbol_map" in tables:
+                table_name = "symbol_map"
 
         rows = historical_client.execute(
             f"SELECT display_name FROM {table_name} ORDER BY display_name"

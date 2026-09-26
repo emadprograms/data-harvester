@@ -95,7 +95,7 @@ def test_streaming_engine_reload_symbols():
             "BTCUSDT": {"binance_ticker": "btcusdt"}  # Crypto without capital_ticker
         }
 
-        with patch("src.stream.runner.get_streaming_symbol_map_from_db", return_value=mock_db_map):
+        with patch("src.stream.runner.get_streaming_database_symbols_from_db", return_value=mock_db_map):
             success = await engine.reload_symbols()
             assert success is True
             mock_streamer.update_subscriptions.assert_called_once()

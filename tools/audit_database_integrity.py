@@ -168,10 +168,12 @@ def audit_streaming_db(db_path: str = "data/streaming.duckdb") -> bool:
     print_check("Zero severely crossed quotes (bid > ask*1.05)", p_cross, f"{null_sanity[6]} found")
     all_passed = all_passed and p_cross
 
-    # 2b. Dedicated streaming_symbol_map check
-    s_map_count = con.execute("SELECT COUNT(*) FROM streaming_symbol_map").fetchone()[0]
+    # 2b. Dedicated streaming_database_symbols check
+    s_tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+    s_tbl = "streaming_database_symbols" if "streaming_database_symbols" in s_tables else "streaming_symbol_map"
+    s_map_count = con.execute(f"SELECT COUNT(*) FROM {s_tbl}").fetchone()[0]
     p_s_map = (s_map_count == 19)
-    print_check("Streaming symbol map table (streaming_symbol_map)", p_s_map, f"{s_map_count} configured streaming symbols")
+    print_check(f"Streaming database symbols table ({s_tbl})", p_s_map, f"{s_map_count} configured streaming symbols")
     all_passed = all_passed and p_s_map
 
     # 3. Asset Scope Check for Databento
@@ -403,14 +405,16 @@ def audit_historical_db(db_path: str = "data/historical.duckdb") -> bool:
     )
     all_passed = all_passed and p_candles_clean
 
-    # 4. Symbol map integrity
-    sym_map_stats = con.execute("""
+    # 4. Symbol table integrity
+    h_tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+    h_tbl = "historical_database_symbols" if "historical_database_symbols" in h_tables else "historical_symbol_map"
+    sym_map_stats = con.execute(f"""
         SELECT COUNT(*), COUNT(DISTINCT display_name), COUNT(DISTINCT capital_ticker)
-        FROM historical_symbol_map
+        FROM {h_tbl}
     """).fetchone()
     p_map = sym_map_stats[0] > 0
     print_check(
-        "Historical Symbol Map table (historical_symbol_map)",
+        f"Historical Database Symbols table ({h_tbl})",
         p_map,
         f"{sym_map_stats[0]} mappings ({sym_map_stats[1]} unique symbols, {sym_map_stats[2]} capital tickers)"
     )
