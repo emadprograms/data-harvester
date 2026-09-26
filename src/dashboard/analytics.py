@@ -69,11 +69,11 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
 
     try:
         if interval_str is None:
-            # Raw 1-minute candles
+            # Raw 1-minute candles in US Eastern Time (NYSE stock exchange time)
             query = f"""
                 SELECT 
-                    epoch(timestamp::TIMESTAMP) as time_sec,
-                    strftime(timestamp::TIMESTAMP, '%Y-%m-%d %H:%M:%S') as time_str,
+                    epoch(((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP) as time_sec,
+                    strftime(((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP, '%Y-%m-%d %H:%M:%S') as time_str,
                     open, high, low, close, COALESCE(volume, 0) as volume, source, session
                 FROM market_data
                 WHERE {where_sql}
@@ -84,7 +84,7 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
             res = client.execute(query, params)
             rows = res.rows or []
         else:
-            # Aggregated buckets via time_bucket()
+            # Aggregated buckets via time_bucket() in US Eastern Time (NYSE stock exchange time)
             query = f"""
                 SELECT 
                     epoch(bucket) as time_sec,
@@ -98,7 +98,7 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
                     string_agg(DISTINCT session, ', ') as session
                 FROM (
                     SELECT 
-                        time_bucket(INTERVAL '{interval_str}', timestamp::TIMESTAMP) as bucket,
+                        time_bucket(INTERVAL '{interval_str}', ((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP) as bucket,
                         timestamp, open, high, low, close, volume, source, session
                     FROM market_data
                     WHERE {where_sql}
@@ -129,11 +129,12 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
             "symbol": symbol,
             "timeframe": timeframe,
             "database": "historical",
+            "timezone": "America/New_York",
             "count": len(candles),
             "candles": candles
         }
     except Exception as e:
-        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "historical"}
+        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "historical", "timezone": "America/New_York"}
     finally:
         client.close()
 
@@ -182,8 +183,8 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
 
         query = f"""
             SELECT 
-                epoch(time_bucket(INTERVAL '{interval_str}', timestamp::TIMESTAMP)) as time_sec,
-                strftime(time_bucket(INTERVAL '{interval_str}', timestamp::TIMESTAMP), '%Y-%m-%d %H:%M:%S') as time_str,
+                epoch(time_bucket(INTERVAL '{interval_str}', ((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP)) as time_sec,
+                strftime(time_bucket(INTERVAL '{interval_str}', ((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP), '%Y-%m-%d %H:%M:%S') as time_str,
                 first(price ORDER BY timestamp ASC) as open,
                 max(price) as high,
                 min(price) as low,
@@ -194,7 +195,7 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
                 count(*) as tick_count
             FROM ticks
             WHERE {where_sql}
-            GROUP BY time_bucket(INTERVAL '{interval_str}', timestamp::TIMESTAMP)
+            GROUP BY time_bucket(INTERVAL '{interval_str}', ((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP)
             ORDER BY time_sec DESC
             LIMIT ?
         """
@@ -221,11 +222,12 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
             "symbol": symbol,
             "timeframe": timeframe,
             "database": "streaming",
+            "timezone": "America/New_York",
             "count": len(candles),
             "candles": candles
         }
     except Exception as e:
-        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "streaming"}
+        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "streaming", "timezone": "America/New_York"}
     finally:
         s_client.close()
 

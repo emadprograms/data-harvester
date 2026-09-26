@@ -15,7 +15,7 @@ function renderInspectorTable(candles) {
     if (currentDbSource === 'streaming') {
       thead.innerHTML = `
         <tr>
-          <th class="py-2.5 px-4">Timestamp (UTC)</th>
+          <th class="py-2.5 px-4">Timestamp (US/Eastern)</th>
           <th class="py-2.5 px-4 text-right">Open</th>
           <th class="py-2.5 px-4 text-right">High</th>
           <th class="py-2.5 px-4 text-right">Low</th>
@@ -28,7 +28,7 @@ function renderInspectorTable(candles) {
     } else {
       thead.innerHTML = `
         <tr>
-          <th class="py-2.5 px-4">Timestamp (UTC)</th>
+          <th class="py-2.5 px-4">Timestamp (US/Eastern)</th>
           <th class="py-2.5 px-4 text-right">Open</th>
           <th class="py-2.5 px-4 text-right">High</th>
           <th class="py-2.5 px-4 text-right">Low</th>
@@ -43,8 +43,8 @@ function renderInspectorTable(candles) {
 
   if (desc) {
     desc.innerText = currentDbSource === 'historical'
-      ? "Inspect underlying 1-minute or aggregated bars directly from data/historical.duckdb."
-      : "Inspect dynamically resampled candles from raw tick quotes in data/streaming.duckdb.";
+      ? "Inspect underlying 1-minute or aggregated bars directly from data/historical.duckdb in US Eastern Time (NYSE: EST/EDT)."
+      : "Inspect dynamically resampled candles from raw tick quotes in data/streaming.duckdb in US Eastern Time (NYSE: EST/EDT).";
   }
 
   if (badge) {
@@ -69,7 +69,7 @@ function renderInspectorTable(candles) {
       : `<span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 font-mono">${c.session || 'REG'}</span>`;
 
     tr.innerHTML = `
-      <td class="py-2.5 px-4 font-mono text-slate-300">${c.time_str}</td>
+      <td class="py-2.5 px-4 font-mono text-slate-300">${c.time_str} <span class="text-[10px] text-slate-500 font-bold">ET</span></td>
       <td class="py-2.5 px-4 text-right font-mono">${c.open ? c.open.toFixed(2) : '--'}</td>
       <td class="py-2.5 px-4 text-right font-mono text-emerald-400">${c.high ? c.high.toFixed(2) : '--'}</td>
       <td class="py-2.5 px-4 text-right font-mono text-rose-400">${c.low ? c.low.toFixed(2) : '--'}</td>
@@ -110,7 +110,7 @@ function exportCandlesToCSV() {
     return;
   }
 
-  const headers = ["Timestamp", "Open", "High", "Low", "Close", "Volume", "Source", "Session"];
+  const headers = ["Timestamp (US/Eastern)", "Open", "High", "Low", "Close", "Volume", "Source", "Session"];
   const rows = loadedCandles.map(c => [
     `"${c.time_str}"`, c.open, c.high, c.low, c.close, c.volume, `"${c.source}"`, `"${c.session}"`
   ]);

@@ -22,10 +22,38 @@ function initChart() {
       vertLine: { color: '#475569', width: 1, style: 1 },
       horzLine: { color: '#475569', width: 1, style: 1 }
     },
+    localization: {
+      locale: 'en-US',
+      timeFormatter: (time) => {
+        if (typeof time === 'number') {
+          const d = new Date(time * 1000);
+          return d.toISOString().replace('T', ' ').slice(0, 16) + ' ET';
+        }
+        return String(time);
+      }
+    },
     timeScale: {
       borderColor: '#334155',
       timeVisible: true,
-      secondsVisible: false
+      secondsVisible: false,
+      tickMarkFormatter: (time, tickMarkType, locale) => {
+        if (typeof time !== 'number') return null;
+        const d = new Date(time * 1000);
+        switch (tickMarkType) {
+          case 0: // Year
+            return String(d.getUTCFullYear());
+          case 1: // Month
+            return d.toLocaleString('en-US', { timeZone: 'UTC', month: 'short' });
+          case 2: // DayOfMonth
+            return `${d.toLocaleString('en-US', { timeZone: 'UTC', month: 'short' })} ${d.getUTCDate()}`;
+          case 3: // Time
+            return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+          case 4: // TimeWithSeconds
+            return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}`;
+          default:
+            return null;
+        }
+      }
     },
     rightPriceScale: {
       borderColor: '#334155',
@@ -88,7 +116,16 @@ function updateLegend(candle) {
   const dbBadge = document.getElementById('legend-db-badge');
 
   if (symEl) symEl.innerText = `${currentSymbol} (${currentTimeframe.toUpperCase()})`;
-  if (timeEl) timeEl.innerText = candle.time_str || new Date(candle.time * 1000).toISOString().replace('T', ' ').slice(0, 19);
+  if (timeEl) {
+    if (candle.time_str) {
+      timeEl.innerText = `${candle.time_str} ET`;
+    } else if (candle.time) {
+      const d = new Date(candle.time * 1000);
+      timeEl.innerText = `${d.toISOString().replace('T', ' ').slice(0, 19)} ET`;
+    } else {
+      timeEl.innerText = '--';
+    }
+  }
   if (openEl) openEl.innerText = Number(candle.open).toFixed(2);
   if (highEl) highEl.innerText = Number(candle.high).toFixed(2);
   if (lowEl) lowEl.innerText = Number(candle.low).toFixed(2);
@@ -135,9 +172,9 @@ function setDbSource(source) {
       notice.innerHTML = `
         <div class="flex items-center gap-2">
           <span>🏛️</span>
-          <span><strong>Historical Archive Mode</strong>: Querying permanent canonical 1m bars from <code>data/historical.duckdb</code> with Source-Tiering (Massive, Binance, Capital REST). Fully backfillable.</span>
+          <span><strong>Historical Archive Mode</strong>: Querying permanent canonical 1m bars from <code>data/historical.duckdb</code> with Source-Tiering (Massive, Binance, Capital REST). Displayed in <strong>US Eastern Time (NYSE: EST/EDT)</strong>. Fully backfillable.</span>
         </div>
-        <span class="text-[11px] text-emerald-400/80 font-mono">Zero streaming ticks blended</span>
+        <span class="text-[11px] text-emerald-400/80 font-mono">NYSE Exchange Time (ET)</span>
       `;
     }
   } else {

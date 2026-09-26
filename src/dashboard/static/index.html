@@ -200,9 +200,9 @@
       <div id="db-source-notice" class="text-xs px-4 py-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800/50 text-emerald-300 font-mono flex items-center justify-between">
         <div class="flex items-center gap-2">
           <span>🏛️</span>
-          <span><strong>Historical Archive Mode</strong>: Querying permanent canonical 1m bars from <code>data/historical.duckdb</code> with Source-Tiering (Massive, Binance, Capital REST). Fully backfillable.</span>
+          <span><strong>Historical Archive Mode</strong>: Querying permanent canonical 1m bars from <code>data/historical.duckdb</code> with Source-Tiering (Massive, Binance, Capital REST). Displayed in <strong>US Eastern Time (NYSE: EST/EDT)</strong>. Fully backfillable.</span>
         </div>
-        <span class="text-[11px] text-emerald-400/80 font-mono">Zero streaming ticks blended</span>
+        <span class="text-[11px] text-emerald-400/80 font-mono">NYSE Exchange Time (ET)</span>
       </div>
 
       <!-- Chart Controls Toolbar -->
@@ -263,6 +263,7 @@
         <!-- Interactive Hover OHLCV Legend -->
         <div id="chart-legend" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono text-slate-300 pb-2 border-b border-slate-800/80 mb-2">
           <span id="legend-db-badge" class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold">HISTORICAL DB</span>
+          <span id="legend-tz-badge" class="px-2 py-0.5 rounded text-[10px] bg-blue-950 text-blue-400 border border-blue-800 font-mono font-bold">NYSE (ET)</span>
           <span class="text-white font-bold" id="legend-symbol">NVDA (1m)</span>
           <span id="legend-time" class="text-slate-400">--</span>
           <span>O: <span id="legend-open" class="text-white font-bold">--</span></span>
@@ -291,7 +292,7 @@
               <span>🔬 Raw OHLCV Candle Inspector</span>
               <span id="inspector-count-badge" class="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-300 font-mono">0 bars loaded</span>
             </h3>
-            <p id="inspector-desc" class="text-xs text-slate-400">Inspect underlying 1-minute or aggregated bars directly from historical.duckdb.</p>
+            <p id="inspector-desc" class="text-xs text-slate-400">Inspect underlying 1-minute or aggregated bars directly from historical.duckdb in US Eastern Time (NYSE: EST/EDT).</p>
           </div>
           <div class="flex items-center gap-3">
             <input type="text" id="inspector-search" oninput="filterInspectorTable()" placeholder="Search date/time..." class="px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500 font-mono">
@@ -305,7 +306,7 @@
           <table class="w-full text-left text-xs border-collapse">
             <thead id="inspector-thead" class="sticky top-0 bg-slate-850 border-b border-slate-800 text-slate-400 uppercase font-mono text-[11px] z-10">
               <tr>
-                <th class="py-2.5 px-4">Timestamp (UTC)</th>
+                <th class="py-2.5 px-4">Timestamp (US/Eastern)</th>
                 <th class="py-2.5 px-4 text-right">Open</th>
                 <th class="py-2.5 px-4 text-right">High</th>
                 <th class="py-2.5 px-4 text-right">Low</th>
