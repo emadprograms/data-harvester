@@ -2,7 +2,7 @@
 status: complete
 quick_id: 260926-e4s
 date: 2026-09-26
-commit: pending
+commit: fe46500e
 description: Set chart and table timestamps on Historical Database page to US Eastern / NYSE stock exchange time
 ---
 
