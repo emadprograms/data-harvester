@@ -42,7 +42,7 @@ data-harvester/
 │   ├── stream/                 # 24/7 Capital.com live WebSocket streaming runner
 │   └── utils/                  # Data integrity health engine & audit diagnostics
 │
-└── tests/                      # Comprehensive test suite (225 tests, 100% pass rate)
+└── tests/                      # Comprehensive test suite (262 passing, 5 skipped without API credentials)
     ├── conftest.py             # Global fixtures & environment mocks
     ├── api/                    # Tests for src/api/ connectors
     ├── config/                 # Tests for src/config.py & credentials

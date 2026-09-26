@@ -3,7 +3,7 @@ gsd_state_version: "1.0"
 milestone: v3.0
 milestone_name: Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard
 status: complete
-last_updated: "2026-09-26T10:22:00.000Z"
+last_updated: "2026-09-26T08:30:00.000Z"
 last_activity: 2026-09-26
 progress:
   total_phases: 5
@@ -20,7 +20,7 @@ progress:
 Phase: All Phases Complete (Phases 10 to 14)
 Plan: All Plans Complete
 Status: Milestone v3.0 Complete ✅
-Last activity: 2026-09-26 — Completed quick task 260926-e4s: Set chart and table timestamps on Historical Database page to US Eastern / NYSE stock exchange time
+Last activity: 2026-09-26 — Completed quick task 260926-p9d: Historical Database chart X-axis and legend now open at 09:30 ET (deterministic UTC → America/New_York conversion, was rendering the opening bell and its volume spike at 13:30)
 
 ## Milestone Summary
 
@@ -35,7 +35,7 @@ Last activity: 2026-09-26 — Completed quick task 260926-e4s: Set chart and tab
 
 ## Blockers/Concerns
 
-None. Milestone and quick tasks verified with 230/230 tests passing cleanly.
+None. Milestone and quick tasks verified with 262 passed / 5 skipped (API-credential tests skip without keys).
 
 ### Quick Tasks Completed
 
@@ -46,6 +46,7 @@ None. Milestone and quick tasks verified with 230/230 tests passing cleanly.
 | 260925-wf0 | Databento tick backfill for streaming duckdb | 2026-09-25 | adfa9365 | [260925-wf0-databento-tick-backfill-for-streaming-du](./quick/260925-wf0-databento-tick-backfill-for-streaming-du/) |
 | 260926-x1a | Restructure tests into nested domain subfolders | 2026-09-26 | a545e32f | [260926-x1a-restructure-tests-into-nested-subfolders](./quick/260926-x1a-restructure-tests-into-nested-subfolders/) |
 | 260926-e4s | Set chart and table timestamps on Historical Database page to US Eastern / NYSE stock exchange time | 2026-09-26 | fe46500e | [260926-e4s-the-timestamp-in-the-charts-on-the-page-](./quick/260926-e4s-the-timestamp-in-the-charts-on-the-page-/) |
+| 260926-p9d | Historical Database chart X-axis and legend must open at 09:30 ET, not 13:30 | 2026-09-26 | 70b7bc5 | [260926-p9d-historical-database-chart-x-axis-and-leg](./quick/260926-p9d-historical-database-chart-x-axis-and-leg/) |
 
 ## Operator Next Steps
 
