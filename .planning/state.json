@@ -1,12 +1,38 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v2.0",
-  "phases": [],
+  "milestone": "v3.0",
+  "phases": [
+    {
+      "number": "10",
+      "name": "Backend Analytics & High-Performance Data APIs",
+      "status": "complete"
+    },
+    {
+      "number": "11",
+      "name": "Interactive Financial Charting & Data Explorer UI",
+      "status": "complete"
+    },
+    {
+      "number": "12",
+      "name": "Live Stream Tape, Telemetry & Market Operations UI",
+      "status": "complete"
+    },
+    {
+      "number": "13",
+      "name": "Enhanced Symbol Data Matrix & Context-Aware Integrity Engine",
+      "status": "complete"
+    },
+    {
+      "number": "14",
+      "name": "Comprehensive Verification, Testing & Polish",
+      "status": "complete"
+    }
+  ],
   "next": {
-    "command": "/gsd-discuss-phase",
-    "label": "Discuss the first phase",
-    "reason": "Project initialized — plan your first phase"
+    "command": "/gsd-progress",
+    "label": "Show progress",
+    "reason": "Unsure of state — showing progress"
   },
-  "updated_at": "2026-09-25T17:23:38.103Z"
+  "updated_at": "2026-09-26T17:35:40.921Z"
 }

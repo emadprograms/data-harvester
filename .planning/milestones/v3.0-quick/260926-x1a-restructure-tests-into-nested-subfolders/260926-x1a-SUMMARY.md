@@ -1,7 +1,16 @@
+---
+audit_acknowledged:
+  milestone: v3.0
+  at: 2026-09-26
+  status: unknown
+---
+
 # Quick Task 260926-x1a: Restructure Tests into Nested Domain Subfolders - Summary
 
 ## Overview
+
 Successfully restructured the entire `tests/` directory from a flat 28-file structure with compound path prefixes into clean, modular domain subdirectories mirroring `src/`:
+
 - `tests/api/`
 - `tests/config/`
 - `tests/dashboard/`

@@ -1,26 +1,28 @@
 ---
 gsd_state_version: "1.0"
 milestone: v3.0
-milestone_name: Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard
-status: complete
-last_updated: "2026-09-26T08:30:00.000Z"
+status: Awaiting next milestone
+last_updated: "2026-09-26T17:35:40.814Z"
 last_activity: 2026-09-26
+last_activity_desc: Milestone v3.0 completed and archived
+state_head: b6753e3cfc8506d3ca3f22261832d4212033b7e3
 progress:
   total_phases: 5
   completed_phases: 5
   total_plans: 5
   completed_plans: 5
   percent: 100
+milestone_name: Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard
 ---
 
 # Project State: Data Harvester
 
 ## Current Position
 
-Phase: All Phases Complete (Phases 10 to 14)
-Plan: All Plans Complete
-Status: Milestone v3.0 Complete ✅
-Last activity: 2026-09-26 — Completed quick task 260926-y2k: Separate historical and streaming symbol map tables, and filter out excluded assets in streaming runner
+Phase: Milestone v3.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-09-26 — Milestone v3.0 completed and archived
 
 ## Milestone Summary
 
@@ -41,19 +43,17 @@ None. Milestone and quick tasks verified with 272 passed / 0 failed.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
-| 260925-vhi | Separate historical and streaming databases on dashboard | 2026-09-25 | 2acfc40b | [260925-vhi-separate-historical-and-streaming-databa](./quick/260925-vhi-separate-historical-and-streaming-databa/) |
-| 260925-vqd | Refactor index.html and expand test coverage | 2026-09-25 | 44c219c0 | [260925-vqd-refactor-index-html-and-expand-test-cove](./quick/260925-vqd-refactor-index-html-and-expand-test-cove/) |
-| 260925-wf0 | Databento tick backfill for streaming duckdb | 2026-09-25 | adfa9365 | [260925-wf0-databento-tick-backfill-for-streaming-du](./quick/260925-wf0-databento-tick-backfill-for-streaming-du/) |
-| 260926-x1a | Restructure tests into nested domain subfolders | 2026-09-26 | a545e32f | [260926-x1a-restructure-tests-into-nested-subfolders](./quick/260926-x1a-restructure-tests-into-nested-subfolders/) |
-| 260926-e4s | Set chart and table timestamps on Historical Database page to US Eastern / NYSE stock exchange time | 2026-09-26 | fe46500e | [260926-e4s-the-timestamp-in-the-charts-on-the-page-](./quick/260926-e4s-the-timestamp-in-the-charts-on-the-page-/) |
-| 260926-p9d | Historical Database chart X-axis and legend must open at 09:30 ET, not 13:30 | 2026-09-26 | 70b7bc5 | [260926-p9d-historical-database-chart-x-axis-and-leg](./quick/260926-p9d-historical-database-chart-x-axis-and-leg/) |
-| 260926-y2k | Separate historical and streaming symbol maps; filter excluded assets in streaming | 2026-09-26 | 017bce48 | [260926-y2k-separate-historical-and-streaming-symbol-maps](./quick/260926-y2k-separate-historical-and-streaming-symbol-maps/) |
+
+## Deferred Items
+
+Items acknowledged and deferred at milestone close, most recent first:
+
+| Category | Item | Status | Deferred At | Milestone |
+|----------|------|--------|-------------|-----------|
+| quick_tasks | 260925-wf0-databento-tick-backfill-for-streaming-du | unknown | 2026-09-26 | v3.0 |
+| quick_tasks | 260926-x1a-restructure-tests-into-nested-subfolders | unknown | 2026-09-26 | v3.0 |
+| quick_tasks | 260926-y2k-separate-historical-and-streaming-symbol-maps | unknown | 2026-09-26 | v3.0 |
 
 ## Operator Next Steps
 
-1. Launch Interactive Observability Dashboard:
-   `python -m src.dashboard.server` (open http://localhost:8000 in your browser)
-2. Launch Capital.com Live Streamer:
-   `python -m src.stream.runner`
-3. Run Full Test Suite:
-   `PYTHONPATH=. .venv/bin/pytest tests/ -v`
+- Start the next milestone with /gsd-new-milestone

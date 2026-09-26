@@ -6,13 +6,14 @@ A high-performance, 100% local market data harvesting and streaming engine runni
 ## Core Value
 Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
 
-## Current State (Shipped v2.0)
+## Current State (Shipped v3.0)
 - **Historical Storage (`data/historical.duckdb`)**: 7,993,726 deduplicated 1-minute OHLCV bars across 40 symbols covering October 2024 to July 2026 (920 MB on disk). Sub-10ms dynamic candlestick resampling via DuckDB native `time_bucket()`.
 - **Live Streaming Storage (`data/streaming.duckdb`)**: Dedicated tick quote storage (`ticks` table) capturing bid, ask, price, and volume exclusively from Capital.com.
-- **Dynamic Subscription Hot-Reload**: Live symbol subscriptions update on the fly upon database/dashboard modification without dropping WebSocket connections.
-- **Data Integrity & Health Engine**: Automated gap detection for regular market hours, stream quiet interval monitoring, OHLCV sanity/anomaly bounds validation, and cross-database price drift reconciliation.
-- **Interactive Web Dashboard**: Zero-dependency multi-threaded Python server (`http://localhost:8000`) with modern dark-mode single-page JS/Tailwind UI for real-time KPIs, one-click integrity audits, and symbol management.
-- **Test Automation**: 163 automated unit, integration, concurrency stress, and end-to-end tests passing cleanly (0 failures).
+- **Observability Command Center**: Interactive TradingView Lightweight Charts (v4.1.3) with multi-timeframe analytical resampling (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`), raw OHLCV candle inspector, and CSV export.
+- **Live Telemetry & Market Operations**: Real-time Ticker Wall with flash animations, live tick tape, streamer process telemetry, and US Eastern / NYSE market session clock with boundary countdowns.
+- **Harvester Job Automation**: Background execution of `main.py` directly from the UI with real-time stdout/stderr log streaming.
+- **Symbol Coverage & Health Matrix**: Searchable, sortable matrix of symbols, asset classes, date ranges, freshness status, and context-aware integrity auditing.
+- **Test Automation**: 182 automated unit, integration, and endpoint tests passing cleanly (100% pass rate).
 
 ## Requirements
 
@@ -73,6 +74,7 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - Raw tick quotes are stored for Capital.com to retain granular bid/ask/price precision without quantization.
 - A modern local web dashboard provides immediate observability into database health, data integrity, and interactive symbol management.
 - Multi-year historical data from release assets was consolidated into `historical.duckdb`, giving a unified continuous archive from October 2024 through July 2026.
+- In v3.0, the dashboard transformed into an interactive Observability Command Center with TradingView charts, telemetry tape, market clocks, and background job runners.
 
 ## Constraints
 - **Zero Cloud Limits**: No dependence on cloud database quotas.
@@ -94,6 +96,10 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 | In-Process Adaptive Configuration Matching | Solves DuckDB's in-process `read_only` configuration conflict by adaptively matching existing open mode | ✓ Good |
 | Intermittent Flush Locking in Runner | Opens connection only during ~5ms flush window, keeping file unlocked 99.5% of the time for readers | ✓ Good |
 | Vectorized Release Data Consolidation | Uses DuckDB's native SQLite scanner to merge, deduplicate, and tier 9.4M rows in 11.64s | ✓ Good |
+| TradingView Lightweight Charts (v4.1.3) | Sub-25ms canvas rendering for 8M rows with zero frontend build dependencies | ✓ Good |
+| DuckDB `time_bucket()` Server-Side Resampling | Native analytical grouping across multiple timeframes (`1m` to `1D`) without Python loop overhead | ✓ Good |
+| Context-Aware Gap Range Discovery | Dynamic recorded date range targeting prevents false gap alarms on archived historical data | ✓ Good |
+| Separate Historical & Streaming Symbol Maps | Independent table schemas provide explicit isolation between static historical coverage and dynamic live stream subscriptions | ✓ Good |
 
 ---
-*Last updated: 2026-09-25 after v2.0 milestone completion*
+*Last updated: 2026-09-26 after v3.0 milestone completion*

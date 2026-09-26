@@ -1,3 +1,10 @@
+---
+audit_acknowledged:
+  milestone: v3.0
+  at: 2026-09-26
+  status: unknown
+---
+
 # Quick Task Summary: Separate Historical and Streaming Symbol Maps
 
 **Task ID:** `260926-y2k`
@@ -5,11 +12,14 @@
 **Date:** 2026-09-26
 
 ## Objective
+
 Split the monolithic `symbol_map` concept into two distinct catalogs:
+
 1. `historical.duckdb`: `historical_symbol_map` table (with legacy `symbol_map` view preserved for full backward compatibility) containing all 40 assets (equities, ETFs, crypto, commodities).
 2. `streaming.duckdb`: `streaming_symbol_map` table containing strictly allowed live streaming instruments (the 19 core single-stock equities), ensuring excluded assets (ETFs, commodities, crypto) are never stored in `streaming.duckdb`.
 
 ## Key Changes
+
 1. **Schema Initialization (`src/database/schema.py`)**:
    - `init_historical_db`: Creates `historical_symbol_map` table and creates `VIEW symbol_map AS SELECT * FROM historical_symbol_map`. Migrates legacy tables seamlessly if needed.
    - `init_streaming_db`: Creates and seeds `streaming_symbol_map` with 19 single-stock assets (`AAPL`, `ADBE`, `AMD`, `AMZN`, `APP`, `AVGO`, `BABA`, `GOOGL`, `META`, `MSFT`, `MU`, `NDAQ`, `NVDA`, `ORCL`, `PANW`, `QCOM`, `SHOP`, `TSLA`, `TSM`).
@@ -30,5 +40,6 @@ Split the monolithic `symbol_map` concept into two distinct catalogs:
    - 5 dedicated unit and integration tests verifying schema, CRUD isolation, streaming runner drop behavior, and backfill target list.
 
 ## Verification
+
 - `PYTHONPATH=. .venv/bin/pytest tests/test_symbol_maps_separation.py -v`: 5/5 PASSED.
 - `tools/audit_database_integrity.py`: 100% PASS for both `historical.duckdb` and `streaming.duckdb`.
