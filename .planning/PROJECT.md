@@ -1,7 +1,7 @@
 # Data Harvester — Local DuckDB & Live Streaming Engine
 
 ## What This Is
-A high-performance, 100% local market data harvesting and streaming engine running on macOS (Mac Mini) and Windows. It captures live market quotes from Capital.com via persistent WebSockets, storing real-time tick-by-tick quotes in `data/streaming.duckdb` and canonical 1-minute historical bars in `data/historical.duckdb` with sub-millisecond dynamic OHLCV candlestick resampling, deep data integrity validation, and an interactive local web dashboard (`http://localhost:8000`).
+A high-performance, 100% local market data harvesting and streaming engine running on macOS (Mac Mini) and Windows. It captures live market quotes from Capital.com via persistent WebSockets, storing real-time tick-by-tick quotes in `data/streaming.duckdb` and canonical 1-minute historical bars in `data/historical.duckdb` with sub-millisecond dynamic OHLCV candlestick resampling, deep data integrity validation, and an interactive local web dashboard (`http://localhost:8420`).
 
 ## Core Value
 Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
@@ -92,7 +92,7 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 | Raw Tick Quotes for Capital.com Streaming | Retains full price/quote fidelity at tick level in dedicated `streaming.duckdb` | ✓ Good |
 | Deactivate Binance from Streaming Runner | User specified webstreaming only saves data from Capital.com | ✓ Good |
 | Dynamic Live Reload for Subscriptions | Enables adding/removing tracked symbols without stopping the always-on daemon | ✓ Good |
-| Lightweight Python API + Vanilla JS/Tailwind Dashboard | Zero-build simplicity, instant browser access on localhost:8000, easy maintenance | ✓ Good |
+| Lightweight Python API + Vanilla JS/Tailwind Dashboard | Zero-build simplicity, instant browser access on localhost:8420, easy maintenance | ✓ Good |
 | In-Process Adaptive Configuration Matching | Solves DuckDB's in-process `read_only` configuration conflict by adaptively matching existing open mode | ✓ Good |
 | Intermittent Flush Locking in Runner | Opens connection only during ~5ms flush window, keeping file unlocked 99.5% of the time for readers | ✓ Good |
 | Vectorized Release Data Consolidation | Uses DuckDB's native SQLite scanner to merge, deduplicate, and tier 9.4M rows in 11.64s | ✓ Good |
