@@ -58,6 +58,13 @@ data-harvester/
 
 ## 🚀 Quickstart & Usage
 
+### 🪟 Windows 24/7 Always-On (Zero Config)
+To run the streamer and dashboard 24/7 on Windows with automatic startup and auto-reload on code change:
+- **Install & Start**: Double-click `INSTALL_STARTUP.bat` (runs silently in the background on startup).
+- **Check Status & Logs**: Double-click `VIEW_STATUS.bat` (inspects running PIDs and recent log lines).
+- **Stop Services**: Double-click `STOP_SERVICES.bat`.
+- **Remove from Startup**: Double-click `UNINSTALL_STARTUP.bat`.
+
 ### 1. Run Tests
 Run the entire test suite across all nested test packages:
 ```bash
