@@ -93,7 +93,11 @@ class ProcessSupervisor:
     def _log(self, message):
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         formatted = f"[{timestamp}] [{self.name}-supervisor] {message}"
-        print(formatted, flush=True)
+        if sys.stdout is not None:
+            try:
+                print(formatted, flush=True)
+            except Exception:
+                pass
         try:
             rotate_log_if_needed(self.log_file_path)
             with open(self.log_file_path, "a", encoding="utf-8") as f:
@@ -103,14 +107,22 @@ class ProcessSupervisor:
 
     def _start_child(self):
         rotate_log_if_needed(self.log_file_path)
-        self._log(f"Launching process: {sys.executable} -m {self.module}")
+        python_exe = sys.executable
+        if python_exe.lower().endswith("pythonw.exe"):
+            cand = Path(python_exe).with_name("python.exe")
+            if cand.exists():
+                python_exe = str(cand)
+
+        self._log(f"Launching process: {python_exe} -m {self.module}")
         log_file = open(self.log_file_path, "a", encoding="utf-8", buffering=1)
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         env["PYTHONPATH"] = str(REPO_ROOT)
 
         self.process = subprocess.Popen(
-            [sys.executable, "-m", self.module],
+            [python_exe, "-m", self.module],
             cwd=str(REPO_ROOT),
             stdout=log_file,
             stderr=subprocess.STDOUT,

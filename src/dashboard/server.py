@@ -512,7 +512,7 @@ def run_dashboard_server(host="0.0.0.0", port=None):
                 continue
             raise
 
-    print(f"🚀 Data Harvester Dashboard running on http://{host}:{port}", flush=True)
+    print(f"Data Harvester Dashboard running on http://{host}:{port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
