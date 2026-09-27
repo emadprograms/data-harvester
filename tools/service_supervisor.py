@@ -121,12 +121,14 @@ class ProcessSupervisor:
         env["PYTHONUTF8"] = "1"
         env["PYTHONPATH"] = str(REPO_ROOT)
 
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if sys.platform == "win32" else 0
         self.process = subprocess.Popen(
             [python_exe, "-m", self.module],
             cwd=str(REPO_ROOT),
             stdout=log_file,
             stderr=subprocess.STDOUT,
-            env=env
+            env=env,
+            creationflags=flags
         )
         self._log(f"Started child process PID={self.process.pid}")
 
@@ -173,13 +175,14 @@ class ProcessSupervisor:
         if now - self.last_git_sync >= self.git_sync_interval:
             self.last_git_sync = now
             try:
-                # Fast forward git pull
+                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if sys.platform == "win32" else 0
                 res = subprocess.run(
                     ["git", "pull", "--ff-only"],
                     cwd=str(REPO_ROOT),
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
+                    creationflags=flags
                 )
                 output = (res.stdout or "").strip()
                 if "Already up to date." not in output and res.returncode == 0:
