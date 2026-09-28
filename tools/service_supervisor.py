@@ -228,7 +228,7 @@ def main():
     parser.add_argument("--name", required=True, help="Friendly service name (e.g. streamer, dashboard)")
     parser.add_argument("--module", required=True, help="Python module to execute (e.g. src.stream.runner)")
     parser.add_argument("--watch", nargs="+", default=["src"], help="Directories to watch for changes")
-    parser.add_argument("--git-sync", type=int, default=0, help="Interval in seconds to check git pull (0=disabled)")
+    parser.add_argument("--git-sync", type=int, default=15, help="Interval in seconds to check git pull (0=disabled, default 15s)")
 
     args = parser.parse_args()
     supervisor = ProcessSupervisor(

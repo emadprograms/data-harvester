@@ -124,7 +124,7 @@ def build_timestamp_range_clause(column_type: str, column: str, operator: str) -
     return f"{column}::TIMESTAMP {operator} ?::TIMESTAMP"
 
 
-def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000) -> dict:
+def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, session: str = None) -> dict:
     """
     Fetches canonical OHLCV candles exclusively from data/historical.duckdb.
     Zero blending with streaming data.
@@ -133,6 +133,7 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
       - stored bars are UTC; `time` is returned as true UTC epoch seconds (chart positioning),
       - `time_str` is the same instant rendered on the NYSE clock (America/New_York, EST/EDT),
       - `timezone` / `time_epoch_basis` describe that contract to the frontend.
+      - 1D timeframe strictly uses Regular Trading Hours (RTH, 09:30 to 16:00 ET) by default.
     """
     symbol = (symbol or "").strip().upper()
     if not symbol:
@@ -166,6 +167,18 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
         if end:
             where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", "<="))
             params.append(end.strip())
+
+        session_filter = session.upper().strip() if session else None
+        if timeframe in ("1d", "1day") and not session_filter:
+            # 1D charts strictly use Regular Trading Hours (RTH, 09:30 to 16:00 ET)
+            session_filter = "REG"
+
+        if session_filter and session_filter not in ("ALL", "ETH"):
+            if session_filter in ("REG", "RTH"):
+                where_clauses.append("(upper(session) = 'REG' OR session = 'RTH')")
+            else:
+                where_clauses.append("upper(session) = ?")
+                params.append(session_filter)
 
         where_sql = " AND ".join(where_clauses)
 
@@ -241,12 +254,13 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
         client.close()
 
 
-def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000) -> dict:
+def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, session: str = None) -> dict:
     """
     Fetches OHLCV candles resampled on-the-fly exclusively from raw ticks in data/streaming.duckdb.
     Zero dependency on historical.duckdb.
     Buckets are aligned to the NYSE clock (America/New_York) and follow the same timestamp
     contract as get_historical_candles(): UTC epoch in `time`, exchange-local label in `time_str`.
+    1D timeframe strictly uses Regular Trading Hours (RTH, 09:30 to 16:00 ET) by default.
     """
     symbol = (symbol or "").strip().upper()
     if not symbol:
@@ -285,6 +299,18 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
         if end:
             where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", "<="))
             params.append(end.strip())
+
+        session_filter = session.upper().strip() if session else None
+        if timeframe in ("1d", "1day") and not session_filter:
+            # 1D charts strictly use Regular Trading Hours (RTH, 09:30 to 16:00 ET)
+            session_filter = "REG"
+
+        if session_filter and session_filter not in ("ALL", "ETH"):
+            if session_filter in ("REG", "RTH"):
+                where_clauses.append("(upper(session) = 'REG' OR session = 'RTH')")
+            else:
+                where_clauses.append("upper(session) = ?")
+                params.append(session_filter)
 
         where_sql = " AND ".join(where_clauses)
 
@@ -346,15 +372,15 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
         s_client.close()
 
 
-def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, db_source: str = "historical") -> dict:
+def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, db_source: str = "historical", session: str = None) -> dict:
     """
     Unified entry point routing to either the canonical historical archive or the live streaming buffer.
     Never blends both databases silently.
     """
     db_source = (db_source or "historical").lower().strip()
     if db_source in ["streaming", "live", "stream", "ticks"]:
-        return get_streaming_candles(symbol, timeframe=timeframe, start=start, end=end, limit=limit)
-    return get_historical_candles(symbol, timeframe=timeframe, start=start, end=end, limit=limit)
+        return get_streaming_candles(symbol, timeframe=timeframe, start=start, end=end, limit=limit, session=session)
+    return get_historical_candles(symbol, timeframe=timeframe, start=start, end=end, limit=limit, session=session)
 
 
 def get_historical_overview() -> dict:
