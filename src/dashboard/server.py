@@ -4,10 +4,8 @@ Provides a lightweight, multi-threaded REST API and serves the interactive JavaS
 Runs on localhost:8420 with zero external framework dependencies.
 """
 import os
-import sys
 import json
 import logging
-import subprocess
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs, unquote
@@ -44,10 +42,9 @@ from src.dashboard.harvester_job import harvester_manager
 from src.database.connection import get_historical_db_connection
 
 logger = logging.getLogger("dashboard_server")
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 INDEX_PATH = os.path.join(STATIC_DIR, "index.html")
-RELOAD_SIGNAL_FILE = os.path.join(REPO_ROOT, "data", ".stream_reload.signal")
+RELOAD_SIGNAL_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", ".stream_reload.signal")
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -266,7 +263,6 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             tf = query.get("timeframe", query.get("tf", ["1m"]))[0]
             start = query.get("start", [None])[0]
             end = query.get("end", [None])[0]
-            session = query.get("session", [None])[0]
             db_source = query.get("source", query.get("db", ["historical"]))[0]
             if path == "/api/historical/candles":
                 db_source = "historical"
@@ -277,26 +273,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 limit = int(query.get("limit", [1000])[0])
             except ValueError:
                 limit = 1000
-            res = get_candles(sym, tf, start, end, limit, db_source=db_source, session=session)
+            res = get_candles(sym, tf, start, end, limit, db_source=db_source)
             self._send_json(res)
-            return
-
-        # 5a. API: Git Version / Status Check
-        if path == "/api/git/status":
-            try:
-                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if sys.platform == "win32" else 0
-                res = subprocess.run(
-                    ["git", "rev-parse", "HEAD"],
-                    cwd=str(REPO_ROOT),
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    creationflags=flags
-                )
-                commit = (res.stdout or "").strip()
-                self._send_json({"commit": commit, "status": "ok"})
-            except Exception as e:
-                self._send_json({"error": str(e)}, status=500)
             return
 
         # 5b. API: Dedicated Historical Database Overview
@@ -443,25 +421,6 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             ok, msg, job_status = harvester_manager.start_job(target_date)
             status_code = 200 if ok else 409
             self._send_json({"success": ok, "message": msg, "job": job_status}, status=status_code)
-            return
-
-        # 4. Trigger Git Pull / Update
-        if path in ["/api/git/pull", "/api/system/update"]:
-            try:
-                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if sys.platform == "win32" else 0
-                res = subprocess.run(
-                    ["git", "pull", "--ff-only"],
-                    cwd=str(REPO_ROOT),
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    creationflags=flags
-                )
-                output = (res.stdout or "").strip()
-                err = (res.stderr or "").strip()
-                self._send_json({"success": res.returncode == 0, "stdout": output, "stderr": err})
-            except Exception as e:
-                self._send_json({"success": False, "error": str(e)}, status=500)
             return
 
         self._send_json({"error": "Not Found", "path": path}, status=404)
