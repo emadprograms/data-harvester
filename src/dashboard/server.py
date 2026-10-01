@@ -280,6 +280,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             tf = query.get("timeframe", query.get("tf", ["1m"]))[0]
             start = query.get("start", [None])[0]
             end = query.get("end", [None])[0]
+            date_param = query.get("date", [None])[0]
+            hours_param = query.get("hours", query.get("extended", ["extended"]))[0]
 
             if path == "/api/historical/candles":
                 db_source = "historical"
@@ -298,7 +300,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 limit = int(query.get("limit", [1000])[0])
             except ValueError:
                 limit = 1000
-            res = get_candles(sym, tf, start, end, limit, db_source=db_source)
+            res = get_candles(sym, tf, start, end, limit, db_source=db_source, date=date_param, hours=hours_param)
             self._send_json(res)
             return
 
@@ -379,7 +381,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             ext_param = query.get("extended", ["false"])[0]
             hours_param = query.get("hours", ["regular"])[0]
             include_extended = (str(ext_param).strip().lower() == "true" or str(hours_param).strip().lower() == "extended")
-            res = get_streaming_continuity_analysis(days=days, symbol=symbol, include_extended=include_extended)
+            week_start = query.get("week_start", query.get("week", [None]))[0]
+            target_date = query.get("date", query.get("target_date", [None]))[0]
+            res = get_streaming_continuity_analysis(
+                days=days,
+                symbol=symbol,
+                include_extended=include_extended,
+                week_start=week_start,
+                target_date=target_date,
+            )
             self._send_json(res)
             return
 

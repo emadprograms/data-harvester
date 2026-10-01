@@ -18,13 +18,25 @@ let cachedAllContinuityData = null;
 let cachedSymbolContinuityData = null;
 let currentContinuitySymbol = 'all';
 let currentContinuityDays = 5;
+let currentContinuityWeekStart = null;
+let currentContinuityDayDate = null;
 
-// Expose state globally on window
+// Expose state globally on window and global
 if (typeof window !== 'undefined') {
   window.currentContinuityView = currentContinuityView;
   window.cachedContinuityData = cachedContinuityData;
   window.cachedAllContinuityData = cachedAllContinuityData;
   window.cachedSymbolContinuityData = cachedSymbolContinuityData;
+  window.currentContinuityWeekStart = currentContinuityWeekStart;
+  window.currentContinuityDayDate = currentContinuityDayDate;
+}
+if (typeof global !== 'undefined') {
+  global.currentContinuityView = currentContinuityView;
+  global.cachedContinuityData = cachedContinuityData;
+  global.cachedAllContinuityData = cachedAllContinuityData;
+  global.cachedSymbolContinuityData = cachedSymbolContinuityData;
+  global.currentContinuityWeekStart = currentContinuityWeekStart;
+  global.currentContinuityDayDate = currentContinuityDayDate;
 }
 
 function hasSpectrogramData(d) {
@@ -34,21 +46,61 @@ function hasSpectrogramData(d) {
 }
 
 /**
- * Loads streaming continuity analysis data from REST API.
- * @param {string} symbol - 'all' or specific symbol (e.g. 'NVDA')
- * @param {number} days - Number of trading days to analyze (default 5)
+ * Populates the #continuity-week-select dropdown from available_weeks metadata.
+ */
+function populateWeekSelect(weeks, selectedWeek) {
+  const select = document.getElementById('continuity-week-select');
+  if (!select || !weeks || !Array.isArray(weeks)) return;
+
+  const currentVal = select.value || selectedWeek;
+  const optionsHtml = weeks.map(w => {
+    const isSel = (w.week_start === currentVal || w.week_start === selectedWeek);
+    return `<option value="${w.week_start}" ${isSel ? 'selected' : ''}>${w.label || w.week_start}</option>`;
+  }).join('');
+
+  select.innerHTML = optionsHtml;
+  if (selectedWeek) {
+    select.value = selectedWeek;
+  }
+}
+
+/**
+ * Handler for #continuity-week-select changes.
+ */
+function handleWeekChange(weekStart) {
+  currentContinuityWeekStart = weekStart;
+  currentContinuityDayDate = null;
+  if (typeof window !== 'undefined') {
+    window.currentContinuityWeekStart = currentContinuityWeekStart;
+    window.currentContinuityDayDate = null;
+  }
+  if (typeof global !== 'undefined') {
+    global.currentContinuityWeekStart = currentContinuityWeekStart;
+    global.currentContinuityDayDate = null;
+  }
+  loadStreamingContinuity('all', 5, false, weekStart, null);
+}
+
 /**
  * Loads streaming continuity analysis data from REST API.
  * @param {string} symbol - 'all' or specific symbol (e.g. 'NVDA')
  * @param {number} days - Number of trading days to analyze (default 5)
  * @param {boolean} [extended=false] - Whether to include extended trading hours (04:00–20:00 ET)
+ * @param {string} [weekStart=null] - Week start date YYYY-MM-DD
+ * @param {string} [targetDate=null] - Single day target date YYYY-MM-DD
  */
-async function loadStreamingContinuity(symbol, days, extended = false) {
+async function loadStreamingContinuity(symbol, days, extended = false, weekStart = null, targetDate = null) {
   if (symbol !== undefined && symbol !== null) {
     currentContinuitySymbol = symbol;
   }
   if (days !== undefined && days !== null) {
     currentContinuityDays = Number(days) || 5;
+  }
+  if (weekStart !== undefined && weekStart !== null) {
+    currentContinuityWeekStart = weekStart;
+  }
+  if (targetDate !== undefined && targetDate !== null) {
+    currentContinuityDayDate = targetDate;
   }
 
   const isExtended = Boolean(extended);
@@ -57,7 +109,13 @@ async function loadStreamingContinuity(symbol, days, extended = false) {
 
   try {
     const symParam = encodeURIComponent(currentContinuitySymbol || 'all');
-    const url = `/api/streaming/continuity?days=${currentContinuityDays}&symbol=${symParam}&extended=${isExtended ? 'true' : 'false'}`;
+    let url = `/api/streaming/continuity?days=${currentContinuityDays}&symbol=${symParam}&extended=${isExtended ? 'true' : 'false'}`;
+    if (targetDate || currentContinuityDayDate) {
+      url += `&date=${encodeURIComponent(targetDate || currentContinuityDayDate)}`;
+    } else if (weekStart || currentContinuityWeekStart) {
+      url += `&week_start=${encodeURIComponent(weekStart || currentContinuityWeekStart)}`;
+    }
+
     const res = await fetch(url);
     if (!res.ok) {
       console.warn(`[Continuity] HTTP ${res.status} fetching continuity data`);
@@ -66,6 +124,13 @@ async function loadStreamingContinuity(symbol, days, extended = false) {
 
     const data = await res.json();
     cachedContinuityData = data;
+
+    if (data.available_weeks && Array.isArray(data.available_weeks)) {
+      populateWeekSelect(data.available_weeks, data.week_start || currentContinuityWeekStart);
+    }
+    if (data.week_start && !currentContinuityWeekStart) {
+      currentContinuityWeekStart = data.week_start;
+    }
 
     if (data.view_mode === 'all' || hasSpectrogramData(data)) {
       cachedAllContinuityData = data;
@@ -78,6 +143,16 @@ async function loadStreamingContinuity(symbol, days, extended = false) {
       window.cachedAllContinuityData = cachedAllContinuityData;
       window.cachedSymbolContinuityData = cachedSymbolContinuityData;
       window.currentContinuityView = currentContinuityView;
+      window.currentContinuityWeekStart = currentContinuityWeekStart;
+      window.currentContinuityDayDate = currentContinuityDayDate;
+    }
+    if (typeof global !== 'undefined') {
+      global.cachedContinuityData = cachedContinuityData;
+      global.cachedAllContinuityData = cachedAllContinuityData;
+      global.cachedSymbolContinuityData = cachedSymbolContinuityData;
+      global.currentContinuityView = currentContinuityView;
+      global.currentContinuityWeekStart = currentContinuityWeekStart;
+      global.currentContinuityDayDate = currentContinuityDayDate;
     }
 
     renderContinuityRibbons(data);
@@ -162,6 +237,7 @@ function renderMasterPulseView(data, container) {
   if (!container) return;
   const days = data.days || [];
   const isExtended = Boolean(data.extended_hours || data.hours === 'extended');
+  const isSingleDay = (days.length === 1) || Boolean(data.target_date) || (container && container.id === 'detail-continuity-ribbons');
 
   if (days.length === 0) {
     container.innerHTML = `
@@ -219,7 +295,8 @@ function renderMasterPulseView(data, container) {
                    'bg-rose-500 hover:bg-rose-400';
         const ts = `${day.date} ${b.time}:00`;
         const syncArg = b.start_epoch !== undefined ? b.start_epoch : `'${ts}'`;
-        html += `<div class="flex-1 h-full ${bg} transition-colors" title="${b.time} ET | Status: ${b.status} | Active: ${b.active_count}/${b.total_count}" onclick="syncChartToGap(${syncArg})"></div>`;
+        const clickAttr = isSingleDay ? '' : ` onclick="syncChartToGap(${syncArg})"`;
+        html += `<div class="flex-1 h-full ${bg} transition-colors" title="${b.time} ET | Status: ${b.status} | Active: ${b.active_count}/${b.total_count}"${clickAttr}></div>`;
       });
     } else {
       const bg = day.status === 'healthy' ? 'bg-emerald-500' : (day.status === 'partial' ? 'bg-amber-500' : 'bg-rose-500');
@@ -259,17 +336,26 @@ function renderMasterPulseView(data, container) {
     if (day.gaps && day.gaps.length > 0) {
       html += `<div class="pt-1 flex flex-wrap gap-1.5">`;
       day.gaps.forEach(g => {
-        const gapColor = g.status === 'outage' ? 'bg-rose-950/80 border-rose-800 text-rose-300 hover:bg-rose-900' :
-                                                'bg-amber-950/80 border-amber-800 text-amber-300 hover:bg-amber-900';
-        const gapSyncArg = (g.start_epoch !== undefined && g.end_epoch !== undefined)
-          ? `{start_epoch: ${g.start_epoch}, end_epoch: ${g.end_epoch}}`
-          : `'${g.start_time}'`;
-        html += `
-          <button onclick="syncChartToGap(${gapSyncArg})" class="px-2 py-0.5 rounded text-[10px] font-mono border ${gapColor} flex items-center gap-1 transition-colors" title="Click to inspect on chart">
-            <span>⏱️</span>
-            <span>${g.description || `${g.duration}m gap (${g.start_str || ''} - ${g.end_str || ''})`}</span>
-          </button>
-        `;
+        const gapColor = g.status === 'outage' ? 'bg-rose-950/80 border-rose-800 text-rose-300' :
+                                                'bg-amber-950/80 border-amber-800 text-amber-300';
+        if (isSingleDay) {
+          html += `
+            <span class="px-2 py-0.5 rounded text-[10px] font-mono border ${gapColor} flex items-center gap-1" title="${g.description || 'Gap incident'}">
+              <span>⏱️</span>
+              <span>${g.description || `${g.duration}m gap (${g.start_str || ''} - ${g.end_str || ''})`}</span>
+            </span>
+          `;
+        } else {
+          const gapSyncArg = (g.start_epoch !== undefined && g.end_epoch !== undefined)
+            ? `{start_epoch: ${g.start_epoch}, end_epoch: ${g.end_epoch}}`
+            : `'${g.start_time}'`;
+          html += `
+            <button onclick="syncChartToGap(${gapSyncArg})" class="px-2 py-0.5 rounded text-[10px] font-mono border ${gapColor} hover:bg-slate-850 flex items-center gap-1 transition-colors" title="Click to inspect on chart">
+              <span>⏱️</span>
+              <span>${g.description || `${g.duration}m gap (${g.start_str || ''} - ${g.end_str || ''})`}</span>
+            </button>
+          `;
+        }
       });
       html += `</div>`;
     }
@@ -298,12 +384,13 @@ function renderSpectrogramView(data, container) {
   }
 
   const days = data.days || [];
+  const latestDayDate = (days.length > 0 && days[days.length - 1].date) ? days[days.length - 1].date : '';
 
   let html = `
     <div class="space-y-2">
       <div class="flex items-center justify-between text-[11px] font-mono text-slate-400 pb-1 border-b border-slate-800/60">
         <span class="text-white font-bold">19-Symbol Spectrogram (${days.length} Days Monitored)</span>
-        <span class="text-slate-400 text-[10px]">Click any symbol row to inspect detail &amp; chart</span>
+        <span class="text-slate-400 text-[10px]">Click any specific day cell to open daily chart</span>
       </div>
 
       <!-- Day column headers across timeline -->
@@ -328,8 +415,12 @@ function renderSpectrogramView(data, container) {
                         sData.status === 'partial' ? 'bg-amber-500' : 'bg-rose-500';
     const covColor = cov >= 99.9 ? 'text-emerald-400' : (cov >= 95.0 ? 'text-amber-400' : 'text-rose-400');
 
+    const clickRowHandler = latestDayDate
+      ? `if (typeof openSymbolDayDetail === 'function') { openSymbolDayDetail('${sym}', '${latestDayDate}'); } else if (typeof window !== 'undefined' && typeof window.openSymbolDayDetail === 'function') { window.openSymbolDayDetail('${sym}', '${latestDayDate}'); } else { openSymbolDetail('${sym}'); }`
+      : `openSymbolDetail('${sym}')`;
+
     html += `
-      <div class="flex items-center gap-2 py-1 px-2 rounded bg-slate-900/60 hover:bg-slate-900 border border-slate-800/80 transition-colors cursor-pointer group" onclick="openSymbolDetail('${sym}')">
+      <div class="flex items-center gap-2 py-1 px-2 rounded bg-slate-900/60 hover:bg-slate-900 border border-slate-800/80 transition-colors cursor-pointer group" onclick="${clickRowHandler}">
         <span class="w-14 text-xs font-mono font-bold text-white flex items-center gap-1.5 group-hover:text-indigo-400 transition-colors">
           <span class="w-2 h-2 rounded-full ${statusColor}"></span>
           ${sym}
@@ -337,19 +428,21 @@ function renderSpectrogramView(data, container) {
         <span class="w-12 text-[10px] font-mono ${covColor} text-right">${cov}%</span>
 
         <!-- Spectrogram slim ribbon with day dividers -->
-        <div class="flex-1 h-3.5 bg-slate-950 rounded border border-slate-800/90 relative overflow-hidden flex" title="${sym}: ${cov}% coverage (${gaps.length} gaps) - Click to drill down">
+        <div class="flex-1 h-3.5 bg-slate-950 rounded border border-slate-800/90 relative overflow-hidden flex" title="${sym}: ${cov}% coverage (${gaps.length} gaps) - Click day to drill down">
     `;
 
     if (days.length > 0) {
       days.forEach((day, idx) => {
         const borderDivider = idx < days.length - 1 ? 'border-r border-slate-800' : '';
         const dayGaps = (day.gaps || []).filter(g => g.symbol === sym || (g.impacted_symbols && g.impacted_symbols.includes(sym)));
+        const clickDayHandler = `event.stopPropagation(); if (typeof openSymbolDayDetail === 'function') { openSymbolDayDetail('${sym}', '${day.date}'); } else if (typeof window !== 'undefined' && typeof window.openSymbolDayDetail === 'function') { window.openSymbolDayDetail('${sym}', '${day.date}'); } else { openSymbolDetail('${sym}'); }`;
+
         if (dayGaps.length === 0) {
-          html += `<div class="flex-1 h-full bg-emerald-500/80 hover:bg-emerald-400/90 ${borderDivider}"></div>`;
+          html += `<div onclick="${clickDayHandler}" class="flex-1 h-full bg-emerald-500/80 hover:bg-emerald-400/90 ${borderDivider} cursor-pointer" title="${sym} • ${day.day_name} (${day.date}): 100% - Click to view single-day detail"></div>`;
         } else {
           html += `
-            <div class="flex-1 h-full bg-emerald-500/70 hover:bg-emerald-400/80 relative ${borderDivider}">
-              <div class="absolute inset-y-0 bg-rose-500" style="left: 30%; width: 25%;" title="${dayGaps.length} gap(s)"></div>
+            <div onclick="${clickDayHandler}" class="flex-1 h-full bg-emerald-500/70 hover:bg-emerald-400/80 relative ${borderDivider} cursor-pointer" title="${sym} • ${day.day_name} (${day.date}): ${dayGaps.length} gap(s) - Click to view single-day detail">
+              <div class="absolute inset-y-0 bg-rose-500" style="left: 30%; width: 25%;"></div>
             </div>
           `;
         }
@@ -366,7 +459,7 @@ function renderSpectrogramView(data, container) {
 
     html += `
         </div>
-        <button onclick="event.stopPropagation(); openSymbolDetail('${sym}')" class="px-1.5 py-0.5 text-[9px] font-mono bg-indigo-950 hover:bg-indigo-900 text-indigo-300 rounded border border-indigo-800 transition-colors">
+        <button onclick="${clickRowHandler}" class="px-1.5 py-0.5 text-[9px] font-mono bg-indigo-950 hover:bg-indigo-900 text-indigo-300 rounded border border-indigo-800 transition-colors">
           Detail →
         </button>
       </div>
@@ -476,24 +569,32 @@ function syncChartToGap(timestamp, epoch) {
 // Expose functions globally on window and global
 if (typeof window !== 'undefined') {
   window.loadStreamingContinuity = loadStreamingContinuity;
+  window.handleWeekChange = handleWeekChange;
+  window.populateWeekSelect = populateWeekSelect;
   window.renderContinuityRibbons = renderContinuityRibbons;
   window.renderMasterPulseView = renderMasterPulseView;
   window.renderSpectrogramView = renderSpectrogramView;
   window.toggleContinuityView = toggleContinuityView;
   window.syncChartToGap = syncChartToGap;
   window.currentContinuityView = currentContinuityView;
+  window.currentContinuityWeekStart = currentContinuityWeekStart;
+  window.currentContinuityDayDate = currentContinuityDayDate;
   window.cachedContinuityData = cachedContinuityData;
   window.cachedAllContinuityData = cachedAllContinuityData;
   window.cachedSymbolContinuityData = cachedSymbolContinuityData;
 }
 if (typeof global !== 'undefined') {
   global.loadStreamingContinuity = loadStreamingContinuity;
+  global.handleWeekChange = handleWeekChange;
+  global.populateWeekSelect = populateWeekSelect;
   global.renderContinuityRibbons = renderContinuityRibbons;
   global.renderMasterPulseView = renderMasterPulseView;
   global.renderSpectrogramView = renderSpectrogramView;
   global.toggleContinuityView = toggleContinuityView;
   global.syncChartToGap = syncChartToGap;
   global.currentContinuityView = currentContinuityView;
+  global.currentContinuityWeekStart = currentContinuityWeekStart;
+  global.currentContinuityDayDate = currentContinuityDayDate;
   global.cachedContinuityData = cachedContinuityData;
   global.cachedAllContinuityData = cachedAllContinuityData;
   global.cachedSymbolContinuityData = cachedSymbolContinuityData;

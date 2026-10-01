@@ -517,8 +517,15 @@
                   </span>
                   <span class="text-[11px] text-slate-400 font-mono">09:30–16:00 ET (Click any symbol row to inspect detail &amp; chart)</span>
                 </div>
-                <div id="continuity-incident-summary" class="text-xs font-mono px-3 py-1 bg-slate-950 border border-slate-800 rounded-lg text-emerald-400 flex items-center gap-1.5">
-                  <span>🟢 All symbols streaming continuously</span>
+                <div class="flex items-center gap-3">
+                  <div class="flex items-center gap-1.5">
+                    <label for="continuity-week-select" class="text-[11px] text-slate-400 font-mono font-semibold">Week:</label>
+                    <select id="continuity-week-select" onchange="handleWeekChange(this.value)" class="bg-slate-950 border border-slate-700 hover:border-indigo-500 rounded-lg px-2.5 py-1 text-xs font-mono text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors">
+                    </select>
+                  </div>
+                  <div id="continuity-incident-summary" class="text-xs font-mono px-3 py-1 bg-slate-950 border border-slate-800 rounded-lg text-emerald-400 flex items-center gap-1.5">
+                    <span>🟢 All symbols streaming continuously</span>
+                  </div>
                 </div>
               </div>
 

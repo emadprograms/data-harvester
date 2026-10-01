@@ -9,7 +9,7 @@ Provides high-performance DuckDB query execution for:
 import os
 import time
 import collections
-from datetime import datetime, timezone, timedelta, time as dtime
+from datetime import datetime, date, timezone, timedelta, time as dtime
 from zoneinfo import ZoneInfo
 import psutil
 from pandas.tseries.holiday import USFederalHolidayCalendar
@@ -243,12 +243,14 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
         client.close()
 
 
-def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000) -> dict:
+def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, client=None, date: str = None, hours: str = "extended") -> dict:
     """
     Fetches OHLCV candles resampled on-the-fly exclusively from raw ticks in data/streaming.duckdb.
     Zero dependency on historical.duckdb.
     Buckets are aligned to the NYSE clock (America/New_York) and follow the same timestamp
     contract as get_historical_candles(): UTC epoch in `time`, exchange-local label in `time_str`.
+    Supports single-day filtering via `date` ("YYYY-MM-DD") and `hours` ("extended" or "regular"),
+    returning session_start_epoch and session_end_epoch.
     """
     symbol = (symbol or "").strip().upper()
     if not symbol:
@@ -269,8 +271,15 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
     }
     interval_str = interval_map.get(timeframe, "1 minute")
     limit = min(max(1, int(limit or 1000)), 10000)
+    if date:
+        limit = max(limit, 2000)
 
-    s_client = get_streaming_db_connection(read_only=True)
+    own_client = False
+    s_client = client
+    if s_client is None:
+        s_client = get_streaming_db_connection(read_only=True)
+        own_client = True
+
     if not s_client:
         return {"error": "Streaming DuckDB unavailable", "candles": [], "count": 0, "database": "streaming"}
 
@@ -283,12 +292,35 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
         where_clauses = ["symbol = ?"]
         params = [symbol]
 
-        if start:
+        session_start_epoch = None
+        session_end_epoch = None
+
+        if date:
+            d_parts = date.strip().split("-")
+            d_obj = datetime(int(d_parts[0]), int(d_parts[1]), int(d_parts[2])).date()
+            if str(hours).lower() == "regular":
+                s_dt = datetime(d_obj.year, d_obj.month, d_obj.day, 9, 30, 0, tzinfo=ET)
+                e_dt = datetime(d_obj.year, d_obj.month, d_obj.day, 16, 0, 0, tzinfo=ET)
+            else:
+                s_dt = datetime(d_obj.year, d_obj.month, d_obj.day, 4, 0, 0, tzinfo=ET)
+                e_dt = datetime(d_obj.year, d_obj.month, d_obj.day, 20, 0, 0, tzinfo=ET)
+            session_start_epoch = int(s_dt.timestamp())
+            session_end_epoch = int(e_dt.timestamp())
+
+            s_dt_utc = s_dt.astimezone(timezone.utc)
+            e_dt_utc = e_dt.astimezone(timezone.utc)
+
             where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", ">="))
-            params.append(start.strip())
-        if end:
-            where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", "<="))
-            params.append(end.strip())
+            params.append(s_dt_utc.strftime("%Y-%m-%d %H:%M:%S"))
+            where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", "<"))
+            params.append(e_dt_utc.strftime("%Y-%m-%d %H:%M:%S"))
+        else:
+            if start:
+                where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", ">="))
+                params.append(start.strip())
+            if end:
+                where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", "<="))
+                params.append(end.strip())
 
         where_sql = " AND ".join(where_clauses)
 
@@ -334,7 +366,7 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
                 "tick_count": int(r[9]) if len(r) > 9 and r[9] is not None else 0
             })
 
-        return {
+        resp = {
             "symbol": symbol,
             "timeframe": timeframe,
             "database": "streaming",
@@ -344,20 +376,27 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
             "count": len(candles),
             "candles": candles
         }
+        if session_start_epoch is not None:
+            resp["session_start_epoch"] = session_start_epoch
+            resp["session_end_epoch"] = session_end_epoch
+            resp["date"] = date
+            resp["hours"] = hours
+        return resp
     except Exception as e:
         return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "streaming", "timezone": EXCHANGE_TZ}
     finally:
-        s_client.close()
+        if own_client and s_client:
+            s_client.close()
 
 
-def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, db_source: str = "historical") -> dict:
+def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, db_source: str = "historical", date: str = None, hours: str = "extended") -> dict:
     """
     Unified entry point routing to either the canonical historical archive or the live streaming buffer.
     Never blends both databases silently.
     """
     db_source = (db_source or "historical").lower().strip()
     if db_source in ["streaming", "live", "stream", "ticks"]:
-        return get_streaming_candles(symbol, timeframe=timeframe, start=start, end=end, limit=limit)
+        return get_streaming_candles(symbol, timeframe=timeframe, start=start, end=end, limit=limit, date=date, hours=hours)
     return get_historical_candles(symbol, timeframe=timeframe, start=start, end=end, limit=limit)
 
 
@@ -804,14 +843,109 @@ MONITORED_19_SYMBOLS = [
     "QCOM", "SHOP", "TSLA", "TSM"
 ]
 
+_AVAILABLE_WEEKS_CACHE = {"timestamp": 0.0, "weeks": []}
 
-def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client=None, include_extended: bool = False) -> dict:
+
+def discover_available_weeks(client=None) -> list[dict]:
+    """
+    Discovers available trading weeks from streaming DuckDB (tick_data or ticks table)
+    grouped Monday-to-Friday in exchange-local time (America/New_York).
+    Returns list of dicts:
+      [
+        {
+          "week_start": "YYYY-MM-DD",
+          "week_end": "YYYY-MM-DD",
+          "label": "Sep 28 – Oct 02, 2026 (Current)",
+          "is_current": True,
+          "trading_days_count": 3
+        },
+        ...
+      ]
+    sorted descending by week_start.
+    """
+    now = time.time()
+    if client is None and (_AVAILABLE_WEEKS_CACHE["weeks"] and (now - _AVAILABLE_WEEKS_CACHE["timestamp"] < 300)):
+        return _AVAILABLE_WEEKS_CACHE["weeks"]
+
+    own_client = False
+    if client is None:
+        client = get_streaming_db_connection(read_only=True)
+        own_client = True
+
+    try:
+        if not client:
+            return []
+
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        table_name = "tick_data" if "tick_data" in tables else ("ticks" if "ticks" in tables else None)
+        if not table_name:
+            return []
+
+        query = f"""
+            SELECT DISTINCT CAST(timestamp AS DATE) as d
+            FROM {table_name}
+            ORDER BY d ASC
+        """
+        rows = client.execute(query).fetchall()
+        if not rows:
+            return []
+
+        week_days_map = collections.defaultdict(set)
+        for r in rows:
+            d = r[0]
+            if isinstance(d, datetime):
+                d = d.date()
+            if d and d.weekday() < 5:
+                monday = d - timedelta(days=d.weekday())
+                mon_str = monday.strftime("%Y-%m-%d")
+                week_days_map[mon_str].add(d)
+
+        if not week_days_map:
+            return []
+
+        sorted_mondays = sorted(week_days_map.keys(), reverse=True)
+        weeks = []
+        for i, mon_str in enumerate(sorted_mondays):
+            is_current = (i == 0)
+            mon_date = datetime.strptime(mon_str, "%Y-%m-%d").date()
+            fri_date = mon_date + timedelta(days=4)
+            fri_str = fri_date.strftime("%Y-%m-%d")
+
+            mon_lbl = mon_date.strftime("%b %d")
+            fri_lbl = fri_date.strftime("%b %d, %Y")
+            label = f"{mon_lbl} – {fri_lbl}" + (" (Current)" if is_current else "")
+
+            weeks.append({
+                "week_start": mon_str,
+                "week_end": fri_str,
+                "label": label,
+                "is_current": is_current,
+                "trading_days_count": len(week_days_map[mon_str])
+            })
+
+        if own_client:
+            _AVAILABLE_WEEKS_CACHE["timestamp"] = now
+            _AVAILABLE_WEEKS_CACHE["weeks"] = weeks
+
+        return weeks
+    except Exception:
+        return []
+    finally:
+        if own_client and client:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
+def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client=None, include_extended: bool = False, week_start: str = None, target_date: str = None) -> dict:
     """
     Bird's Eye View Data Continuity & Integrity Visualizer Analysis Engine.
     Exclusively queries streaming.duckdb (tick_data / ticks table). Zero access to historical.duckdb.
 
     Evaluates regular market session hours (09:30 to 16:00 ET, 390 min) or extended hours
-    (04:00 to 20:00 ET, 960 min) across the last N trading days (Mon-Fri, excluding holidays and weekends).
+    (04:00 to 20:00 ET, 960 min) across trading days (Mon-Fri, excluding holidays and weekends).
+    Supports week_start filtering ("YYYY-MM-DD") and single-day target_date filtering ("YYYY-MM-DD").
     Non-market hours (overnight 20:00 to 04:00 ET and weekends) never trigger false gap alerts.
 
     Returns:
@@ -820,6 +954,8 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
       - 19-symbol spectrogram breakdown when symbol == 'all'.
       - Single-symbol continuity tracking when symbol != 'all'.
       - "extended_hours": bool indicating active window mode.
+      - "available_weeks": list of discovered trading weeks.
+      - "week_start": active week start date.
     """
     try:
         days = max(1, int(days or 5))
@@ -837,6 +973,9 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
         own_client = True
 
     try:
+        available_weeks = discover_available_weeks(client=client)
+        active_week_start = week_start or (available_weeks[0]["week_start"] if available_weeks else None)
+
         if not client:
             return {
                 "database": "streaming",
@@ -850,6 +989,9 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 "spectrogram": {},
                 "symbols_breakdown": {},
                 "symbols": {},
+                "available_weeks": available_weeks,
+                "week_start": active_week_start,
+                "target_date": target_date,
             }
 
         # Resolve monitored symbols inventory from streaming_database_symbols
@@ -888,6 +1030,9 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 "spectrogram": {},
                 "symbols_breakdown": {},
                 "symbols": {},
+                "available_weeks": available_weeks,
+                "week_start": active_week_start,
+                "target_date": target_date,
             }
 
         count_row = client.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
@@ -905,6 +1050,9 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 "spectrogram": empty_spec if is_all else {},
                 "symbols_breakdown": empty_spec if is_all else {},
                 "symbols": empty_spec if is_all else {},
+                "available_weeks": available_weeks,
+                "week_start": active_week_start,
+                "target_date": target_date,
             }
 
         # Timezone conversion SQL for exchange-local time
@@ -915,91 +1063,137 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
         start_time_sql = "04:00:00" if include_extended else "09:30:00"
         end_time_sql = "20:00:00" if include_extended else "16:00:00"
 
-        # Fast path: query MAX(timestamp) and look back enough days to find target trading days
-        max_ts_row = client.execute(f"SELECT MAX(timestamp) FROM {table_name}").fetchone()
-        if not max_ts_row or not max_ts_row[0]:
-            return {
-                "database": "streaming",
-                "view_mode": view_mode,
-                "symbol": symbol,
-                "monitored_symbols_count": monitored_count,
-                "extended_hours": include_extended,
-                "hours": "extended" if include_extended else "regular",
-                "days": [],
-                "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
-                "spectrogram": {},
-                "symbols_breakdown": {},
-                "symbols": {},
-            }
-
-        max_ts_val = max_ts_row[0]
-        if isinstance(max_ts_val, str):
-            max_ts_val = datetime.strptime(max_ts_val.split('.')[0], "%Y-%m-%d %H:%M:%S")
-
-        lookback_days = max(30, days * 4)
-        cutoff_dt = max_ts_val - timedelta(days=lookback_days)
-        cutoff_str = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-        dates_res = client.execute(f"""
-            SELECT DISTINCT CAST({local_ts_sql} AS DATE) as d
-            FROM {table_name}
-            WHERE {build_timestamp_range_clause(ts_type, 'timestamp', '>=')}
-              AND CAST({local_ts_sql} AS TIME) >= TIME '{start_time_sql}'
-              AND CAST({local_ts_sql} AS TIME) <= TIME '{end_time_sql}'
-            ORDER BY d ASC
-        """, [cutoff_str]).fetchall()
-
         cal = USFederalHolidayCalendar()
         holidays = set(cal.holidays(start="2020-01-01", end="2035-01-01").date)
 
-        trading_dates = []
-        for r in dates_res:
-            d = r[0]
-            if isinstance(d, datetime):
-                d = d.date()
-            if d and d.weekday() < 5 and d not in holidays:
-                trading_dates.append(d)
+        if target_date:
+            t_parts = target_date.strip().split("-")
+            t_date = date(int(t_parts[0]), int(t_parts[1]), int(t_parts[2]))
+            target_dates = [t_date]
+            active_week_start = (t_date - timedelta(days=t_date.weekday())).strftime("%Y-%m-%d")
+        elif week_start:
+            ws_parts = week_start.strip().split("-")
+            ws_date = date(int(ws_parts[0]), int(ws_parts[1]), int(ws_parts[2]))
+            mon = ws_date - timedelta(days=ws_date.weekday())
+            fri = mon + timedelta(days=4)
+            active_week_start = mon.strftime("%Y-%m-%d")
 
-        # Fallback if fewer than `days` trading dates found in pruned window
-        if len(trading_dates) < days:
-            dates_res_full = client.execute(f"""
+            mon_str = mon.strftime("%Y-%m-%d")
+            fri_str = fri.strftime("%Y-%m-%d")
+            mon_utc = datetime(mon.year, mon.month, mon.day, 0, 0, 0, tzinfo=ET).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+            fri_utc = datetime(fri.year, fri.month, fri.day, 23, 59, 59, tzinfo=ET).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+            dates_res_week = client.execute(f"""
                 SELECT DISTINCT CAST({local_ts_sql} AS DATE) as d
                 FROM {table_name}
-                WHERE CAST({local_ts_sql} AS TIME) >= TIME '{start_time_sql}'
+                WHERE {build_timestamp_range_clause(ts_type, 'timestamp', '>=')}
+                  AND {build_timestamp_range_clause(ts_type, 'timestamp', '<=')}
+                  AND CAST({local_ts_sql} AS DATE) >= ?::DATE
+                  AND CAST({local_ts_sql} AS DATE) <= ?::DATE
+                  AND CAST({local_ts_sql} AS TIME) >= TIME '{start_time_sql}'
                   AND CAST({local_ts_sql} AS TIME) <= TIME '{end_time_sql}'
                 ORDER BY d ASC
-            """).fetchall()
+            """, [mon_utc, fri_utc, mon_str, fri_str]).fetchall()
+            target_dates = []
+            for r in dates_res_week:
+                d = r[0]
+                if isinstance(d, datetime):
+                    d = d.date()
+                if d and d.weekday() < 5 and d not in holidays:
+                    target_dates.append(d)
+            if not target_dates:
+                target_dates = [mon + timedelta(days=i) for i in range(5) if (mon + timedelta(days=i)) not in holidays]
+        else:
+            max_ts_row = client.execute(f"SELECT MAX(timestamp) FROM {table_name}").fetchone()
+            if not max_ts_row or not max_ts_row[0]:
+                return {
+                    "database": "streaming",
+                    "view_mode": view_mode,
+                    "symbol": symbol,
+                    "monitored_symbols_count": monitored_count,
+                    "extended_hours": include_extended,
+                    "hours": "extended" if include_extended else "regular",
+                    "days": [],
+                    "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
+                    "spectrogram": {},
+                    "symbols_breakdown": {},
+                    "symbols": {},
+                    "available_weeks": available_weeks,
+                    "week_start": active_week_start,
+                    "target_date": target_date,
+                }
+
+            max_ts_val = max_ts_row[0]
+            if isinstance(max_ts_val, str):
+                max_ts_val = datetime.strptime(max_ts_val.split('.')[0], "%Y-%m-%d %H:%M:%S")
+
+            lookback_days = max(30, days * 4)
+            cutoff_dt = max_ts_val - timedelta(days=lookback_days)
+            cutoff_str = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+            dates_res = client.execute(f"""
+                SELECT DISTINCT CAST({local_ts_sql} AS DATE) as d
+                FROM {table_name}
+                WHERE {build_timestamp_range_clause(ts_type, 'timestamp', '>=')}
+                  AND CAST({local_ts_sql} AS TIME) >= TIME '{start_time_sql}'
+                  AND CAST({local_ts_sql} AS TIME) <= TIME '{end_time_sql}'
+                ORDER BY d ASC
+            """, [cutoff_str]).fetchall()
+
             trading_dates = []
-            for r in dates_res_full:
+            for r in dates_res:
                 d = r[0]
                 if isinstance(d, datetime):
                     d = d.date()
                 if d and d.weekday() < 5 and d not in holidays:
                     trading_dates.append(d)
 
-        if not trading_dates:
-            return {
-                "database": "streaming",
-                "view_mode": view_mode,
-                "symbol": symbol,
-                "monitored_symbols_count": monitored_count,
-                "extended_hours": include_extended,
-                "hours": "extended" if include_extended else "regular",
-                "days": [],
-                "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
-                "spectrogram": {},
-                "symbols_breakdown": {},
-                "symbols": {},
-            }
+            # Fallback if fewer than `days` trading dates found in pruned window
+            if len(trading_dates) < days:
+                dates_res_full = client.execute(f"""
+                    SELECT DISTINCT CAST({local_ts_sql} AS DATE) as d
+                    FROM {table_name}
+                    WHERE CAST({local_ts_sql} AS TIME) >= TIME '{start_time_sql}'
+                      AND CAST({local_ts_sql} AS TIME) <= TIME '{end_time_sql}'
+                    ORDER BY d ASC
+                """).fetchall()
+                trading_dates = []
+                for r in dates_res_full:
+                    d = r[0]
+                    if isinstance(d, datetime):
+                        d = d.date()
+                    if d and d.weekday() < 5 and d not in holidays:
+                        trading_dates.append(d)
 
-        target_dates = trading_dates[-days:]
+            if not trading_dates:
+                return {
+                    "database": "streaming",
+                    "view_mode": view_mode,
+                    "symbol": symbol,
+                    "monitored_symbols_count": monitored_count,
+                    "extended_hours": include_extended,
+                    "hours": "extended" if include_extended else "regular",
+                    "days": [],
+                    "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
+                    "spectrogram": {},
+                    "symbols_breakdown": {},
+                    "symbols": {},
+                    "available_weeks": available_weeks,
+                    "week_start": active_week_start,
+                    "target_date": target_date,
+                }
+
+            target_dates = trading_dates[-days:]
+            active_week_start = (target_dates[0] - timedelta(days=target_dates[0].weekday())).strftime("%Y-%m-%d") if target_dates else (available_weeks[0]["week_start"] if available_weeks else None)
 
         # Query 1-minute buckets across target dates
         min_date_str = target_dates[0].strftime("%Y-%m-%d")
         max_date_str = target_dates[-1].strftime("%Y-%m-%d")
 
+        min_utc_str = datetime(target_dates[0].year, target_dates[0].month, target_dates[0].day, 0, 0, 0, tzinfo=ET).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        max_utc_str = datetime(target_dates[-1].year, target_dates[-1].month, target_dates[-1].day, 23, 59, 59, tzinfo=ET).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
         sym_filter = ""
-        params = [min_date_str + " 00:00:00", min_date_str, max_date_str]
+        params = [min_utc_str, max_utc_str, min_date_str, max_date_str]
         if not is_all:
             sym_filter = "AND symbol = ?"
             params.append(symbol)
@@ -1015,6 +1209,7 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 count(*) as tick_count
             FROM {table_name}
             WHERE {build_timestamp_range_clause(ts_type, 'timestamp', '>=')}
+              AND {build_timestamp_range_clause(ts_type, 'timestamp', '<=')}
               AND CAST({local_ts_sql} AS DATE) >= ?::DATE
               AND CAST({local_ts_sql} AS DATE) <= ?::DATE
               AND CAST({local_ts_sql} AS TIME) >= TIME '{start_time_bucket}'
@@ -1282,6 +1477,9 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
             "spectrogram": spectrogram if is_all else {},
             "symbols_breakdown": spectrogram if is_all else {},
             "symbols": spectrogram if is_all else {},
+            "available_weeks": available_weeks,
+            "week_start": active_week_start,
+            "target_date": target_date,
         }
     finally:
         if own_client and client:

@@ -467,7 +467,7 @@ function resizeStreamingChart() {
   }
 }
 
-async function loadStreamingChart() {
+async function loadStreamingChart(targetDate = null) {
   const loading = document.getElementById('streaming-chart-loading');
   if (loading) loading.classList.remove('hidden');
 
@@ -482,7 +482,12 @@ async function loadStreamingChart() {
   if (typeof global !== 'undefined') global.currentStreamingLimit = currentStreamingLimit;
 
   try {
-    const res = await fetch(`${API_BASE}/api/streaming/candles?symbol=${encodeURIComponent(currentStreamingSymbol)}&tf=${currentStreamingTimeframe}&limit=${currentStreamingLimit}`);
+    let fetchUrl = `${API_BASE}/api/streaming/candles?symbol=${encodeURIComponent(currentStreamingSymbol)}&tf=${currentStreamingTimeframe}&limit=${currentStreamingLimit}`;
+    if (targetDate) {
+      fetchUrl += `&date=${encodeURIComponent(targetDate)}&hours=extended`;
+    }
+
+    const res = await fetch(fetchUrl);
     if (!res.ok) throw new Error("Failed to fetch streaming candle data");
     const data = await res.json();
 
@@ -490,19 +495,52 @@ async function loadStreamingChart() {
     streamingCandleTimeIndex = new Map(loadedStreamingCandles.map(c => [c.time, c]));
 
     if (streamingCandleSeries && streamingVolumeSeries && tvStreamingChart) {
-      const chartCandles = loadedStreamingCandles.map(c => ({
-        time: c.time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close
-      }));
+      let chartCandles = [];
+      let chartVolumes = [];
 
-      const chartVolumes = loadedStreamingCandles.map(c => ({
-        time: c.time,
-        value: c.volume || 0,
-        color: (c.close >= c.open) ? 'rgba(99, 102, 241, 0.4)' : 'rgba(244, 63, 94, 0.4)'
-      }));
+      const startEpoch = data.session_start_epoch;
+      const endEpoch = data.session_end_epoch;
+
+      if (targetDate && typeof startEpoch === 'number' && typeof endEpoch === 'number' && endEpoch > startEpoch) {
+        // Single-day drilldown: generate Lightweight Charts whitespace items for missing minutes
+        const candleMap = new Map();
+        loadedStreamingCandles.forEach(c => candleMap.set(c.time, c));
+
+        for (let t = startEpoch; t < endEpoch; t += 60) {
+          if (candleMap.has(t)) {
+            const c = candleMap.get(t);
+            chartCandles.push({
+              time: t,
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close
+            });
+            chartVolumes.push({
+              time: t,
+              value: c.volume || 0,
+              color: (c.close >= c.open) ? 'rgba(99, 102, 241, 0.4)' : 'rgba(244, 63, 94, 0.4)'
+            });
+          } else {
+            // Whitespace item ({ time: t } without OHLC) renders physical empty gap on time axis
+            chartCandles.push({ time: t });
+          }
+        }
+      } else {
+        chartCandles = loadedStreamingCandles.map(c => ({
+          time: c.time,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close
+        }));
+
+        chartVolumes = loadedStreamingCandles.map(c => ({
+          time: c.time,
+          value: c.volume || 0,
+          color: (c.close >= c.open) ? 'rgba(99, 102, 241, 0.4)' : 'rgba(244, 63, 94, 0.4)'
+        }));
+      }
 
       streamingCandleSeries.setData(chartCandles);
       streamingVolumeSeries.setData(chartVolumes);
@@ -513,7 +551,7 @@ async function loadStreamingChart() {
       }
     }
 
-    if (typeof loadStreamingContinuity === 'function') {
+    if (typeof loadStreamingContinuity === 'function' && !targetDate) {
       const isSpectrum = (typeof currentContinuityView !== 'undefined' && currentContinuityView === 'spectrum') ||
                          (typeof window !== 'undefined' && window.currentContinuityView === 'spectrum');
       const allCached = (typeof cachedAllContinuityData !== 'undefined' && cachedAllContinuityData) ||
@@ -652,9 +690,60 @@ function openSymbolDetail(symbol) {
 }
 
 /**
+ * Day-Specific Drill-Down: Opens single-day detail view and single-day chart for that symbol and date.
+ * Hides spectrum view, shows detail view and chart card, and triggers single-day data loads.
+ * @param {string} symbol - Ticker symbol (e.g. 'NVDA')
+ * @param {string} date - Session date string 'YYYY-MM-DD'
+ */
+function openSymbolDayDetail(symbol, date) {
+  if (!symbol) return;
+  currentStreamingSymbol = symbol.toUpperCase();
+  currentContinuityDayDate = date || null;
+  if (typeof window !== 'undefined') {
+    window.currentStreamingSymbol = currentStreamingSymbol;
+    window.currentContinuityDayDate = currentContinuityDayDate;
+  }
+  if (typeof global !== 'undefined') {
+    global.currentStreamingSymbol = currentStreamingSymbol;
+    global.currentContinuityDayDate = currentContinuityDayDate;
+  }
+
+  const select = document.getElementById('streaming-symbol-select');
+  if (select) select.value = currentStreamingSymbol;
+
+  const specEl = document.getElementById('streaming-spectrum-view');
+  if (specEl) specEl.classList.add('hidden');
+
+  const detailEl = document.getElementById('streaming-detail-view');
+  if (detailEl) detailEl.classList.remove('hidden');
+
+  const chartCardEl = document.getElementById('streaming-chart-card');
+  if (chartCardEl) chartCardEl.classList.remove('hidden');
+
+  const titleEl = document.getElementById('streaming-detail-symbol-title');
+  if (titleEl) {
+    titleEl.innerText = `${currentStreamingSymbol} • ${date || 'Session'} - Daily Continuity & Candlestick Chart`;
+  }
+
+  if (typeof loadStreamingContinuity === 'function') {
+    loadStreamingContinuity(currentStreamingSymbol, 1, true, null, date);
+  }
+  if (typeof loadStreamingChart === 'function') {
+    loadStreamingChart(date);
+  }
+  if (typeof resizeStreamingChart === 'function') {
+    resizeStreamingChart();
+  }
+}
+
+/**
  * Redesign: Closes single-symbol detail view and returns to 19-symbol spectrum view.
  */
 function closeSymbolDetail() {
+  currentContinuityDayDate = null;
+  if (typeof window !== 'undefined') window.currentContinuityDayDate = null;
+  if (typeof global !== 'undefined') global.currentContinuityDayDate = null;
+
   const specEl = document.getElementById('streaming-spectrum-view');
   if (specEl) specEl.classList.remove('hidden');
 
@@ -665,13 +754,16 @@ function closeSymbolDetail() {
   if (chartCardEl) chartCardEl.classList.add('hidden');
 
   if (typeof loadStreamingContinuity === 'function') {
-    loadStreamingContinuity('all', 5, false);
+    const weekStart = (typeof currentContinuityWeekStart !== 'undefined' && currentContinuityWeekStart) ||
+                      (typeof window !== 'undefined' && window.currentContinuityWeekStart);
+    loadStreamingContinuity('all', 5, false, weekStart, null);
   }
 }
 
 // Global window and environment exports
 if (typeof window !== 'undefined') {
   window.openSymbolDetail = openSymbolDetail;
+  window.openSymbolDayDetail = openSymbolDayDetail;
   window.closeSymbolDetail = closeSymbolDetail;
   window.initStreamingChart = initStreamingChart;
   window.loadStreamingChart = loadStreamingChart;
@@ -679,6 +771,7 @@ if (typeof window !== 'undefined') {
 }
 if (typeof global !== 'undefined') {
   global.openSymbolDetail = openSymbolDetail;
+  global.openSymbolDayDetail = openSymbolDayDetail;
   global.closeSymbolDetail = closeSymbolDetail;
   global.initStreamingChart = initStreamingChart;
   global.loadStreamingChart = loadStreamingChart;
