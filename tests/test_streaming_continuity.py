@@ -43,12 +43,16 @@ Coverage:
    - Chart update triggers continuity refresh
 """
 import glob
+import json
 import os
 import re
+import shutil
 import socket
+import subprocess
 import threading
 import time
 from datetime import datetime, date, time as dtime, timedelta
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 from zoneinfo import ZoneInfo
 
@@ -733,3 +737,252 @@ class TestFrontendJSContinuityLogic:
             "Either /static/js/continuity.js must be created and linked in index.html, "
             "or continuity functions must be defined within chart.js."
         )
+
+
+# ============================================================================
+# 5. Spectrum Toggle & View Mode Transitions Diagnosis Tests
+# ============================================================================
+
+def run_continuity_js_simulation(test_body_js: str, extra_setup_js: str = "") -> dict:
+    """
+    Executes a Node.js simulation of frontend continuity and chart logic,
+    evaluating the actual src/dashboard/static/js/continuity.js and chart.js files.
+    """
+    node_bin = shutil.which("node")
+    if not node_bin:
+        pytest.skip("Node.js is required to execute frontend JS state transition tests")
+
+    js_dir = Path(__file__).resolve().parent.parent / "src" / "dashboard" / "static" / "js"
+    continuity_js = (js_dir / "continuity.js").read_text(encoding="utf-8")
+    chart_js = (js_dir / "chart.js").read_text(encoding="utf-8")
+
+    script = f"""
+const elements = {{}};
+function mockElement(id) {{
+  return {{
+    id,
+    className: '',
+    innerHTML: '',
+    style: {{}},
+    value: '',
+    classList: {{ add: ()=>{{}}, remove: ()=>{{}}, contains: ()=>false }},
+    querySelectorAll: (sel) => []
+  }};
+}}
+global.document = {{
+  getElementById: (id) => elements[id] || (elements[id] = mockElement(id)),
+  querySelectorAll: (sel) => []
+}};
+global.window = global;
+global.fetchCalls = [];
+global.API_BASE = '';
+global.currentStreamingSymbol = 'AAPL';
+global.currentStreamingTimeframe = '1m';
+global.currentStreamingLimit = 500;
+global.tvStreamingChart = {{
+  timeScale: () => ({{ setVisibleRange: () => {{}}, fitContent: () => {{}} }}),
+  applyOptions: () => {{}},
+  subscribeCrosshairMove: () => {{}}
+}};
+global.streamingCandleSeries = {{ setData: () => {{}} }};
+global.streamingVolumeSeries = {{ setData: () => {{}} }};
+global.showToast = () => {{}};
+
+const monitoredSymbols = {json.dumps(MONITORED_19_SYMBOLS)};
+const sampleSpectrogram = {{}};
+monitoredSymbols.forEach(sym => {{
+  sampleSpectrogram[sym] = {{ coverage_pct: 100.0, gaps: [], status: 'healthy' }};
+}});
+
+global.fetch = async (url) => {{
+  fetchCalls.push(url);
+  if (url.includes('/api/streaming/candles')) {{
+    return {{ ok: true, json: async () => ({{ candles: [] }}) }};
+  }}
+  if (url.includes('symbol=all')) {{
+    return {{
+      ok: true,
+      json: async () => ({{
+        database: 'streaming',
+        view_mode: 'all',
+        symbol: 'all',
+        monitored_symbols_count: 19,
+        days: [{{ date: '2026-09-23', day_name: 'Wed', coverage_pct: 100, status: 'healthy', gaps: [] }}],
+        summary: {{ total_gaps: 0, total_outage_minutes: 0, average_coverage: 100 }},
+        spectrogram: sampleSpectrogram
+      }})
+    }};
+  }}
+  const match = url.match(/symbol=([^&]+)/);
+  const sym = match ? match[1] : 'NVDA';
+  return {{
+    ok: true,
+    json: async () => ({{
+      database: 'streaming',
+      view_mode: sym,
+      symbol: sym,
+      monitored_symbols_count: 1,
+      days: [{{ date: '2026-09-23', day_name: 'Wed', coverage_pct: 100, status: 'healthy', gaps: [] }}],
+      summary: {{ total_gaps: 0, total_outage_minutes: 0, average_coverage: 100 }},
+      spectrogram: {{}}
+    }})
+  }};
+}};
+
+{extra_setup_js}
+
+{continuity_js}
+
+{chart_js}
+
+(async () => {{
+  {test_body_js}
+}})().then(res => {{
+  console.log(JSON.stringify(res));
+}}).catch(err => {{
+  console.error(err);
+  process.exit(1);
+}});
+"""
+    res = subprocess.run([node_bin, "-e", script], capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"JS simulation failed (code {res.returncode}):\n{res.stderr}")
+    return json.loads(res.stdout.strip())
+
+
+class TestSpectrumToggleDiagnosis:
+    """
+    Automated regression tests reproducing and guarding the 19-Symbol Spectrum toggle bug:
+    - When single symbol (e.g. NVDA) is active, clicking 19-Symbol Spectrum must fetch/load all symbols
+      and render the spectrogram instead of falling back to Master Pulse.
+    - renderContinuityRibbons must render the spectrogram in 'spectrum' mode even if currentContinuitySymbol != 'all'.
+    - Changing chart symbol in spectrum mode must preserve 'spectrum' view mode and not eject user.
+    - Spectrogram rendering must produce rows for all 19 monitored symbols.
+    """
+
+    def test_toggle_continuity_view_fetches_all_symbols_when_single_symbol_active(self):
+        """
+        Verifies that toggleContinuityView('spectrum') ensures symbol='all' continuity data is loaded/rendered,
+        and does NOT reuse single-symbol cached data that lacks the 19-symbol breakdown.
+        """
+        result = run_continuity_js_simulation("""
+        await loadStreamingContinuity('NVDA');
+        fetchCalls.length = 0;
+        toggleContinuityView('spectrum');
+        await new Promise(r => setTimeout(r, 60));
+        const ribbonHtml = elements['continuity-ribbon-view'] ? elements['continuity-ribbon-view'].innerHTML : '';
+        return {
+          fetchCalls,
+          hasSpectrogram: ribbonHtml.includes('19-Symbol Spectrogram') || ribbonHtml.includes('Spectrogram'),
+          hasMasterPulse: ribbonHtml.includes('Healthy (Continuous)')
+        };
+        """)
+        has_all_fetch = any("symbol=all" in call for call in result["fetchCalls"])
+        assert has_all_fetch, (
+            f"toggleContinuityView('spectrum') must fetch symbol='all' continuity data when single-symbol data is active. "
+            f"Observed fetch calls: {result['fetchCalls']}"
+        )
+        assert result["hasSpectrogram"], (
+            "toggleContinuityView('spectrum') must render the 19-symbol spectrogram view, "
+            "not fall back to Master Pulse due to single-symbol cachedContinuityData."
+        )
+        assert not result["hasMasterPulse"], (
+            "toggleContinuityView('spectrum') erroneously rendered Master Pulse instead of 19-Symbol Spectrogram."
+        )
+
+    def test_render_continuity_ribbons_renders_spectrogram_in_spectrum_mode(self):
+        """
+        Verifies that when currentContinuityView === 'spectrum', renderContinuityRibbons renders
+        the spectrogram view and does NOT fall back to Master Pulse just because
+        currentContinuitySymbol was set to a single symbol.
+        """
+        result = run_continuity_js_simulation("""
+        currentContinuityView = 'spectrum';
+        currentContinuitySymbol = 'NVDA';
+        const payload = {
+          database: 'streaming',
+          view_mode: 'NVDA',
+          symbol: 'NVDA',
+          monitored_symbols_count: 1,
+          days: [{ date: '2026-09-23', day_name: 'Wed', coverage_pct: 100, status: 'healthy', gaps: [] }],
+          summary: { total_gaps: 0, total_outage_minutes: 0, average_coverage: 100 },
+          spectrogram: sampleSpectrogram
+        };
+        renderContinuityRibbons(payload);
+        const ribbonHtml = elements['continuity-ribbon-view'] ? elements['continuity-ribbon-view'].innerHTML : '';
+        return {
+          currentContinuityView,
+          currentContinuitySymbol,
+          hasSpectrogram: ribbonHtml.includes('19-Symbol Spectrogram') || ribbonHtml.includes('Spectrogram'),
+          hasMasterPulse: ribbonHtml.includes('Healthy (Continuous)')
+        };
+        """)
+        assert result["hasSpectrogram"], (
+            "renderContinuityRibbons must render the spectrogram view when currentContinuityView is 'spectrum', "
+            "even if currentContinuitySymbol was set to a single symbol (e.g. 'NVDA')."
+        )
+        assert not result["hasMasterPulse"], (
+            "renderContinuityRibbons fell back to Master Pulse in spectrum mode because currentContinuitySymbol != 'all'."
+        )
+
+    def test_chart_symbol_change_preserves_spectrum_view_mode(self):
+        """
+        Verifies that when in 'spectrum' mode, changing the chart symbol (handleStreamingSymbolChange)
+        does not clobber currentContinuityView or eject the user from the spectrogram view.
+        """
+        result = run_continuity_js_simulation("""
+        toggleContinuityView('spectrum');
+        await loadStreamingContinuity('all');
+        await new Promise(r => setTimeout(r, 60));
+        const beforeRibbonHtml = elements['continuity-ribbon-view'] ? elements['continuity-ribbon-view'].innerHTML : '';
+        const beforeHasSpectrogram = beforeRibbonHtml.includes('Spectrogram');
+
+        handleStreamingSymbolChange('NVDA');
+        await new Promise(r => setTimeout(r, 60));
+
+        const afterRibbonHtml = elements['continuity-ribbon-view'] ? elements['continuity-ribbon-view'].innerHTML : '';
+        return {
+          beforeHasSpectrogram,
+          currentContinuityView,
+          afterHasSpectrogram: afterRibbonHtml.includes('Spectrogram'),
+          afterHasMasterPulse: afterRibbonHtml.includes('Healthy (Continuous)')
+        };
+        """)
+        assert result["beforeHasSpectrogram"], "Pre-condition failed: Spectrogram view should be active before symbol change."
+        assert result["currentContinuityView"] == "spectrum", (
+            f"Changing chart symbol clobbered currentContinuityView to '{result['currentContinuityView']}', expected 'spectrum'."
+        )
+        assert result["afterHasSpectrogram"], (
+            "Changing the chart symbol (handleStreamingSymbolChange) must preserve the 19-Symbol Spectrogram view, "
+            "rather than ejecting the user back to Master Pulse."
+        )
+        assert not result["afterHasMasterPulse"], (
+            "Ribbon view was clobbered by Master Pulse after chart symbol change."
+        )
+
+    def test_spectrogram_contains_all_19_monitored_symbol_rows(self):
+        """
+        Verifies that the spectrogram rendering produces rows for all 19 monitored symbols.
+        """
+        result = run_continuity_js_simulation("""
+        await loadStreamingContinuity('NVDA');
+        toggleContinuityView('spectrum');
+        await new Promise(r => setTimeout(r, 60));
+        const ribbonHtml = elements['continuity-ribbon-view'] ? elements['continuity-ribbon-view'].innerHTML : '';
+        const present = monitoredSymbols.filter(sym => ribbonHtml.includes(sym));
+        const missing = monitoredSymbols.filter(sym => !ribbonHtml.includes(sym));
+        return {
+          renderedCount: present.length,
+          present,
+          missing
+        };
+        """)
+        missing_symbols = result["missing"]
+        assert len(missing_symbols) == 0, (
+            f"Spectrogram view failed to render all 19 monitored symbols after toggle. "
+            f"Missing {len(missing_symbols)}/{len(MONITORED_19_SYMBOLS)} symbols: {missing_symbols}."
+        )
+        assert result["renderedCount"] == 19, (
+            f"Expected 19 symbol rows in spectrogram, got {result['renderedCount']}."
+        )
+

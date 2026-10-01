@@ -14,8 +14,24 @@
 
 let currentContinuityView = 'master'; // 'master' or 'spectrum'
 let cachedContinuityData = null;
+let cachedAllContinuityData = null;
+let cachedSymbolContinuityData = null;
 let currentContinuitySymbol = 'all';
 let currentContinuityDays = 5;
+
+// Expose state globally on window
+if (typeof window !== 'undefined') {
+  window.currentContinuityView = currentContinuityView;
+  window.cachedContinuityData = cachedContinuityData;
+  window.cachedAllContinuityData = cachedAllContinuityData;
+  window.cachedSymbolContinuityData = cachedSymbolContinuityData;
+}
+
+function hasSpectrogramData(d) {
+  if (!d) return false;
+  const spec = d.spectrogram || d.symbols_breakdown || d.symbols;
+  return !!(spec && typeof spec === 'object' && Object.keys(spec).length > 0);
+}
 
 /**
  * Loads streaming continuity analysis data from REST API.
@@ -44,6 +60,20 @@ async function loadStreamingContinuity(symbol, days) {
 
     const data = await res.json();
     cachedContinuityData = data;
+
+    if (data.view_mode === 'all' || hasSpectrogramData(data)) {
+      cachedAllContinuityData = data;
+    } else {
+      cachedSymbolContinuityData = data;
+    }
+
+    if (typeof window !== 'undefined') {
+      window.cachedContinuityData = cachedContinuityData;
+      window.cachedAllContinuityData = cachedAllContinuityData;
+      window.cachedSymbolContinuityData = cachedSymbolContinuityData;
+      window.currentContinuityView = currentContinuityView;
+    }
+
     renderContinuityRibbons(data);
   } catch (err) {
     console.error("[Continuity] Failed to load continuity analysis:", err);
@@ -64,9 +94,19 @@ function renderContinuityRibbons(data) {
   const summaryBadge = document.getElementById('continuity-incident-summary');
   if (!ribbonView) return;
 
-  const summary = data.summary || { total_gaps: 0, total_outage_minutes: 0, average_coverage: 100.0 };
-  const days = data.days || [];
-  const isAll = (data.view_mode === 'all' || currentContinuitySymbol === 'all');
+  const isSpectrum = (currentContinuityView === 'spectrum') ||
+                     (typeof window !== 'undefined' && window.currentContinuityView === 'spectrum');
+
+  const dataHasSpectrogram = hasSpectrogramData(data);
+  const cachedAllHasSpectrogram = hasSpectrogramData(cachedAllContinuityData);
+
+  const displayData = (isSpectrum && !dataHasSpectrogram && cachedAllHasSpectrogram)
+    ? cachedAllContinuityData
+    : data;
+
+  const summary = displayData.summary || { total_gaps: 0, total_outage_minutes: 0, average_coverage: 100.0 };
+  const days = displayData.days || [];
+  const isAll = (displayData.view_mode === 'all' || currentContinuitySymbol === 'all' || isSpectrum);
 
   // 1. Update Incident Summary Badge
   if (summaryBadge) {
@@ -75,7 +115,7 @@ function renderContinuityRibbons(data) {
       summaryBadge.innerHTML = `<span>ℹ️ No trading session ticks recorded</span>`;
     } else if (summary.total_gaps === 0) {
       summaryBadge.className = "text-xs font-mono px-3 py-1 bg-slate-950 border border-emerald-800/60 rounded-lg text-emerald-400 flex items-center gap-1.5";
-      const symLabel = isAll ? "All 19 symbols" : data.symbol;
+      const symLabel = isAll ? "All 19 symbols" : (displayData.symbol || currentContinuitySymbol);
       summaryBadge.innerHTML = `<span>🟢 ${symLabel} streamed without interruption (100% coverage)</span>`;
     } else {
       const isRed = summary.total_outage_minutes > 0;
@@ -87,8 +127,18 @@ function renderContinuityRibbons(data) {
   }
 
   // 2. Render based on active mode
-  if (currentContinuityView === 'spectrum' && isAll) {
-    renderSpectrogramView(data, ribbonView);
+  if (isSpectrum) {
+    if (dataHasSpectrogram || (data && data.view_mode === 'all')) {
+      if (dataHasSpectrogram) {
+        cachedAllContinuityData = data;
+        if (typeof window !== 'undefined') window.cachedAllContinuityData = data;
+      }
+      renderSpectrogramView(data, ribbonView);
+    } else if (cachedAllHasSpectrogram || (cachedAllContinuityData && cachedAllContinuityData.view_mode === 'all')) {
+      renderSpectrogramView(cachedAllContinuityData, ribbonView);
+    } else {
+      loadStreamingContinuity('all', currentContinuityDays);
+    }
   } else {
     renderMasterPulseView(data, ribbonView);
   }
@@ -278,6 +328,9 @@ function renderSpectrogramView(data, container) {
  */
 function toggleContinuityView(mode) {
   currentContinuityView = (mode === 'spectrum') ? 'spectrum' : 'master';
+  if (typeof window !== 'undefined') {
+    window.currentContinuityView = currentContinuityView;
+  }
 
   const btnMaster = document.getElementById('continuity-toggle-master');
   const btnSpectrum = document.getElementById('continuity-toggle-spectrum');
@@ -292,10 +345,19 @@ function toggleContinuityView(mode) {
     }
   }
 
-  if (cachedContinuityData) {
-    renderContinuityRibbons(cachedContinuityData);
+  if (currentContinuityView === 'spectrum') {
+    if (cachedAllContinuityData && hasSpectrogramData(cachedAllContinuityData)) {
+      renderContinuityRibbons(cachedAllContinuityData);
+    } else {
+      loadStreamingContinuity('all', currentContinuityDays);
+    }
   } else {
-    loadStreamingContinuity();
+    const masterData = cachedSymbolContinuityData || cachedContinuityData || cachedAllContinuityData;
+    if (masterData) {
+      renderContinuityRibbons(masterData);
+    } else {
+      loadStreamingContinuity(currentContinuitySymbol || 'all', currentContinuityDays);
+    }
   }
 }
 
@@ -337,7 +399,13 @@ function syncChartToGap(timestamp) {
 }
 
 // Expose functions globally on window
-window.loadStreamingContinuity = loadStreamingContinuity;
-window.renderContinuityRibbons = renderContinuityRibbons;
-window.toggleContinuityView = toggleContinuityView;
-window.syncChartToGap = syncChartToGap;
+if (typeof window !== 'undefined') {
+  window.loadStreamingContinuity = loadStreamingContinuity;
+  window.renderContinuityRibbons = renderContinuityRibbons;
+  window.toggleContinuityView = toggleContinuityView;
+  window.syncChartToGap = syncChartToGap;
+  window.currentContinuityView = currentContinuityView;
+  window.cachedContinuityData = cachedContinuityData;
+  window.cachedAllContinuityData = cachedAllContinuityData;
+  window.cachedSymbolContinuityData = cachedSymbolContinuityData;
+}

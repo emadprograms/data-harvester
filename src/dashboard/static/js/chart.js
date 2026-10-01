@@ -493,7 +493,17 @@ async function loadStreamingChart() {
     }
 
     if (typeof loadStreamingContinuity === 'function') {
-      loadStreamingContinuity(currentStreamingSymbol);
+      const isSpectrum = (typeof currentContinuityView !== 'undefined' && currentContinuityView === 'spectrum') ||
+                         (typeof window !== 'undefined' && window.currentContinuityView === 'spectrum');
+      const allCached = (typeof cachedAllContinuityData !== 'undefined' && cachedAllContinuityData) ||
+                        (typeof window !== 'undefined' && window.cachedAllContinuityData);
+      if (isSpectrum) {
+        if (!allCached) {
+          loadStreamingContinuity('all');
+        }
+      } else {
+        loadStreamingContinuity(currentStreamingSymbol);
+      }
     }
   } catch (err) {
     console.error("Error loading streaming chart data:", err);
@@ -551,10 +561,18 @@ function handleStreamingSymbolChange(sym) {
   currentStreamingSymbol = sym.toUpperCase();
   const select = document.getElementById('streaming-symbol-select');
   if (select) select.value = currentStreamingSymbol;
-  loadStreamingChart();
-  if (typeof loadStreamingContinuity === 'function') {
-    loadStreamingContinuity(currentStreamingSymbol);
+
+  // Preserve 'spectrum' mode in currentContinuityView if active
+  const isSpectrum = (typeof currentContinuityView !== 'undefined' && currentContinuityView === 'spectrum') ||
+                     (typeof window !== 'undefined' && window.currentContinuityView === 'spectrum');
+  if (isSpectrum) {
+    if (typeof currentContinuityView !== 'undefined') currentContinuityView = 'spectrum';
+    if (typeof window !== 'undefined') window.currentContinuityView = 'spectrum';
   }
+
+  loadStreamingChart();
+  // Continuity refresh is handled inside loadStreamingChart (loadStreamingContinuity)
+  // according to currentContinuityView, avoiding redundant clobbering of the spectrogram.
 }
 
 function selectSymbolInStreamingChart(sym) {
