@@ -8,7 +8,15 @@ import os
 import re
 import duckdb
 
-DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
+MICRON_DATA_DIR = "/Volumes/Micron-E 0256 A/data-harvester/data"
+_ENV_DATA_DIR = os.environ.get("DATA_DIR")
+if _ENV_DATA_DIR and os.path.exists(_ENV_DATA_DIR):
+    DEFAULT_DATA_DIR = _ENV_DATA_DIR
+elif os.path.exists(MICRON_DATA_DIR):
+    DEFAULT_DATA_DIR = MICRON_DATA_DIR
+else:
+    DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
+
 DEFAULT_HISTORICAL_DB_PATH = os.path.join(DEFAULT_DATA_DIR, "historical.duckdb")
 DEFAULT_STREAMING_DB_PATH = os.path.join(DEFAULT_DATA_DIR, "streaming.duckdb")
 

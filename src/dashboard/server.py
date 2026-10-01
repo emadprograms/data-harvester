@@ -39,12 +39,12 @@ from src.dashboard.analytics import (
     get_market_session_info,
 )
 from src.dashboard.harvester_job import harvester_manager
-from src.database.connection import get_historical_db_connection
+from src.database.connection import get_historical_db_connection, DEFAULT_DATA_DIR
 
 logger = logging.getLogger("dashboard_server")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 INDEX_PATH = os.path.join(STATIC_DIR, "index.html")
-RELOAD_SIGNAL_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", ".stream_reload.signal")
+RELOAD_SIGNAL_FILE = os.path.join(DEFAULT_DATA_DIR, ".stream_reload.signal")
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
