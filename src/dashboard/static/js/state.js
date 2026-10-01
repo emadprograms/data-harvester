@@ -5,19 +5,32 @@
 // Host and API configuration
 const API_BASE = window.location.origin;
 
-// Application State
+// Application State - Historical Dashboard
 let currentSymbol = 'NVDA';
 let currentTimeframe = '1m';
 let currentLimit = 500;
-let currentDbSource = 'historical'; // 'historical' or 'streaming'
+let currentDbSource = 'historical'; // Canonical Historical DB
 let loadedCandles = [];
 let allSymbolsCoverage = [];
 let previousTicks = {};
 
-// TradingView Chart reference handles
+// Application State - Streaming Dashboard
+let currentStreamingSymbol = 'NVDA';
+let currentStreamingTimeframe = '1m';
+let currentStreamingLimit = 500;
+let loadedStreamingCandles = [];
+let streamingSymbolsList = [];
+let currentDashboardView = 'historical'; // 'historical' or 'streaming'
+
+// TradingView Chart reference handles - Historical
 let tvChart = null;
 let candleSeries = null;
 let volumeSeries = null;
+
+// TradingView Chart reference handles - Streaming
+let tvStreamingChart = null;
+let streamingCandleSeries = null;
+let streamingVolumeSeries = null;
 
 /**
  * Display floating toast notification in bottom right corner.

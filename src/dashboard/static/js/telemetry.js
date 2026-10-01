@@ -65,7 +65,7 @@ function renderTickerGrid(ticks) {
 
     const card = document.createElement('div');
     card.className = `p-3 rounded-xl bg-slate-950 border border-slate-800/80 cursor-pointer hover:border-emerald-500/50 transition ${flashClass}`;
-    card.onclick = () => selectSymbolInChart(sym);
+    card.onclick = () => selectSymbolInStreamingChart(sym);
     card.innerHTML = `
       <div class="flex items-center justify-between">
         <span class="font-bold text-white font-mono text-xs">${sym}</span>

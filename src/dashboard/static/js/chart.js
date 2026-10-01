@@ -1,12 +1,15 @@
 /**
  * Data Harvester Dashboard - Chart Engine (TradingView Lightweight Charts)
  *
- * Timestamp contract for the Historical Database page (an exchange-local chart):
- *   - /api/candles returns `time` as a true UTC epoch (seconds) and `time_str` as the very same
- *     instant already rendered on the NYSE clock (America/New_York, EST/EDT).
- *   - Every label drawn here (X-axis ticks, crosshair badge, OHLCV legend) is formatted through
- *     Intl with an explicit `timeZone`, so the 09:30 opening bell and its volume spike always read
- *     09:30 ET — no matter which timezone the dashboard server or the operator's browser runs in.
+ * Dedicated Segregated Dual-Chart Architecture:
+ *   1. Historical Chart Controller:
+ *      - Dedicated to data/historical.duckdb (canonical minute_data archive).
+ *      - Renders in US Eastern Time (NYSE: America/New_York, EST/EDT).
+ *      - Controlled by initHistoricalChart() and loadHistoricalChart().
+ *   2. Streaming Chart Controller:
+ *      - Dedicated to data/streaming.duckdb (live raw tick_data buffer).
+ *      - Dynamic real-time candlestick aggregation from streaming ticks.
+ *      - Controlled by initStreamingChart() and loadStreamingChart().
  */
 
 const EXCHANGE_TIMEZONE = 'America/New_York';
@@ -123,7 +126,11 @@ function findCandleByTime(time) {
   return (loadedCandles || []).find(c => c.time === time) || null;
 }
 
-function initChart() {
+// ============================================================================
+// 1. DEDICATED HISTORICAL CHART CONTROLLER
+// ============================================================================
+
+function initHistoricalChart() {
   const container = document.getElementById('tv-chart-container');
   if (!container || tvChart) return;
 
@@ -157,22 +164,14 @@ function initChart() {
       secondsVisible: false,
       tickMarkFormatter: (time, tickMarkType, locale) => {
         if (typeof time !== 'number') return null;
-        // Lightweight Charts weights tick marks on the UTC calendar; re-anchor every label to the
-        // exchange day so an evening/post-market bar never renders a stray UTC date tick.
         const dayStart = isExchangeDayStart(time);
         switch (tickMarkType) {
-          case 0: // Year
-            return dayStart ? formatExchangeYear(time) : formatExchangeDay(time);
-          case 1: // Month
-            return dayStart ? formatExchangeMonth(time) : formatExchangeDay(time);
-          case 2: // DayOfMonth
-            return dayStart ? formatExchangeDay(time) : formatExchangeClock(time);
-          case 3: // Time
-            return formatExchangeClock(time);
-          case 4: // TimeWithSeconds
-            return formatExchangeClock(time, true);
-          default:
-            return null;
+          case 0: return dayStart ? formatExchangeYear(time) : formatExchangeDay(time);
+          case 1: return dayStart ? formatExchangeMonth(time) : formatExchangeDay(time);
+          case 2: return dayStart ? formatExchangeDay(time) : formatExchangeClock(time);
+          case 3: return formatExchangeClock(time);
+          case 4: return formatExchangeClock(time, true);
+          default: return null;
         }
       }
     },
@@ -192,7 +191,7 @@ function initChart() {
 
   volumeSeries = tvChart.addHistogramSeries({
     priceFormat: { type: 'volume' },
-    priceScaleId: '', // Overlay on same scale
+    priceScaleId: '',
     scaleMargins: { top: 0.82, bottom: 0 }
   });
 
@@ -210,17 +209,77 @@ function initChart() {
   });
 
   window.addEventListener('resize', resizeChart);
-  loadChartData();
+  loadHistoricalChart();
 }
 
-function resizeChart() {
+/** Backward-compatible alias for existing tests */
+function initChart() {
+  initHistoricalChart();
+}
+
+function resizeHistoricalChart() {
   const container = document.getElementById('tv-chart-container');
-  if (tvChart && container) {
+  if (tvChart && container && container.clientWidth > 0) {
     tvChart.applyOptions({
       width: container.clientWidth,
-      height: container.clientHeight
+      height: container.clientHeight || 450
     });
   }
+}
+
+async function loadHistoricalChart() {
+  const loading = document.getElementById('chart-loading');
+  if (loading) loading.classList.remove('hidden');
+
+  const limitSelect = document.getElementById('chart-limit-select');
+  currentLimit = limitSelect ? parseInt(limitSelect.value) : 500;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/historical/candles?symbol=${encodeURIComponent(currentSymbol)}&tf=${currentTimeframe}&limit=${currentLimit}`);
+    if (!res.ok) throw new Error("Failed to fetch historical candle data");
+    const data = await res.json();
+
+    loadedCandles = data.candles || [];
+    setChartTimezone(data.timezone);
+    updateTzBadge(chartTimezone);
+    candleTimeIndex = new Map(loadedCandles.map(c => [c.time, c]));
+
+    if (candleSeries && volumeSeries && tvChart) {
+      const chartCandles = loadedCandles.map(c => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close
+      }));
+
+      const chartVolumes = loadedCandles.map(c => ({
+        time: c.time,
+        value: c.volume || 0,
+        color: (c.close >= c.open) ? 'rgba(16, 185, 129, 0.4)' : 'rgba(244, 63, 94, 0.4)'
+      }));
+
+      candleSeries.setData(chartCandles);
+      volumeSeries.setData(chartVolumes);
+      tvChart.timeScale().fitContent();
+
+      if (loadedCandles.length > 0) {
+        updateLegend(loadedCandles[loadedCandles.length - 1]);
+      }
+    }
+
+    renderInspectorTable(loadedCandles);
+  } catch (err) {
+    console.error("Error loading historical chart data:", err);
+    showToast("Error loading historical chart candles", "error");
+  } finally {
+    if (loading) loading.classList.add('hidden');
+  }
+}
+
+/** Backward-compatible alias for existing callers */
+function loadChartData() {
+  loadHistoricalChart();
 }
 
 function updateLegend(candle) {
@@ -252,110 +311,12 @@ function updateLegend(candle) {
   }
 
   if (srcEl) {
-    srcEl.innerText = candle.source || (currentDbSource === 'historical' ? 'MASSIVE' : 'CAPITAL_STREAM');
+    srcEl.innerText = candle.source || 'MASSIVE';
   }
 
   if (dbBadge) {
-    if (currentDbSource === 'historical') {
-      dbBadge.innerText = "HISTORICAL DB";
-      dbBadge.className = "px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold";
-    } else {
-      dbBadge.innerText = "STREAMING DB";
-      dbBadge.className = "px-2 py-0.5 rounded text-[10px] bg-indigo-950 text-indigo-400 border border-indigo-800 font-mono font-bold";
-    }
-  }
-}
-
-function setDbSource(source) {
-  currentDbSource = source;
-  const btnHist = document.getElementById('src-historical');
-  const btnStream = document.getElementById('src-streaming');
-  const pill = document.getElementById('db-source-badge-pill');
-  const pillText = document.getElementById('db-source-pill-text');
-  const notice = document.getElementById('db-source-notice');
-
-  if (source === 'historical') {
-    if (btnHist) btnHist.className = "px-3 py-1.5 rounded text-xs font-mono font-bold bg-emerald-600 text-white flex items-center gap-1.5 shadow-sm transition";
-    if (btnStream) btnStream.className = "px-3 py-1.5 rounded text-xs font-mono font-bold text-slate-400 hover:text-white flex items-center gap-1.5 transition";
-    if (pill) pill.className = "px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center gap-2";
-    if (pillText) pillText.innerText = "Mode: CANONICAL HISTORICAL ARCHIVE";
-    if (notice) {
-      notice.className = "text-xs px-4 py-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800/50 text-emerald-300 font-mono flex items-center justify-between";
-      notice.innerHTML = `
-        <div class="flex items-center gap-2">
-          <span>🏛️</span>
-          <span><strong>Historical Archive Mode</strong>: Querying permanent canonical 1m bars from <code>data/historical.duckdb</code> with Source-Tiering (Massive, Binance, Capital REST). Displayed in <strong>US Eastern Time (NYSE: EST/EDT)</strong>. Fully backfillable.</span>
-        </div>
-        <span class="text-[11px] text-emerald-400/80 font-mono">NYSE Exchange Time (ET)</span>
-      `;
-    }
-  } else {
-    if (btnHist) btnHist.className = "px-3 py-1.5 rounded text-xs font-mono font-bold text-slate-400 hover:text-white flex items-center gap-1.5 transition";
-    if (btnStream) btnStream.className = "px-3 py-1.5 rounded text-xs font-mono font-bold bg-indigo-600 text-white flex items-center gap-1.5 shadow-sm transition";
-    if (pill) pill.className = "px-3 py-1 rounded-full text-xs font-mono font-bold bg-indigo-950 text-indigo-400 border border-indigo-800 flex items-center gap-2";
-    if (pillText) pillText.innerText = "Mode: LIVE STREAM TICK BUFFER";
-    if (notice) {
-      notice.className = "text-xs px-4 py-2.5 rounded-lg bg-indigo-950/30 border border-indigo-800/50 text-indigo-300 font-mono flex items-center justify-between";
-      notice.innerHTML = `
-        <div class="flex items-center gap-2">
-          <span>⚡</span>
-          <span><strong>Live Stream Buffer Mode</strong>: Querying dynamic resampled candles from <code>data/streaming.duckdb</code> (Capital.com WebSocket). Ephemeral session data (not backfillable if offline).</span>
-        </div>
-        <span class="text-[11px] text-indigo-400/80 font-mono">Dynamic tick-to-bar aggregation</span>
-      `;
-    }
-  }
-  loadChartData();
-}
-
-async function loadChartData() {
-  const loading = document.getElementById('chart-loading');
-  if (loading) loading.classList.remove('hidden');
-
-  const limitSelect = document.getElementById('chart-limit-select');
-  currentLimit = limitSelect ? parseInt(limitSelect.value) : 500;
-
-  try {
-    const res = await fetch(`${API_BASE}/api/candles?symbol=${encodeURIComponent(currentSymbol)}&tf=${currentTimeframe}&limit=${currentLimit}&source=${currentDbSource}`);
-    if (!res.ok) throw new Error("Failed to fetch candle data");
-    const data = await res.json();
-
-    loadedCandles = data.candles || [];
-    // Render axis/crosshair labels in the timezone the API actually converted to (NYSE time).
-    setChartTimezone(data.timezone);
-    updateTzBadge(chartTimezone);
-    candleTimeIndex = new Map(loadedCandles.map(c => [c.time, c]));
-
-    if (candleSeries && volumeSeries && tvChart) {
-      const chartCandles = loadedCandles.map(c => ({
-        time: c.time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close
-      }));
-
-      const chartVolumes = loadedCandles.map(c => ({
-        time: c.time,
-        value: c.volume || 0,
-        color: (c.close >= c.open) ? 'rgba(16, 185, 129, 0.4)' : 'rgba(244, 63, 94, 0.4)'
-      }));
-
-      candleSeries.setData(chartCandles);
-      volumeSeries.setData(chartVolumes);
-      tvChart.timeScale().fitContent();
-
-      if (loadedCandles.length > 0) {
-        updateLegend(loadedCandles[loadedCandles.length - 1]);
-      }
-    }
-
-    renderInspectorTable(loadedCandles);
-  } catch (err) {
-    console.error("Error loading chart data:", err);
-    showToast("Error loading chart candles", "error");
-  } finally {
-    if (loading) loading.classList.add('hidden');
+    dbBadge.innerText = "HISTORICAL DB";
+    dbBadge.className = "px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold";
   }
 }
 
@@ -371,17 +332,233 @@ function setTimeframe(tf) {
       }
     }
   });
-  loadChartData();
+  loadHistoricalChart();
 }
 
 function handleSymbolChange(sym) {
   currentSymbol = sym.toUpperCase();
   const select = document.getElementById('chart-symbol-select');
   if (select) select.value = currentSymbol;
-  loadChartData();
+  loadHistoricalChart();
 }
 
 function selectSymbolInChart(sym) {
   handleSymbolChange(sym);
-  switchTab('charts');
+  if (typeof switchDashboardView === 'function') {
+    switchDashboardView('historical');
+  }
+  if (typeof switchTab === 'function') {
+    switchTab('charts');
+  }
+}
+
+// ============================================================================
+// 2. DEDICATED STREAMING CHART CONTROLLER
+// ============================================================================
+
+let streamingCandleTimeIndex = new Map();
+
+function findStreamingCandleByTime(time) {
+  if (streamingCandleTimeIndex.has(time)) return streamingCandleTimeIndex.get(time);
+  return (loadedStreamingCandles || []).find(c => c.time === time) || null;
+}
+
+function initStreamingChart() {
+  const container = document.getElementById('streaming-chart-container');
+  if (!container || tvStreamingChart) return;
+
+  tvStreamingChart = LightweightCharts.createChart(container, {
+    layout: {
+      background: { color: '#090d16' },
+      textColor: '#94a3b8',
+      fontSize: 11,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+    },
+    grid: {
+      vertLines: { color: '#1e293b' },
+      horzLines: { color: '#1e293b' }
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: '#6366f1', width: 1, style: 1 },
+      horzLine: { color: '#6366f1', width: 1, style: 1 }
+    },
+    localization: {
+      locale: 'en-US',
+      timeFormatter: (time) => {
+        if (typeof time !== 'number') return time ? String(time) : '--';
+        return candleTimeLabel(findStreamingCandleByTime(time) || { time });
+      }
+    },
+    timeScale: {
+      borderColor: '#334155',
+      timeVisible: true,
+      secondsVisible: true,
+      tickMarkFormatter: (time, tickMarkType, locale) => {
+        if (typeof time !== 'number') return null;
+        const dayStart = isExchangeDayStart(time);
+        switch (tickMarkType) {
+          case 0: return dayStart ? formatExchangeYear(time) : formatExchangeDay(time);
+          case 1: return dayStart ? formatExchangeMonth(time) : formatExchangeDay(time);
+          case 2: return dayStart ? formatExchangeDay(time) : formatExchangeClock(time);
+          case 3: return formatExchangeClock(time);
+          case 4: return formatExchangeClock(time, true);
+          default: return null;
+        }
+      }
+    },
+    rightPriceScale: {
+      borderColor: '#334155',
+      scaleMargins: { top: 0.1, bottom: 0.25 }
+    }
+  });
+
+  streamingCandleSeries = tvStreamingChart.addCandlestickSeries({
+    upColor: '#6366f1',
+    downColor: '#f43f5e',
+    borderVisible: false,
+    wickUpColor: '#6366f1',
+    wickDownColor: '#f43f5e'
+  });
+
+  streamingVolumeSeries = tvStreamingChart.addHistogramSeries({
+    priceFormat: { type: 'volume' },
+    priceScaleId: '',
+    scaleMargins: { top: 0.82, bottom: 0 }
+  });
+
+  tvStreamingChart.subscribeCrosshairMove(param => {
+    if (!param || !param.time || !param.seriesData || !param.seriesData.get(streamingCandleSeries)) {
+      if (loadedStreamingCandles.length > 0) {
+        updateStreamingLegend(loadedStreamingCandles[loadedStreamingCandles.length - 1]);
+      }
+      return;
+    }
+    const data = param.seriesData.get(streamingCandleSeries);
+    const candleMatch = findStreamingCandleByTime(param.time);
+    updateStreamingLegend(candleMatch || data);
+  });
+
+  window.addEventListener('resize', resizeChart);
+  loadStreamingChart();
+}
+
+function resizeStreamingChart() {
+  const container = document.getElementById('streaming-chart-container');
+  if (tvStreamingChart && container && container.clientWidth > 0) {
+    tvStreamingChart.applyOptions({
+      width: container.clientWidth,
+      height: container.clientHeight || 450
+    });
+  }
+}
+
+async function loadStreamingChart() {
+  const loading = document.getElementById('streaming-chart-loading');
+  if (loading) loading.classList.remove('hidden');
+
+  const limitSelect = document.getElementById('streaming-chart-limit-select');
+  currentStreamingLimit = limitSelect ? parseInt(limitSelect.value) : 500;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/streaming/candles?symbol=${encodeURIComponent(currentStreamingSymbol)}&tf=${currentStreamingTimeframe}&limit=${currentStreamingLimit}`);
+    if (!res.ok) throw new Error("Failed to fetch streaming candle data");
+    const data = await res.json();
+
+    loadedStreamingCandles = data.candles || [];
+    streamingCandleTimeIndex = new Map(loadedStreamingCandles.map(c => [c.time, c]));
+
+    if (streamingCandleSeries && streamingVolumeSeries && tvStreamingChart) {
+      const chartCandles = loadedStreamingCandles.map(c => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close
+      }));
+
+      const chartVolumes = loadedStreamingCandles.map(c => ({
+        time: c.time,
+        value: c.volume || 0,
+        color: (c.close >= c.open) ? 'rgba(99, 102, 241, 0.4)' : 'rgba(244, 63, 94, 0.4)'
+      }));
+
+      streamingCandleSeries.setData(chartCandles);
+      streamingVolumeSeries.setData(chartVolumes);
+      tvStreamingChart.timeScale().fitContent();
+
+      if (loadedStreamingCandles.length > 0) {
+        updateStreamingLegend(loadedStreamingCandles[loadedStreamingCandles.length - 1]);
+      }
+    }
+  } catch (err) {
+    console.error("Error loading streaming chart data:", err);
+    showToast("Error loading streaming chart candles", "error");
+  } finally {
+    if (loading) loading.classList.add('hidden');
+  }
+}
+
+function updateStreamingLegend(candle) {
+  if (!candle) return;
+  const symEl = document.getElementById('streaming-legend-symbol');
+  const timeEl = document.getElementById('streaming-legend-time');
+  const openEl = document.getElementById('streaming-legend-open');
+  const highEl = document.getElementById('streaming-legend-high');
+  const lowEl = document.getElementById('streaming-legend-low');
+  const closeEl = document.getElementById('streaming-legend-close');
+  const volEl = document.getElementById('streaming-legend-volume');
+  const chgEl = document.getElementById('streaming-legend-change');
+  const ticksEl = document.getElementById('streaming-legend-ticks');
+
+  if (symEl) symEl.innerText = `${currentStreamingSymbol} (${currentStreamingTimeframe.toUpperCase()})`;
+  if (timeEl) timeEl.innerText = candleTimeLabel(candle);
+  if (openEl) openEl.innerText = Number(candle.open).toFixed(2);
+  if (highEl) highEl.innerText = Number(candle.high).toFixed(2);
+  if (lowEl) lowEl.innerText = Number(candle.low).toFixed(2);
+  if (closeEl) closeEl.innerText = Number(candle.close).toFixed(2);
+  if (volEl) volEl.innerText = Number(candle.volume || 0).toLocaleString();
+  if (ticksEl) ticksEl.innerText = candle.tick_count ? `${candle.tick_count} ticks` : '--';
+
+  if (chgEl) {
+    const change = candle.close - candle.open;
+    const changePct = candle.open ? ((change / candle.open) * 100).toFixed(2) : 0;
+    chgEl.innerText = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePct}%)`;
+    chgEl.className = change >= 0 ? 'text-indigo-400 font-bold' : 'text-rose-400 font-bold';
+  }
+}
+
+function setStreamingTimeframe(tf) {
+  currentStreamingTimeframe = tf;
+  ['1m', '5m', '15m', '30m', '1h'].forEach(t => {
+    const btn = document.getElementById(`streaming-tf-${t}`);
+    if (btn) {
+      if (t === tf) {
+        btn.className = "px-2.5 py-1 rounded text-xs font-mono font-bold bg-indigo-600 text-white";
+      } else {
+        btn.className = "px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white";
+      }
+    }
+  });
+  loadStreamingChart();
+}
+
+function handleStreamingSymbolChange(sym) {
+  currentStreamingSymbol = sym.toUpperCase();
+  const select = document.getElementById('streaming-symbol-select');
+  if (select) select.value = currentStreamingSymbol;
+  loadStreamingChart();
+}
+
+function selectSymbolInStreamingChart(sym) {
+  if (typeof switchDashboardView === 'function') {
+    switchDashboardView('streaming');
+  }
+  handleStreamingSymbolChange(sym);
+}
+
+// Global chart resizer
+function resizeChart() {
+  resizeHistoricalChart();
+  resizeStreamingChart();
 }

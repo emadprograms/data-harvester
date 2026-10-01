@@ -63,504 +63,647 @@
 
     <!-- System Controls & Live Actions -->
     <div class="flex items-center space-x-3 text-xs">
-      <div id="stream-status-badge" class="flex items-center gap-2 px-3 py-1.5 rounded-md bg-slate-800 border border-slate-700 font-medium">
-        <span class="h-2 w-2 rounded-full bg-slate-400"></span>
-        <span id="stream-status-text">STREAM: CHECKING</span>
-      </div>
-      <button onclick="triggerStreamReload()" class="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold transition flex items-center gap-1">
-        <span>🔄</span> Reload Streamer
-      </button>
-      <button onclick="openHarvestModal()" class="px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition flex items-center gap-1 shadow-sm">
-        <span>🚀</span> Run Harvest
-      </button>
-      <button onclick="fetchAllData()" class="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 transition" title="Refresh Telemetry">
-        ↻
+      <button onclick="fetchAllData()" class="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1.5" title="Refresh Telemetry">
+        <span>↻</span> Refresh All
       </button>
     </div>
   </header>
 
-  <!-- KPI SUMMARY STRIP -->
-  <section class="bg-slate-900 border-b border-slate-800 px-6 py-4">
-    <div class="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-4">
-      <!-- Historical Storage -->
-      <div class="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3">
-        <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-          <span>Historical DB</span>
-          <span class="text-emerald-400 font-mono">historical.duckdb</span>
-        </div>
-        <div class="mt-2 flex items-baseline justify-between">
-          <span id="kpi-hist-rows" class="text-xl font-bold font-mono text-white">--</span>
-          <span id="kpi-hist-size" class="text-xs font-mono text-slate-400">-- MB</span>
-        </div>
-        <div class="mt-1 text-[11px] text-slate-400 truncate flex items-center justify-between">
-          <span id="kpi-hist-span">Oct 2024 → Jul 2026</span>
-          <span id="kpi-symbols-count" class="text-slate-300 font-mono">40 symbols</span>
-        </div>
-      </div>
-
-      <!-- Live Tick Stream -->
-      <div class="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3">
-        <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-          <span>Streaming DB</span>
-          <span class="text-indigo-400 font-mono">streaming.duckdb</span>
-        </div>
-        <div class="mt-2 flex items-baseline justify-between">
-          <span id="kpi-stream-rows" class="text-xl font-bold font-mono text-white">--</span>
-          <span id="kpi-stream-rate" class="text-xs font-mono text-emerald-400">0 ticks/m</span>
-        </div>
-        <div class="mt-1 text-[11px] text-slate-400 truncate flex items-center justify-between">
-          <span>Last Tick:</span>
-          <span id="kpi-stream-last-ts" class="font-mono text-slate-300">--</span>
-        </div>
-      </div>
-
-      <!-- Active Market Session -->
-      <div class="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3">
-        <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-          <span>Market Session</span>
-          <span id="kpi-session-status" class="text-amber-400 font-mono">--</span>
-        </div>
-        <div class="mt-2 flex items-baseline justify-between">
-          <span id="kpi-target-date" class="text-xl font-bold font-mono text-white">--</span>
-          <span id="kpi-reg-hours" class="text-xs font-mono text-slate-400">9:30-16:00 ET</span>
-        </div>
-        <div class="mt-1 text-[11px] text-slate-400 truncate">
-          <span id="kpi-session-desc">8:00 PM ET Previous → 8:00 PM Target</span>
-        </div>
-      </div>
-
-      <!-- Data Integrity Health -->
-      <div class="bg-slate-950/70 border border-slate-800/80 rounded-lg p-3">
-        <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-          <span>Integrity Engine</span>
-          <span id="kpi-integrity-badge" class="px-1.5 py-0.2 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono">READY</span>
-        </div>
-        <div class="mt-2 flex items-baseline justify-between">
-          <span id="kpi-integrity-status" class="text-lg font-bold font-mono text-emerald-400">PASS</span>
-          <button onclick="switchTab('integrity'); runIntegrityAudit();" class="text-xs text-emerald-400 hover:text-emerald-300 underline font-semibold">
-            Audit Now →
-          </button>
-        </div>
-        <div class="mt-1 text-[11px] text-slate-400 truncate">
-          <span>Zero OHLCV inversions verified</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- NAVIGATION TABS -->
-  <nav class="border-b border-slate-800 bg-slate-900/50 px-6">
-    <div class="max-w-7xl mx-auto flex space-x-8 text-xs font-medium">
-      <button onclick="switchTab('charts')" id="tab-btn-charts" class="py-3 border-b-2 border-emerald-500 text-white flex items-center gap-2 font-semibold">
-        <span>🏛️ Historical Database (Archive)</span>
-      </button>
-      <button onclick="switchTab('stream')" id="tab-btn-stream" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
-        <span>⚡ Streaming Database (Live Buffer)</span>
-      </button>
-      <button onclick="switchTab('symbols')" id="tab-btn-symbols" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
-        <span>📋 Historical Symbol Coverage</span>
-      </button>
-      <button onclick="switchTab('integrity')" id="tab-btn-integrity" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
-        <span>🛡️ Data Integrity & Gaps</span>
-      </button>
-      <button onclick="switchTab('harvester')" id="tab-btn-harvester" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
-        <span>🚀 REST Harvester Runner</span>
-      </button>
-    </div>
-  </nav>
-
-  <!-- MAIN APPLICATION CONTENT -->
-  <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
-
-    <!-- ========================================== -->
-    <!-- TAB 1: FINANCIAL CHART & DATA EXPLORER     -->
-    <!-- ========================================== -->
-    <section id="tab-charts" class="space-y-4">
-      <!-- Database Source Switcher Bar -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-        <div class="flex items-center gap-3">
-          <label class="text-xs font-bold text-slate-300 uppercase tracking-wider">Database Source:</label>
-          <div class="flex items-center gap-1 bg-slate-950 border border-slate-800 p-1 rounded-lg">
-            <button onclick="setDbSource('historical')" id="src-historical" class="px-3 py-1.5 rounded text-xs font-mono font-bold bg-emerald-600 text-white flex items-center gap-1.5 shadow-sm transition">
-              <span>🏛️</span> Historical Archive (historical.duckdb)
+  <!-- APP SHELL: SIDEBAR + MAIN CONTENT -->
+  <div class="flex-1 flex overflow-hidden">
+    <!-- SIDEBAR NAVIGATION -->
+    <aside id="sidebar" class="w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 select-none">
+      <div class="p-4 space-y-6">
+        <div>
+          <div class="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">
+            Dashboards
+          </div>
+          <nav class="space-y-1.5">
+            <button id="nav-historical" onclick="switchDashboardView('historical')" class="w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-3 text-xs font-semibold bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 transition">
+              <span class="text-base">🏛️</span>
+              <div>
+                <div class="font-bold text-white">Historical Dashboard</div>
+                <div class="text-[10px] text-slate-400 font-normal">Archive • 1m Candles • Coverage</div>
+              </div>
             </button>
-            <button onclick="setDbSource('streaming')" id="src-streaming" class="px-3 py-1.5 rounded text-xs font-mono font-bold text-slate-400 hover:text-white flex items-center gap-1.5 transition">
-              <span>⚡</span> Live Stream Buffer (streaming.duckdb)
+            <button id="nav-streaming" onclick="switchDashboardView('streaming')" class="w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-3 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800/60 border border-transparent transition">
+              <span class="text-base">⚡</span>
+              <div>
+                <div class="font-bold text-slate-200">Streaming Dashboard</div>
+                <div class="text-[10px] text-slate-400 font-normal">Live Ticks • Streaming Chart • Tape</div>
+              </div>
             </button>
+          </nav>
+        </div>
+
+        <!-- Historical Navigation Sections -->
+        <div>
+          <div class="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">
+            Historical Views
           </div>
-        </div>
-
-        <div id="db-source-badge-pill" class="px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center gap-2">
-          <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
-          <span id="db-source-pill-text">Mode: CANONICAL HISTORICAL ARCHIVE</span>
-        </div>
-      </div>
-
-      <!-- Informational Explanatory Banner -->
-      <div id="db-source-notice" class="text-xs px-4 py-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800/50 text-emerald-300 font-mono flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span>🏛️</span>
-          <span><strong>Historical Archive Mode</strong>: Querying permanent canonical 1m bars from <code>data/historical.duckdb</code> with Source-Tiering (Massive, Binance, Capital REST). Displayed in <strong>US Eastern Time (NYSE: EST/EDT)</strong>. Fully backfillable.</span>
-        </div>
-        <span class="text-[11px] text-emerald-400/80 font-mono">NYSE Exchange Time (ET)</span>
-      </div>
-
-      <!-- Chart Controls Toolbar -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-        <!-- Symbol Selection & Quick Pills -->
-        <div class="flex items-center flex-wrap gap-2">
-          <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Symbol:</label>
-          <select id="chart-symbol-select" onchange="handleSymbolChange(this.value)" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono font-bold focus:outline-none focus:border-emerald-500">
-            <option value="SPY">SPY (S&P 500 ETF)</option>
-            <option value="QQQ">QQQ (Nasdaq 100 ETF)</option>
-            <option value="NVDA" selected>NVDA (NVIDIA)</option>
-            <option value="AAPL">AAPL (Apple)</option>
-            <option value="TSLA">TSLA (Tesla)</option>
-            <option value="AMD">AMD (Advanced Micro Devices)</option>
-            <option value="AMZN">AMZN (Amazon)</option>
-            <option value="BTCUSDT">BTCUSDT (Bitcoin)</option>
-          </select>
-
-          <!-- Quick Access Pills -->
-          <div class="hidden sm:flex items-center gap-1.5 ml-2">
-            <button onclick="handleSymbolChange('NVDA')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">NVDA</button>
-            <button onclick="handleSymbolChange('SPY')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">SPY</button>
-            <button onclick="handleSymbolChange('QQQ')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">QQQ</button>
-            <button onclick="handleSymbolChange('TSLA')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">TSLA</button>
-            <button onclick="handleSymbolChange('BTCUSDT')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">BTC</button>
-          </div>
-        </div>
-
-        <!-- Timeframe Buttons -->
-        <div class="flex items-center gap-1 bg-slate-950 border border-slate-800 p-1 rounded-lg">
-          <button onclick="setTimeframe('1m')" id="tf-1m" class="px-2.5 py-1 rounded text-xs font-mono font-bold bg-emerald-600 text-white">1m</button>
-          <button onclick="setTimeframe('5m')" id="tf-5m" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">5m</button>
-          <button onclick="setTimeframe('15m')" id="tf-15m" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">15m</button>
-          <button onclick="setTimeframe('30m')" id="tf-30m" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">30m</button>
-          <button onclick="setTimeframe('1h')" id="tf-1h" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">1h</button>
-          <button onclick="setTimeframe('4h')" id="tf-4h" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">4h</button>
-          <button onclick="setTimeframe('1d')" id="tf-1d" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">1D</button>
-        </div>
-
-        <!-- Limit Selector & Actions -->
-        <div class="flex items-center gap-2">
-          <label class="text-xs text-slate-400">Bars:</label>
-          <select id="chart-limit-select" onchange="loadChartData()" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-emerald-500">
-            <option value="300">300</option>
-            <option value="500" selected>500</option>
-            <option value="1000">1,000</option>
-            <option value="2500">2,500</option>
-            <option value="5000">5,000</option>
-          </select>
-          <button onclick="loadChartData()" class="p-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg text-xs" title="Refresh Chart">
-            ↻
-          </button>
-        </div>
-      </div>
-
-      <!-- Chart Display Container -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg p-4 relative">
-        <!-- Interactive Hover OHLCV Legend -->
-        <div id="chart-legend" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono text-slate-300 pb-2 border-b border-slate-800/80 mb-2">
-          <span id="legend-db-badge" class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold">HISTORICAL DB</span>
-          <span id="legend-tz-badge" class="px-2 py-0.5 rounded text-[10px] bg-blue-950 text-blue-400 border border-blue-800 font-mono font-bold">NYSE (ET)</span>
-          <span class="text-white font-bold" id="legend-symbol">NVDA (1m)</span>
-          <span id="legend-time" class="text-slate-400">--</span>
-          <span>O: <span id="legend-open" class="text-white font-bold">--</span></span>
-          <span>H: <span id="legend-high" class="text-emerald-400 font-bold">--</span></span>
-          <span>L: <span id="legend-low" class="text-rose-400 font-bold">--</span></span>
-          <span>C: <span id="legend-close" class="text-white font-bold">--</span></span>
-          <span>Vol: <span id="legend-volume" class="text-slate-300 font-bold">--</span></span>
-          <span>Chg: <span id="legend-change" class="font-bold">--</span></span>
-          <span id="legend-source" class="px-2 py-0.2 rounded text-[10px] bg-slate-800 text-slate-400 uppercase">--</span>
-        </div>
-
-        <!-- Canvas Container -->
-        <div id="tv-chart-container" class="w-full h-[450px] relative">
-          <!-- Loading Overlay -->
-          <div id="chart-loading" class="absolute inset-0 bg-slate-950/70 backdrop-blur-sm z-10 flex items-center justify-center text-sm font-semibold text-emerald-400 gap-2">
-            <span class="live-pulse">⏳</span> Querying DuckDB engine...
-          </div>
-        </div>
-      </div>
-
-      <!-- Raw Candle Inspector & Exporter Table -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
-        <div class="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h3 class="text-sm font-bold text-white flex items-center gap-2">
-              <span>🔬 Raw OHLCV Candle Inspector</span>
-              <span id="inspector-count-badge" class="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-300 font-mono">0 bars loaded</span>
-            </h3>
-            <p id="inspector-desc" class="text-xs text-slate-400">Inspect underlying 1-minute or aggregated bars directly from historical.duckdb in US Eastern Time (NYSE: EST/EDT).</p>
-          </div>
-          <div class="flex items-center gap-3">
-            <input type="text" id="inspector-search" oninput="filterInspectorTable()" placeholder="Search date/time..." class="px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500 font-mono">
-            <button onclick="exportCandlesToCSV()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition flex items-center gap-1.5">
-              <span>📥</span> Export CSV
+          <nav class="space-y-1 text-xs">
+            <button onclick="switchDashboardView('historical'); switchTab('charts');" class="w-full text-left px-3 py-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-800/40 flex items-center gap-2">
+              <span>📊</span> Financial Chart & Inspector
             </button>
-          </div>
+            <button onclick="switchDashboardView('historical'); switchTab('symbols');" class="w-full text-left px-3 py-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-800/40 flex items-center gap-2">
+              <span>📋</span> Symbol Coverage Matrix
+            </button>
+            <button onclick="switchDashboardView('historical'); switchTab('integrity');" class="w-full text-left px-3 py-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-800/40 flex items-center gap-2">
+              <span>🛡️</span> Data Integrity & Gaps
+            </button>
+            <button onclick="switchDashboardView('historical'); switchTab('harvester');" class="w-full text-left px-3 py-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-800/40 flex items-center gap-2">
+              <span>🚀</span> REST Harvester Runner
+            </button>
+          </nav>
         </div>
 
-        <div class="max-h-80 overflow-y-auto">
-          <table class="w-full text-left text-xs border-collapse">
-            <thead id="inspector-thead" class="sticky top-0 bg-slate-850 border-b border-slate-800 text-slate-400 uppercase font-mono text-[11px] z-10">
-              <tr>
-                <th class="py-2.5 px-4">Timestamp (US/Eastern)</th>
-                <th class="py-2.5 px-4 text-right">Open</th>
-                <th class="py-2.5 px-4 text-right">High</th>
-                <th class="py-2.5 px-4 text-right">Low</th>
-                <th class="py-2.5 px-4 text-right">Close</th>
-                <th class="py-2.5 px-4 text-right">Volume</th>
-                <th class="py-2.5 px-4 text-center">Session</th>
-                <th class="py-2.5 px-4 text-center">Source</th>
-              </tr>
-            </thead>
-            <tbody id="inspector-table-body" class="divide-y divide-slate-800/80 text-slate-300 font-mono">
-              <tr>
-                <td colspan="8" class="py-6 text-center text-slate-500">Load chart to inspect candles.</td>
-              </tr>
-            </tbody>
-          </table>
+        <!-- Streaming Navigation Sections -->
+        <div>
+          <div class="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">
+            Streaming Controls
+          </div>
+          <nav class="space-y-1 text-xs">
+            <button onclick="switchDashboardView('streaming')" class="w-full text-left px-3 py-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-800/40 flex items-center gap-2">
+              <span>📈</span> Live Dynamic Chart
+            </button>
+            <button onclick="triggerStreamReload()" class="w-full text-left px-3 py-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-800/40 flex items-center gap-2">
+              <span>🔄</span> Hot-Reload Subscriptions
+            </button>
+          </nav>
         </div>
       </div>
-    </section>
 
-    <!-- ========================================== -->
-    <!-- TAB 2: LIVE STREAM TAPE & TELEMETRY        -->
-    <!-- ========================================== -->
-    <section id="tab-stream" class="space-y-6 hidden">
-      <!-- Stream Telemetry & Control Banner -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
-        <div class="flex items-center gap-4">
-          <div id="stream-daemon-icon" class="h-12 w-12 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-2xl">
-            📡
-          </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <h3 class="text-base font-bold text-white">Capital.com Tick Streaming Daemon</h3>
-              <span id="stream-daemon-pill" class="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-slate-800 text-slate-300">
-                CHECKING
-              </span>
+      <!-- Sidebar Engine Footer -->
+      <div class="p-4 border-t border-slate-800 bg-slate-950/60 text-[11px] text-slate-500 font-mono space-y-1">
+        <div class="flex items-center justify-between">
+          <span>DuckDB Engine:</span>
+          <span class="text-emerald-400 font-bold">Dual Isolated</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span>historical.duckdb:</span>
+          <span class="text-slate-400">Read-Only</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span>streaming.duckdb:</span>
+          <span class="text-indigo-400">Buffer Read</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- MAIN SCROLLABLE WORKSPACE -->
+    <main class="flex-1 overflow-y-auto bg-slate-950 p-6 space-y-6">
+
+      <!-- ============================================================== -->
+      <!-- VIEW 1: DEDICATED HISTORICAL DASHBOARD                        -->
+      <!-- ============================================================== -->
+      <section id="view-historical" class="space-y-6">
+
+        <!-- KPI SUMMARY STRIP (HISTORICAL) -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <!-- Historical Storage -->
+          <div class="bg-slate-900/70 border border-slate-800/80 rounded-xl p-4">
+            <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+              <span>Historical DB</span>
+              <span class="text-emerald-400 font-mono">historical.duckdb</span>
             </div>
-            <p id="stream-daemon-details" class="text-xs text-slate-400 mt-1">
-              Process ID: <span class="font-mono text-slate-300">--</span> • Ingesting raw tick quotes to <code class="text-indigo-400 font-mono">streaming.duckdb</code>
+            <div class="mt-2 flex items-baseline justify-between">
+              <span id="kpi-hist-rows" class="text-xl font-bold font-mono text-white">--</span>
+              <span id="kpi-hist-size" class="text-xs font-mono text-slate-400">-- MB</span>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 truncate flex items-center justify-between">
+              <span id="kpi-hist-span">Oct 2024 → Jul 2026</span>
+              <span id="kpi-symbols-count" class="text-slate-300 font-mono">40 symbols</span>
+            </div>
+          </div>
+
+          <!-- Active Market Session -->
+          <div class="bg-slate-900/70 border border-slate-800/80 rounded-xl p-4">
+            <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+              <span>Market Session</span>
+              <span id="kpi-session-status" class="text-amber-400 font-mono">--</span>
+            </div>
+            <div class="mt-2 flex items-baseline justify-between">
+              <span id="kpi-target-date" class="text-xl font-bold font-mono text-white">--</span>
+              <span id="kpi-reg-hours" class="text-xs font-mono text-slate-400">9:30-16:00 ET</span>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 truncate">
+              <span id="kpi-session-desc">8:00 PM ET Previous → 8:00 PM Target</span>
+            </div>
+          </div>
+
+          <!-- Data Integrity Health -->
+          <div class="bg-slate-900/70 border border-slate-800/80 rounded-xl p-4">
+            <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+              <span>Integrity Engine</span>
+              <span id="kpi-integrity-badge" class="px-1.5 py-0.2 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono">READY</span>
+            </div>
+            <div class="mt-2 flex items-baseline justify-between">
+              <span id="kpi-integrity-status" class="text-lg font-bold font-mono text-emerald-400">PASS</span>
+              <button onclick="switchTab('integrity'); runIntegrityAudit();" class="text-xs text-emerald-400 hover:text-emerald-300 underline font-semibold">
+                Audit Now →
+              </button>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 truncate">
+              <span>Zero OHLCV inversions verified</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- HISTORICAL SUB-NAVIGATION TABS -->
+        <nav class="border-b border-slate-800 bg-slate-900/50 px-4 rounded-xl flex space-x-6 text-xs font-medium">
+          <button onclick="switchTab('charts')" id="tab-btn-charts" class="py-3 border-b-2 border-emerald-500 text-white flex items-center gap-2 font-semibold">
+            <span>🏛️ Historical Chart & Inspector</span>
+          </button>
+          <button onclick="switchTab('symbols')" id="tab-btn-symbols" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
+            <span>📋 Symbol Coverage Matrix</span>
+          </button>
+          <button onclick="switchTab('integrity')" id="tab-btn-integrity" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
+            <span>🛡️ Data Integrity & Gaps</span>
+          </button>
+          <button onclick="switchTab('harvester')" id="tab-btn-harvester" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2">
+            <span>🚀 REST Harvester Runner</span>
+          </button>
+        </nav>
+
+        <!-- SUB-TAB 1: FINANCIAL CHART & DATA EXPLORER -->
+        <div id="tab-charts" class="space-y-4">
+          <!-- Informational Explanatory Banner (Strictly Historical) -->
+          <div class="text-xs px-4 py-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800/50 text-emerald-300 font-mono flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span>🏛️</span>
+              <span><strong>Historical Archive Mode</strong>: Querying permanent canonical 1m bars from <code>data/historical.duckdb</code> with Source-Tiering (Massive, Binance, Capital REST). Displayed in <strong>US Eastern Time (NYSE: EST/EDT)</strong>. Fully backfillable.</span>
+            </div>
+            <span class="text-[11px] text-emerald-400/80 font-mono">NYSE Exchange Time (ET)</span>
+          </div>
+
+          <!-- Chart Controls Toolbar -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+            <!-- Symbol Selection & Quick Pills -->
+            <div class="flex items-center flex-wrap gap-2">
+              <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Symbol:</label>
+              <select id="chart-symbol-select" onchange="handleSymbolChange(this.value)" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono font-bold focus:outline-none focus:border-emerald-500">
+                <option value="SPY">SPY (S&P 500 ETF)</option>
+                <option value="QQQ">QQQ (Nasdaq 100 ETF)</option>
+                <option value="NVDA" selected>NVDA (NVIDIA)</option>
+                <option value="AAPL">AAPL (Apple)</option>
+                <option value="TSLA">TSLA (Tesla)</option>
+                <option value="AMD">AMD (Advanced Micro Devices)</option>
+                <option value="AMZN">AMZN (Amazon)</option>
+                <option value="BTCUSDT">BTCUSDT (Bitcoin)</option>
+              </select>
+
+              <!-- Quick Access Pills -->
+              <div class="hidden sm:flex items-center gap-1.5 ml-2">
+                <button onclick="handleSymbolChange('NVDA')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">NVDA</button>
+                <button onclick="handleSymbolChange('SPY')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">SPY</button>
+                <button onclick="handleSymbolChange('QQQ')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">QQQ</button>
+                <button onclick="handleSymbolChange('TSLA')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">TSLA</button>
+                <button onclick="handleSymbolChange('BTCUSDT')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">BTC</button>
+              </div>
+            </div>
+
+            <!-- Timeframe Buttons -->
+            <div class="flex items-center gap-1 bg-slate-950 border border-slate-800 p-1 rounded-lg">
+              <button onclick="setTimeframe('1m')" id="tf-1m" class="px-2.5 py-1 rounded text-xs font-mono font-bold bg-emerald-600 text-white">1m</button>
+              <button onclick="setTimeframe('5m')" id="tf-5m" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">5m</button>
+              <button onclick="setTimeframe('15m')" id="tf-15m" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">15m</button>
+              <button onclick="setTimeframe('30m')" id="tf-30m" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">30m</button>
+              <button onclick="setTimeframe('1h')" id="tf-1h" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">1h</button>
+              <button onclick="setTimeframe('4h')" id="tf-4h" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">4h</button>
+              <button onclick="setTimeframe('1d')" id="tf-1d" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">1D</button>
+            </div>
+
+            <!-- Limit Selector & Actions -->
+            <div class="flex items-center gap-2">
+              <label class="text-xs text-slate-400">Bars:</label>
+              <select id="chart-limit-select" onchange="loadHistoricalChart()" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-emerald-500">
+                <option value="300">300</option>
+                <option value="500" selected>500</option>
+                <option value="1000">1,000</option>
+                <option value="2500">2,500</option>
+                <option value="5000">5,000</option>
+              </select>
+              <button onclick="loadHistoricalChart()" class="p-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg text-xs" title="Refresh Chart">
+                ↻
+              </button>
+            </div>
+          </div>
+
+          <!-- Historical Chart Display Container -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg p-4 relative">
+            <!-- Interactive Hover OHLCV Legend -->
+            <div id="chart-legend" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono text-slate-300 pb-2 border-b border-slate-800/80 mb-2">
+              <span id="legend-db-badge" class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold">HISTORICAL DB</span>
+              <span id="legend-tz-badge" class="px-2 py-0.5 rounded text-[10px] bg-blue-950 text-blue-400 border border-blue-800 font-mono font-bold">NYSE (ET)</span>
+              <span class="text-white font-bold" id="legend-symbol">NVDA (1m)</span>
+              <span id="legend-time" class="text-slate-400">--</span>
+              <span>O: <span id="legend-open" class="text-white font-bold">--</span></span>
+              <span>H: <span id="legend-high" class="text-emerald-400 font-bold">--</span></span>
+              <span>L: <span id="legend-low" class="text-rose-400 font-bold">--</span></span>
+              <span>C: <span id="legend-close" class="text-white font-bold">--</span></span>
+              <span>Vol: <span id="legend-volume" class="text-slate-300 font-bold">--</span></span>
+              <span>Chg: <span id="legend-change" class="font-bold">--</span></span>
+              <span id="legend-source" class="px-2 py-0.2 rounded text-[10px] bg-slate-800 text-slate-400 uppercase">--</span>
+            </div>
+
+            <!-- Canvas Container -->
+            <div id="tv-chart-container" class="w-full h-[450px] relative">
+              <!-- Loading Overlay -->
+              <div id="chart-loading" class="absolute inset-0 bg-slate-950/70 backdrop-blur-sm z-10 flex items-center justify-center text-sm font-semibold text-emerald-400 gap-2">
+                <span class="live-pulse">⏳</span> Querying historical DuckDB engine...
+              </div>
+            </div>
+          </div>
+
+          <!-- Raw Candle Inspector & Exporter Table -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+            <div class="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                  <span>🔬 Raw OHLCV Candle Inspector</span>
+                  <span id="inspector-count-badge" class="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-300 font-mono">0 bars loaded</span>
+                </h3>
+                <p id="inspector-desc" class="text-xs text-slate-400">Inspect underlying 1-minute or aggregated bars directly from historical.duckdb in US Eastern Time (NYSE: EST/EDT).</p>
+              </div>
+              <div class="flex items-center gap-3">
+                <input type="text" id="inspector-search" oninput="filterInspectorTable()" placeholder="Search date/time..." class="px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500 font-mono">
+                <button onclick="exportCandlesToCSV()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition flex items-center gap-1.5">
+                  <span>📥</span> Export CSV
+                </button>
+              </div>
+            </div>
+
+            <div class="max-h-80 overflow-y-auto">
+              <table class="w-full text-left text-xs border-collapse">
+                <thead id="inspector-thead" class="sticky top-0 bg-slate-850 border-b border-slate-800 text-slate-400 uppercase font-mono text-[11px] z-10">
+                  <tr>
+                    <th class="py-2.5 px-4">Timestamp (US/Eastern)</th>
+                    <th class="py-2.5 px-4 text-right">Open</th>
+                    <th class="py-2.5 px-4 text-right">High</th>
+                    <th class="py-2.5 px-4 text-right">Low</th>
+                    <th class="py-2.5 px-4 text-right">Close</th>
+                    <th class="py-2.5 px-4 text-right">Volume</th>
+                    <th class="py-2.5 px-4 text-center">Session</th>
+                    <th class="py-2.5 px-4 text-center">Source</th>
+                  </tr>
+                </thead>
+                <tbody id="inspector-table-body" class="divide-y divide-slate-800/80 text-slate-300 font-mono">
+                  <tr>
+                    <td colspan="8" class="py-6 text-center text-slate-500">Load chart to inspect candles.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUB-TAB 2: SYMBOL COVERAGE MATRIX -->
+        <div id="tab-symbols" class="space-y-4 hidden">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/60 p-4 border border-slate-800 rounded-xl">
+            <div>
+              <h2 class="text-base font-semibold text-white">Tracked Market Symbols & Coverage Matrix</h2>
+              <p class="text-xs text-slate-400">Inventory of tracked symbols from symbol_map (historical_database_symbols in historical.duckdb), bar counts, earliest/latest timestamps, and sources.</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <input type="text" id="symbol-search" oninput="filterSymbolMatrix()" placeholder="Filter symbols..." class="px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500 font-mono">
+              <button onclick="openAddSymbolModal()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg transition whitespace-nowrap">
+                + Add Symbol
+              </button>
+            </div>
+          </div>
+
+          <!-- Rich Symbol Matrix Table -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+            <table class="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr class="border-b border-slate-800 bg-slate-855/60 text-slate-400 uppercase font-mono text-[11px]">
+                  <th class="py-3 px-4">Symbol</th>
+                  <th class="py-3 px-4">Class</th>
+                  <th class="py-3 px-4 text-right">Bars Stored</th>
+                  <th class="py-3 px-4">Coverage Date Range</th>
+                  <th class="py-3 px-4 text-right">Latest Close</th>
+                  <th class="py-3 px-4 text-center">Freshness</th>
+                  <th class="py-3 px-4">Data Sources</th>
+                  <th class="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="symbols-matrix-body" class="divide-y divide-slate-800 text-slate-300 font-mono">
+                <tr>
+                  <td colspan="8" class="py-6 text-center text-slate-500">Loading comprehensive coverage matrix...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- SUB-TAB 3: DATA INTEGRITY ENGINE -->
+        <div id="tab-integrity" class="space-y-6 hidden">
+          <!-- Audit Header Banner -->
+          <div id="audit-banner" class="p-5 rounded-xl border border-slate-800 bg-slate-900 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                <span id="audit-result-icon">🔍</span>
+                <span id="audit-result-title">Data Integrity Engine</span>
+              </h3>
+              <p id="audit-result-subtitle" class="text-xs text-slate-400 mt-1">
+                Conducts continuous 1-minute candle gap scanning, OHLCV sanity bounds validation, and cross-database price drift reconciliation.
+              </p>
+            </div>
+            <div class="flex items-center gap-3">
+              <select id="integrity-symbol-target" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-500">
+                <option value="">Audit Top 5 Symbols</option>
+                <option value="NVDA">NVDA Only</option>
+                <option value="SPY">SPY Only</option>
+                <option value="QQQ">QQQ Only</option>
+                <option value="TSLA">TSLA Only</option>
+              </select>
+              <button onclick="runIntegrityAudit()" id="run-audit-btn" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg transition flex items-center gap-1.5 shadow">
+                <span>🔍</span> Run Deep Audit
+              </button>
+            </div>
+          </div>
+
+          <!-- Continuity Gaps Section -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+            <h4 class="text-sm font-semibold text-white flex items-center gap-2">
+              <span>⏱️ 1-Minute Candle Continuity & Coverage</span>
+            </h4>
+            <div id="gaps-container" class="space-y-2">
+              <div class="text-xs text-slate-500">Run audit to view continuity reports.</div>
+            </div>
+          </div>
+
+          <!-- OHLCV Bounds Sanity Section -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+            <h4 class="text-sm font-semibold text-white flex items-center gap-2">
+              <span>⚖️ OHLCV Sanity & Bounds Validation</span>
+            </h4>
+            <div id="anomalies-container">
+              <div class="text-xs text-slate-500">Inspects for inverted High &lt; Low, negative prices, or abnormal volume spikes.</div>
+            </div>
+          </div>
+
+          <!-- Cross-DB Drift Section -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+            <h4 class="text-sm font-semibold text-white flex items-center gap-2">
+              <span>📈 REST vs Stream Price Drift Reconciliation</span>
+            </h4>
+            <div id="drift-container">
+              <div class="text-xs text-slate-500">Reconciles overlapping candle closes between historical.duckdb and streaming.duckdb.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUB-TAB 4: HARVESTER AUTOMATION & LOGS -->
+        <div id="tab-harvester" class="space-y-6 hidden">
+          <!-- Harvester Runner Control Card -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h3 class="text-base font-bold text-white flex items-center gap-2">
+                <span>🚀 Scheduled Session Harvester (main.py)</span>
+                <span id="harvester-status-pill" class="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-slate-800 text-slate-300">
+                  IDLE
+                </span>
+              </h3>
+              <p class="text-xs text-slate-400 mt-1">
+                Executes market session logic, Polygon/Massive historical ingestion, Capital.com active session append, and source-tiering storage.
+              </p>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <input type="date" id="harvester-date-input" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-500">
+              <button onclick="triggerHarvestRun()" id="harvest-run-btn" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg transition flex items-center gap-1.5 shadow">
+                <span>▶</span> Trigger Harvest
+              </button>
+            </div>
+          </div>
+
+          <!-- Live Execution Log Terminal -->
+          <div class="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+            <div class="bg-slate-900 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between">
+              <div class="flex items-center gap-2 text-xs font-mono text-slate-400">
+                <span class="h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+                <span>Execution Console Terminal</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button onclick="pollHarvesterLogs()" class="text-xs text-slate-400 hover:text-white transition">↻ Refresh Logs</button>
+                <button onclick="clearTerminalLogs()" class="text-xs text-slate-400 hover:text-white transition">Clear</button>
+              </div>
+            </div>
+            <div id="terminal-logs" class="p-4 font-mono text-xs text-slate-300 h-96 overflow-y-auto whitespace-pre-wrap leading-relaxed select-text">
+              <div class="text-slate-600">Console ready. Trigger a harvest run to view live output logs.</div>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+
+      <!-- ============================================================== -->
+      <!-- VIEW 2: DEDICATED STREAMING DASHBOARD                         -->
+      <!-- ============================================================== -->
+      <section id="view-streaming" class="space-y-6 hidden">
+
+        <!-- Streamer Daemon Telemetry & Control Banner -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
+          <div class="flex items-center gap-4">
+            <div id="stream-daemon-icon" class="h-12 w-12 rounded-xl bg-indigo-950/60 border border-indigo-800/80 flex items-center justify-center text-2xl">
+              📡
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="text-base font-bold text-white">Capital.com Tick Streaming Daemon</h3>
+                <span id="stream-daemon-pill" class="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-slate-800 text-slate-300">
+                  CHECKING
+                </span>
+                <div id="stream-status-badge" class="flex items-center gap-2 px-2.5 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-xs font-medium">
+                  <span class="h-2 w-2 rounded-full bg-slate-400"></span>
+                  <span id="stream-status-text">STREAM: CHECKING</span>
+                </div>
+              </div>
+              <p id="stream-daemon-details" class="text-xs text-slate-400 mt-1">
+                Process ID: <span class="font-mono text-slate-300">--</span> • Ingesting raw tick quotes to <code class="text-indigo-400 font-mono">data/streaming.duckdb</code>
+              </p>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button onclick="triggerStreamReload()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-lg transition flex items-center gap-1.5 shadow">
+              <span>⚡</span> Hot-Reload Subscriptions
+            </button>
+          </div>
+        </div>
+
+        <!-- KPI SUMMARY STRIP (STREAMING) -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="bg-slate-900/70 border border-slate-800/80 rounded-xl p-4">
+            <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Streaming Storage</div>
+            <div class="mt-2 flex items-baseline justify-between">
+              <span id="kpi-stream-rows" class="text-xl font-bold font-mono text-white">--</span>
+              <span class="text-xs font-mono text-indigo-400">streaming.duckdb</span>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400">Raw ticks table (tick_data)</div>
+          </div>
+
+          <div class="bg-slate-900/70 border border-slate-800/80 rounded-xl p-4">
+            <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Ingestion Velocity</div>
+            <div class="mt-2 flex items-baseline justify-between">
+              <span id="kpi-stream-rate" class="text-xl font-bold font-mono text-emerald-400">0 ticks/m</span>
+              <span class="text-xs font-mono text-slate-400">WebSocket</span>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400">High-frequency tick intake</div>
+          </div>
+
+          <div class="bg-slate-900/70 border border-slate-800/80 rounded-xl p-4">
+            <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Latest Tick Arrival</div>
+            <div class="mt-2 flex items-baseline justify-between">
+              <span id="kpi-stream-last-ts" class="text-xl font-bold font-mono text-slate-200">--</span>
+              <span class="text-xs font-mono text-indigo-400">UTC</span>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400">Active quote stream timestamp</div>
+          </div>
+        </div>
+
+        <!-- Ephemeral Buffer Architecture Warning/Notice -->
+        <div class="text-xs px-4 py-3 rounded-xl bg-indigo-950/40 border border-indigo-800/60 text-indigo-300 font-mono flex items-start gap-3 shadow-sm">
+          <span class="text-lg">⚠️</span>
+          <div>
+            <div class="font-bold text-white uppercase tracking-wider text-[11px] mb-0.5">Live Ephemeral Buffer Architecture:</div>
+            <p class="text-slate-300 leading-relaxed">
+              WebSocket tick quotes are stored strictly in <code class="text-indigo-400 font-bold">data/streaming.duckdb</code>. 
+              Because WebSocket streams only emit live events, if this daemon is stopped, disconnected, or the server is undeployed, 
+              <strong>ticks during downtime cannot be recovered via WebSocket</strong>.
+              Historical gaps must always be fetched and backfilled into <code class="text-emerald-400 font-bold">data/historical.duckdb</code> using the REST Harvester.
             </p>
           </div>
         </div>
 
-        <div class="flex items-center gap-3">
-          <button onclick="triggerStreamReload()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-lg transition flex items-center gap-1.5 shadow">
-            <span>⚡</span> Hot-Reload Subscriptions
-          </button>
-        </div>
-      <!-- Ephemeral Buffer Architecture Warning/Notice -->
-      <div class="text-xs px-4 py-3 rounded-xl bg-indigo-950/40 border border-indigo-800/60 text-indigo-300 font-mono flex items-start gap-3 shadow-sm">
-        <span class="text-lg">⚠️</span>
-        <div>
-          <div class="font-bold text-white uppercase tracking-wider text-[11px] mb-0.5">Live Ephemeral Buffer Architecture:</div>
-          <p class="text-slate-300 leading-relaxed">
-            WebSocket tick quotes are stored strictly in <code class="text-indigo-400 font-bold">data/streaming.duckdb</code>. 
-            Because WebSocket streams only emit live events, if this daemon is stopped, disconnected, or the server is undeployed, 
-            <strong>ticks during downtime cannot be recovered via WebSocket</strong>.
-            Historical gaps must always be fetched and backfilled into <code class="text-emerald-400 font-bold">data/historical.duckdb</code> using the REST Harvester.
-          </p>
-        </div>
-      </div>
+        <!-- DEDICATED STREAMING CANDLESTICK CHART -->
+        <div class="space-y-4">
+          <!-- Streaming Chart Controls Toolbar (Strictly Streaming) -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+            <!-- Dedicated Streaming Symbol Selector -->
+            <div class="flex items-center flex-wrap gap-2">
+              <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Streaming Symbol:</label>
+              <select id="streaming-symbol-select" onchange="handleStreamingSymbolChange(this.value)" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono font-bold focus:outline-none focus:border-indigo-500">
+                <option value="NVDA" selected>NVDA</option>
+                <option value="SPY">SPY</option>
+                <option value="QQQ">QQQ</option>
+                <option value="AAPL">AAPL</option>
+                <option value="TSLA">TSLA</option>
+                <option value="BTCUSDT">BTCUSDT</option>
+              </select>
 
-      <!-- Live Ticker Tape Wall -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-        <div class="flex items-center justify-between">
-          <h4 class="text-sm font-semibold text-white flex items-center gap-2">
-            <span>📈 Live Price Tape (Streaming Ticks)</span>
-          </h4>
-          <span class="text-xs text-slate-400">Updates live every 3s</span>
-        </div>
+              <!-- Quick Access Pills -->
+              <div class="hidden sm:flex items-center gap-1.5 ml-2">
+                <button onclick="handleStreamingSymbolChange('NVDA')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">NVDA</button>
+                <button onclick="handleStreamingSymbolChange('SPY')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">SPY</button>
+                <button onclick="handleStreamingSymbolChange('QQQ')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">QQQ</button>
+                <button onclick="handleStreamingSymbolChange('TSLA')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">TSLA</button>
+                <button onclick="handleStreamingSymbolChange('BTCUSDT')" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-mono">BTC</button>
+              </div>
+            </div>
 
-        <!-- Ticker Cards Grid -->
-        <div id="stream-ticker-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          <!-- Populated dynamically -->
-        </div>
-      </div>
+            <!-- Streaming Timeframe Buttons -->
+            <div class="flex items-center gap-1 bg-slate-950 border border-slate-800 p-1 rounded-lg">
+              <button onclick="setStreamingTimeframe('1m')" id="streaming-tf-1m" class="px-2.5 py-1 rounded text-xs font-mono font-bold bg-indigo-600 text-white">1m</button>
+              <button onclick="setStreamingTimeframe('5m')" id="streaming-tf-5m" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">5m</button>
+              <button onclick="setStreamingTimeframe('15m')" id="streaming-tf-15m" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">15m</button>
+              <button onclick="setStreamingTimeframe('30m')" id="streaming-tf-30m" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">30m</button>
+              <button onclick="setStreamingTimeframe('1h')" id="streaming-tf-1h" class="px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white">1h</button>
+            </div>
 
-      <!-- Raw Stream Ticks Stream Table -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
-        <div class="p-4 border-b border-slate-800 flex items-center justify-between">
-          <h4 class="text-sm font-semibold text-white flex items-center gap-2">
-            <span>📜 Incoming Ticks Feed (Last 50 Quotes)</span>
-          </h4>
-          <span id="tape-last-refreshed" class="text-xs text-slate-500 font-mono">--</span>
-        </div>
-
-        <div class="max-h-96 overflow-y-auto">
-          <table class="w-full text-left text-xs border-collapse">
-            <thead class="sticky top-0 bg-slate-850 border-b border-slate-800 text-slate-400 uppercase font-mono text-[11px]">
-              <tr>
-                <th class="py-2.5 px-4">Time (UTC)</th>
-                <th class="py-2.5 px-4">Symbol</th>
-                <th class="py-2.5 px-4 text-right">Price</th>
-                <th class="py-2.5 px-4 text-right">Bid</th>
-                <th class="py-2.5 px-4 text-right">Ask</th>
-                <th class="py-2.5 px-4 text-right">Spread</th>
-                <th class="py-2.5 px-4 text-center">Source</th>
-              </tr>
-            </thead>
-            <tbody id="tape-table-body" class="divide-y divide-slate-800 text-slate-300 font-mono">
-              <tr>
-                <td colspan="7" class="py-6 text-center text-slate-500">Connecting to tick tape...</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ========================================== -->
-    <!-- TAB 3: SYMBOL COVERAGE MATRIX              -->
-    <!-- ========================================== -->
-    <section id="tab-symbols" class="space-y-4 hidden">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/60 p-4 border border-slate-800 rounded-xl">
-        <div>
-          <h2 class="text-base font-semibold text-white">Tracked Market Symbols & Coverage Matrix</h2>
-          <p class="text-xs text-slate-400">Inventory of tracked symbols from symbol_map, bar counts, earliest/latest recorded timestamps, and primary data sources.</p>
-        </div>
-        <div class="flex items-center gap-3">
-          <input type="text" id="symbol-search" oninput="filterSymbolMatrix()" placeholder="Filter symbols..." class="px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500 font-mono">
-          <button onclick="openAddSymbolModal()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg transition whitespace-nowrap">
-            + Add Symbol
-          </button>
-        </div>
-      </div>
-
-      <!-- Rich Symbol Matrix Table -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
-        <table class="w-full text-left text-xs border-collapse">
-          <thead>
-            <tr class="border-b border-slate-800 bg-slate-850/60 text-slate-400 uppercase font-mono text-[11px]">
-              <th class="py-3 px-4">Symbol</th>
-              <th class="py-3 px-4">Class</th>
-              <th class="py-3 px-4 text-right">Bars Stored</th>
-              <th class="py-3 px-4">Coverage Date Range</th>
-              <th class="py-3 px-4 text-right">Latest Close</th>
-              <th class="py-3 px-4 text-center">Freshness</th>
-              <th class="py-3 px-4">Data Sources</th>
-              <th class="py-3 px-4 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="symbols-matrix-body" class="divide-y divide-slate-800 text-slate-300 font-mono">
-            <tr>
-              <td colspan="8" class="py-6 text-center text-slate-500">Loading comprehensive coverage matrix...</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- ========================================== -->
-    <!-- TAB 4: DATA INTEGRITY ENGINE               -->
-    <!-- ========================================== -->
-    <section id="tab-integrity" class="space-y-6 hidden">
-      <!-- Audit Header Banner -->
-      <div id="audit-banner" class="p-5 rounded-xl border border-slate-800 bg-slate-900 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h3 class="text-sm font-bold text-white flex items-center gap-2">
-            <span id="audit-result-icon">🔍</span>
-            <span id="audit-result-title">Data Integrity Engine</span>
-          </h3>
-          <p id="audit-result-subtitle" class="text-xs text-slate-400 mt-1">
-            Conducts continuous 1-minute candle gap scanning, OHLCV sanity bounds validation, and cross-database price drift reconciliation.
-          </p>
-        </div>
-        <div class="flex items-center gap-3">
-          <select id="integrity-symbol-target" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-500">
-            <option value="">Audit Top 5 Symbols</option>
-            <option value="NVDA">NVDA Only</option>
-            <option value="SPY">SPY Only</option>
-            <option value="QQQ">QQQ Only</option>
-            <option value="TSLA">TSLA Only</option>
-          </select>
-          <button onclick="runIntegrityAudit()" id="run-audit-btn" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg transition flex items-center gap-1.5 shadow">
-            <span>🔍</span> Run Deep Audit
-          </button>
-        </div>
-      </div>
-
-      <!-- Continuity Gaps Section -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-        <h4 class="text-sm font-semibold text-white flex items-center gap-2">
-          <span>⏱️ 1-Minute Candle Continuity & Coverage</span>
-        </h4>
-        <div id="gaps-container" class="space-y-2">
-          <div class="text-xs text-slate-500">Run audit to view continuity reports.</div>
-        </div>
-      </div>
-
-      <!-- OHLCV Bounds Sanity Section -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-        <h4 class="text-sm font-semibold text-white flex items-center gap-2">
-          <span>⚖️ OHLCV Sanity & Bounds Validation</span>
-        </h4>
-        <div id="anomalies-container">
-          <div class="text-xs text-slate-500">Inspects for inverted High &lt; Low, negative prices, or abnormal volume spikes.</div>
-        </div>
-      </div>
-
-      <!-- Cross-DB Drift Section -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-        <h4 class="text-sm font-semibold text-white flex items-center gap-2">
-          <span>📈 REST vs Stream Price Drift Reconciliation</span>
-        </h4>
-        <div id="drift-container">
-          <div class="text-xs text-slate-500">Reconciles overlapping candle closes between historical.duckdb and streaming.duckdb.</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ========================================== -->
-    <!-- TAB 5: HARVESTER AUTOMATION & LOGS         -->
-    <!-- ========================================== -->
-    <section id="tab-harvester" class="space-y-6 hidden">
-      <!-- Harvester Runner Control Card -->
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h3 class="text-base font-bold text-white flex items-center gap-2">
-            <span>🚀 Scheduled Session Harvester (main.py)</span>
-            <span id="harvester-status-pill" class="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-slate-800 text-slate-300">
-              IDLE
-            </span>
-          </h3>
-          <p class="text-xs text-slate-400 mt-1">
-            Executes market session logic, Polygon/Massive historical ingestion, Capital.com active session append, and source-tiering storage.
-          </p>
-        </div>
-
-        <div class="flex items-center gap-3">
-          <input type="date" id="harvester-date-input" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-500">
-          <button onclick="triggerHarvestRun()" id="harvest-run-btn" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg transition flex items-center gap-1.5 shadow">
-            <span>▶</span> Trigger Harvest
-          </button>
-        </div>
-      </div>
-
-      <!-- Live Execution Log Terminal -->
-      <div class="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
-        <div class="bg-slate-900 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between">
-          <div class="flex items-center gap-2 text-xs font-mono text-slate-400">
-            <span class="h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
-            <span>Execution Console Terminal</span>
+            <!-- Limit Selector & Actions -->
+            <div class="flex items-center gap-2">
+              <label class="text-xs text-slate-400">Bars:</label>
+              <select id="streaming-chart-limit-select" onchange="loadStreamingChart()" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-indigo-500">
+                <option value="100">100</option>
+                <option value="300">300</option>
+                <option value="500" selected>500</option>
+                <option value="1000">1,000</option>
+              </select>
+              <button onclick="loadStreamingChart()" class="p-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg text-xs" title="Refresh Live Chart">
+                ↻
+              </button>
+            </div>
           </div>
-          <div class="flex items-center gap-2">
-            <button onclick="pollHarvesterLogs()" class="text-xs text-slate-400 hover:text-white transition">↻ Refresh Logs</button>
-            <button onclick="clearTerminalLogs()" class="text-xs text-slate-400 hover:text-white transition">Clear</button>
+
+          <!-- Streaming Chart Display Container -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg p-4 relative">
+            <!-- Streaming Hover OHLCV Legend -->
+            <div id="streaming-chart-legend" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono text-slate-300 pb-2 border-b border-slate-800/80 mb-2">
+              <span class="px-2 py-0.5 rounded text-[10px] bg-indigo-950 text-indigo-400 border border-indigo-800 font-mono font-bold">STREAMING DB</span>
+              <span class="px-2 py-0.5 rounded text-[10px] bg-blue-950 text-blue-400 border border-blue-800 font-mono font-bold">LIVE BUFFER</span>
+              <span class="text-white font-bold" id="streaming-legend-symbol">NVDA (1m)</span>
+              <span id="streaming-legend-time" class="text-slate-400">--</span>
+              <span>O: <span id="streaming-legend-open" class="text-white font-bold">--</span></span>
+              <span>H: <span id="streaming-legend-high" class="text-indigo-400 font-bold">--</span></span>
+              <span>L: <span id="streaming-legend-low" class="text-rose-400 font-bold">--</span></span>
+              <span>C: <span id="streaming-legend-close" class="text-white font-bold">--</span></span>
+              <span>Vol: <span id="streaming-legend-volume" class="text-slate-300 font-bold">--</span></span>
+              <span>Ticks: <span id="streaming-legend-ticks" class="text-indigo-300 font-bold">--</span></span>
+              <span class="px-2 py-0.2 rounded text-[10px] bg-indigo-900/60 text-indigo-300 font-mono font-semibold">TICK-RESAMPLED</span>
+            </div>
+
+            <!-- Canvas Container -->
+            <div id="streaming-chart-container" class="w-full h-[450px] relative">
+              <div id="streaming-chart-loading" class="absolute inset-0 bg-slate-950/70 backdrop-blur-sm z-10 flex items-center justify-center text-sm font-semibold text-indigo-400 gap-2">
+                <span class="live-pulse">⏳</span> Aggregating ticks from streaming DuckDB...
+              </div>
+            </div>
           </div>
         </div>
-        <div id="terminal-logs" class="p-4 font-mono text-xs text-slate-300 h-96 overflow-y-auto whitespace-pre-wrap leading-relaxed select-text">
-          <div class="text-slate-600">Console ready. Trigger a harvest run to view live output logs.</div>
-        </div>
-      </div>
-    </section>
 
-  </main>
+        <!-- Live Ticker Tape Wall -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <h4 class="text-sm font-semibold text-white flex items-center gap-2">
+              <span>📈 Live Price Tape (Streaming Ticks)</span>
+            </h4>
+            <span class="text-xs text-slate-400">Updates live every 3s</span>
+          </div>
+
+          <!-- Ticker Cards Grid -->
+          <div id="stream-ticker-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Raw Stream Ticks Stream Table -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+          <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+            <h4 class="text-sm font-semibold text-white flex items-center gap-2">
+              <span>📜 Incoming Ticks Feed (Last 50 Quotes)</span>
+            </h4>
+            <span id="tape-last-refreshed" class="text-xs text-slate-500 font-mono">--</span>
+          </div>
+
+          <div class="max-h-96 overflow-y-auto">
+            <table class="w-full text-left text-xs border-collapse">
+              <thead class="sticky top-0 bg-slate-850 border-b border-slate-800 text-slate-400 uppercase font-mono text-[11px]">
+                <tr>
+                  <th class="py-2.5 px-4">Time (UTC)</th>
+                  <th class="py-2.5 px-4">Symbol</th>
+                  <th class="py-2.5 px-4 text-right">Price</th>
+                  <th class="py-2.5 px-4 text-right">Bid</th>
+                  <th class="py-2.5 px-4 text-right">Ask</th>
+                  <th class="py-2.5 px-4 text-right">Spread</th>
+                  <th class="py-2.5 px-4 text-center">Source</th>
+                </tr>
+              </thead>
+              <tbody id="tape-table-body" class="divide-y divide-slate-800 text-slate-300 font-mono">
+                <tr>
+                  <td colspan="7" class="py-6 text-center text-slate-500">Connecting to tick tape...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </section>
+
+    </main>
+  </div>
 
   <!-- ADD SYMBOL MODAL -->
   <div id="add-symbol-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
