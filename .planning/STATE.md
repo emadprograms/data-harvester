@@ -43,7 +43,7 @@ None. Milestone and quick tasks verified with 272 passed / 0 failed.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
-| 261001-h31 | Organize Windows scripts to tools/windows and add native macOS service management suite | 2026-10-01 | pending | .planning/quick/261001-h31-all-of-the-scripts-are-for-windows-we-ar |
+| 261001-h31 | Organize Windows scripts to tools/windows and add native macOS service management suite | 2026-10-01 | 06a95551 | .planning/quick/261001-h31-all-of-the-scripts-are-for-windows-we-ar |
 
 ## Deferred Items
 
