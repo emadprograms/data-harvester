@@ -149,12 +149,12 @@ def test_dashboard_concurrent_api_requests_no_duckdb_conflict(temp_test_db_dir, 
 
     urls = [
         f"http://127.0.0.1:{port}/api/status",
-        f"http://127.0.0.1:{port}/api/symbols",
+        f"http://127.0.0.1:{port}/api/symbols?source=historical",
         f"http://127.0.0.1:{port}/api/status",
-        f"http://127.0.0.1:{port}/api/symbols",
+        f"http://127.0.0.1:{port}/api/symbols?source=historical",
         f"http://127.0.0.1:{port}/api/integrity?symbol=AAPL",
         f"http://127.0.0.1:{port}/api/status",
-        f"http://127.0.0.1:{port}/api/symbols",
+        f"http://127.0.0.1:{port}/api/symbols?source=historical",
     ] * 2  # 14 concurrent requests
 
     def request_worker(url):

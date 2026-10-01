@@ -58,7 +58,7 @@ def test_market_session_info_contract():
     ]
     for key in required_keys:
         assert key in info, f"Missing required key '{key}' in market session info"
-    assert info["phase"] in ["PRE_MARKET", "REGULAR", "AFTER_HOURS", "CLOSED", "WEEKEND", "HOLIDAY"]
+    assert info["phase"] in ["PRE_MARKET", "REGULAR", "AFTER_HOURS", "CLOSED", "WEEKEND", "HOLIDAY", "OVERNIGHT"]
 
 
 def test_historical_overview_contract():

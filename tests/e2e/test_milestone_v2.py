@@ -95,12 +95,12 @@ def test_e2e_milestone_v2_full_lifecycle(e2e_environment):
         "massive_ticker": symbol,
         "yahoo_ticker": f"{symbol}.US"
     }
-    resp = requests.post(f"{base_url}/api/symbols", json=add_payload)
+    resp = requests.post(f"{base_url}/api/symbols?source=historical", json=add_payload)
     assert resp.status_code == 200
     assert resp.json()["success"] is True
 
     # Verify presence in symbols API
-    list_resp = requests.get(f"{base_url}/api/symbols")
+    list_resp = requests.get(f"{base_url}/api/symbols?source=historical")
     symbols = [s["display_name"] for s in list_resp.json()["symbols"]]
     assert symbol in symbols
 
@@ -140,12 +140,12 @@ def test_e2e_milestone_v2_full_lifecycle(e2e_environment):
     assert "drift" in audit_data
 
     # 5. Remove symbol via Dashboard API
-    del_resp = requests.delete(f"{base_url}/api/symbols/{symbol}")
+    del_resp = requests.delete(f"{base_url}/api/symbols/{symbol}?source=historical")
     assert del_resp.status_code == 200
     assert del_resp.json()["success"] is True
 
     # Verify removal
-    list_resp2 = requests.get(f"{base_url}/api/symbols")
+    list_resp2 = requests.get(f"{base_url}/api/symbols?source=historical")
     symbols2 = [s["display_name"] for s in list_resp2.json()["symbols"]]
     assert symbol not in symbols2
 
@@ -207,7 +207,7 @@ def test_concurrent_streaming_harvest_and_dashboard_stress(e2e_environment):
         try:
             for _ in range(10):
                 r1 = requests.get(f"{base_url}/api/status")
-                r2 = requests.get(f"{base_url}/api/symbols")
+                r2 = requests.get(f"{base_url}/api/symbols?source=historical")
                 if r1.status_code != 200 or r2.status_code != 200:
                     errors.append(f"Dashboard query failed: r1={r1.status_code}, r2={r2.status_code}")
                 time.sleep(0.02)

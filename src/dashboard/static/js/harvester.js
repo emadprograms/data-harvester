@@ -104,7 +104,7 @@ async function handleAddSymbol(e) {
   const yah = document.getElementById('input-yahoo').value.trim().toUpperCase() || null;
 
   try {
-    const res = await fetch(`${API_BASE}/api/symbols`, {
+    const res = await fetch(`${API_BASE}/api/historical/symbols`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -132,7 +132,7 @@ async function handleAddSymbol(e) {
 async function handleDeleteSymbol(symbol) {
   if (!confirm(`Are you sure you want to remove ${symbol} from active tracking?`)) return;
   try {
-    const res = await fetch(`${API_BASE}/api/symbols/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
+    const res = await fetch(`${API_BASE}/api/historical/symbols/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
     const data = await res.json();
     if (data.success) {
       showToast(`🗑️ Symbol ${symbol} removed and streamer signaled!`);

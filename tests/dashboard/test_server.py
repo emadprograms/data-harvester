@@ -53,7 +53,7 @@ def test_api_status_endpoint(dashboard_test_server):
 
 def test_api_symbols_list_endpoint(dashboard_test_server):
     """Verify GET /api/symbols returns inventory list from database."""
-    resp = requests.get(f"{dashboard_test_server}/api/symbols")
+    resp = requests.get(f"{dashboard_test_server}/api/symbols?source=historical")
     assert resp.status_code == 200
     data = resp.json()
     assert "symbols" in data
@@ -72,22 +72,22 @@ def test_api_symbols_add_and_delete_lifecycle(dashboard_test_server):
         "massive_ticker": test_symbol,
         "yahoo_ticker": f"{test_symbol}.US"
     }
-    add_resp = requests.post(f"{dashboard_test_server}/api/symbols", json=add_payload)
+    add_resp = requests.post(f"{dashboard_test_server}/api/symbols?source=historical", json=add_payload)
     assert add_resp.status_code == 200
     assert add_resp.json()["success"] is True
 
     # 2. Verify symbol is in inventory
-    list_resp = requests.get(f"{dashboard_test_server}/api/symbols")
+    list_resp = requests.get(f"{dashboard_test_server}/api/symbols?source=historical")
     symbols = [s["display_name"] for s in list_resp.json()["symbols"]]
     assert test_symbol in symbols
 
     # 3. Delete symbol
-    del_resp = requests.delete(f"{dashboard_test_server}/api/symbols/{test_symbol}")
+    del_resp = requests.delete(f"{dashboard_test_server}/api/symbols/{test_symbol}?source=historical")
     assert del_resp.status_code == 200
     assert del_resp.json()["success"] is True
 
     # 4. Verify symbol is removed
-    list_resp2 = requests.get(f"{dashboard_test_server}/api/symbols")
+    list_resp2 = requests.get(f"{dashboard_test_server}/api/symbols?source=historical")
     symbols2 = [s["display_name"] for s in list_resp2.json()["symbols"]]
     assert test_symbol not in symbols2
 

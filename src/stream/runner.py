@@ -17,8 +17,6 @@ from src.database.operations import (
     save_ticks_to_storage,
     get_streaming_database_symbols_from_db,
     get_streaming_symbol_map_from_db,
-    get_historical_database_symbols_from_db,
-    get_symbol_map_from_db,
 )
 from src.stream.binance_stream import BinanceStreamer
 from src.stream.capital_stream import CapitalStreamer
@@ -143,21 +141,20 @@ class StreamingEngine:
             self.epic_to_display = {s: s for s in capital_symbols}
         else:
             s_map = get_streaming_database_symbols_from_db()
-            if not s_map:
-                s_map = get_historical_database_symbols_from_db()
             capital_symbols = []
             self.active_streaming_symbols = set()
             self.epic_to_display = {}
-            for display_name, tickers in s_map.items():
-                if tickers.get("is_active", True):
-                    self.active_streaming_symbols.add(display_name)
-                    c_ticker = tickers.get("capital_ticker")
-                    if c_ticker:
-                        capital_symbols.append(c_ticker)
-                        self.active_streaming_symbols.add(c_ticker)
-                        self.epic_to_display[c_ticker] = display_name
-                    else:
-                        self.epic_to_display[display_name] = display_name
+            if s_map:
+                for display_name, tickers in s_map.items():
+                    if tickers.get("is_active", True):
+                        self.active_streaming_symbols.add(display_name)
+                        c_ticker = tickers.get("capital_ticker")
+                        if c_ticker:
+                            capital_symbols.append(c_ticker)
+                            self.active_streaming_symbols.add(c_ticker)
+                            self.epic_to_display[c_ticker] = display_name
+                        else:
+                            self.epic_to_display[display_name] = display_name
 
         if not capital_symbols:
             capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
@@ -195,23 +192,22 @@ class StreamingEngine:
 
         # Discover symbols from streaming_database_symbols
         s_map = get_streaming_database_symbols_from_db()
-        if not s_map:
-            s_map = get_historical_database_symbols_from_db()
 
         capital_symbols = []
         self.active_streaming_symbols = set()
         self.epic_to_display = {}
 
-        for display_name, tickers in s_map.items():
-            if tickers.get("is_active", True):
-                self.active_streaming_symbols.add(display_name)
-                c_ticker = tickers.get("capital_ticker")
-                if c_ticker:
-                    capital_symbols.append(c_ticker)
-                    self.active_streaming_symbols.add(c_ticker)
-                    self.epic_to_display[c_ticker] = display_name
-                else:
-                    self.epic_to_display[display_name] = display_name
+        if s_map:
+            for display_name, tickers in s_map.items():
+                if tickers.get("is_active", True):
+                    self.active_streaming_symbols.add(display_name)
+                    c_ticker = tickers.get("capital_ticker")
+                    if c_ticker:
+                        capital_symbols.append(c_ticker)
+                        self.active_streaming_symbols.add(c_ticker)
+                        self.epic_to_display[c_ticker] = display_name
+                    else:
+                        self.epic_to_display[display_name] = display_name
 
         if not capital_symbols:
             capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
@@ -233,7 +229,7 @@ class StreamingEngine:
         # Optional Binance streamer (disabled by default per user specification)
         if self.enable_binance:
             binance_symbols = [
-                tickers.get("binance_ticker") for display_name, tickers in symbol_map.items()
+                tickers.get("binance_ticker") for display_name, tickers in (s_map or {}).items()
                 if tickers.get("binance_ticker")
             ] or ["btcusdt", "ethusdt"]
             self.binance_streamer = BinanceStreamer(

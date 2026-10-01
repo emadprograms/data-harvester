@@ -141,7 +141,7 @@ class TestDashboardRestEndpoints:
             assert "Raw OHLCV Candle Inspector" in html
 
     def test_endpoint_candles(self, dashboard_server):
-        status, data = http_get(f"{dashboard_server}/api/candles?symbol=AAPL&tf=5m&limit=10")
+        status, data = http_get(f"{dashboard_server}/api/candles?symbol=AAPL&tf=5m&limit=10&source=historical")
         assert status == 200
         assert data["symbol"] == "AAPL"
         assert data["timeframe"] == "5m"

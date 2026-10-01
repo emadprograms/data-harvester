@@ -46,7 +46,7 @@ def test_api_status(api_test_server):
 
 def test_api_symbols(api_test_server):
     """GET /api/symbols returns inventory list and count."""
-    resp = requests.get(f"{api_test_server}/api/symbols")
+    resp = requests.get(f"{api_test_server}/api/symbols?source=historical")
     assert resp.status_code == 200
     data = resp.json()
     assert "symbols" in data
@@ -169,7 +169,7 @@ def test_api_harvester_status_and_logs(api_test_server):
 
 def test_api_symbols_post_missing_field_400(api_test_server):
     """POST /api/symbols with missing display_name returns 400 Bad Request."""
-    resp = requests.post(f"{api_test_server}/api/symbols", json={"capital_ticker": "ABC"})
+    resp = requests.post(f"{api_test_server}/api/symbols?source=historical", json={"capital_ticker": "ABC"})
     assert resp.status_code == 400
     data = resp.json()
     assert data.get("success") is False
