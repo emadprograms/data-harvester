@@ -86,6 +86,7 @@ function switchStreamingTab(tabId) {
   if (normId.includes('chart')) normId = 'chart';
   else if (normId.includes('tape') || normId.includes('feed') || normId.includes('ticker')) normId = 'tape';
   else if (normId.includes('daemon') || normId.includes('control')) normId = 'daemon';
+  else if (normId.includes('symbol')) normId = 'symbols';
   else normId = 'chart';
 
   currentStreamingTab = normId;
@@ -95,9 +96,9 @@ function switchStreamingTab(tabId) {
     switchDashboardView('streaming');
   }
 
-  const tabs = ['chart', 'tape', 'daemon'];
+  const tabs = ['chart', 'tape', 'daemon', 'symbols'];
   tabs.forEach(t => {
-    const el = document.getElementById(`stream-tab-${t}`);
+    const el = document.getElementById(`streaming-tab-${t}`) || document.getElementById(`stream-tab-${t}`);
     const btn = document.getElementById(`streaming-tab-btn-${t}`);
     if (el) el.classList.add('hidden');
     if (btn) {
@@ -105,7 +106,7 @@ function switchStreamingTab(tabId) {
     }
   });
 
-  const activeEl = document.getElementById(`stream-tab-${normId}`);
+  const activeEl = document.getElementById(`streaming-tab-${normId}`) || document.getElementById(`stream-tab-${normId}`);
   const activeBtn = document.getElementById(`streaming-tab-btn-${normId}`);
   if (activeEl) activeEl.classList.remove('hidden');
   if (activeBtn) {
@@ -117,6 +118,10 @@ function switchStreamingTab(tabId) {
       initStreamingChart();
     } else {
       setTimeout(resizeStreamingChart, 50);
+    }
+  } else if (normId === 'symbols') {
+    if (typeof loadStreamingSymbolsTable === 'function') {
+      loadStreamingSymbolsTable();
     }
   }
 }
@@ -187,7 +192,13 @@ function fetchAllData() {
   fetchStreamTape();
   fetchSymbolsCoverage();
   fetchStreamingSymbols();
+  if (typeof loadStreamingSymbolsTable === 'function') {
+    loadStreamingSymbolsTable();
+  }
 }
+
+// Expose routing handlers to window
+window.switchStreamingTab = switchStreamingTab;
 
 // --- Application Boot Initialization ---
 window.addEventListener('DOMContentLoaded', () => {

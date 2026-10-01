@@ -482,6 +482,9 @@
           <button onclick="switchStreamingTab('daemon')" id="streaming-tab-btn-daemon" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 font-medium">
             <span>📡 Streamer Daemon & Controls</span>
           </button>
+          <button onclick="switchStreamingTab('symbols')" id="streaming-tab-btn-symbols" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 font-medium">
+            <span>🎯 Monitored Symbols</span>
+          </button>
         </nav>
 
         <!-- SUB-TAB 1: DEDICATED STREAMING CANDLESTICK CHART -->
@@ -638,6 +641,78 @@
               <button onclick="triggerStreamReload()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-lg transition flex items-center gap-1.5 shadow">
                 <span>⚡</span> Hot-Reload Subscriptions
               </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUB-TAB 4: MONITORED STREAMING SYMBOLS MANAGEMENT -->
+        <div id="streaming-tab-symbols" class="space-y-6 hidden">
+          <!-- Monitored Symbols Info & Add Symbol Interface Card -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h3 class="text-base font-bold text-white flex items-center gap-2">
+                  <span>🎯 Streaming Monitored Symbols</span>
+                  <span id="streaming-symbols-count-badge" class="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-indigo-950 text-indigo-400 border border-indigo-800">
+                    --
+                  </span>
+                </h3>
+                <p class="text-xs text-slate-400 mt-1">
+                  Exclusively manages live symbols monitored in <code class="text-indigo-400 font-mono">data/streaming.duckdb</code>. Removing a symbol strictly purges all associated tick data and hot-reloads the streamer daemon.
+                </p>
+              </div>
+            </div>
+
+            <!-- Add Streaming Symbol Form Controls -->
+            <div class="bg-slate-950/70 border border-slate-800/80 rounded-lg p-4 flex flex-wrap items-center gap-3">
+              <div class="flex-1 min-w-[140px]">
+                <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Symbol</label>
+                <input id="add-streaming-symbol-input" type="text" placeholder="e.g. NVDA" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono uppercase focus:outline-none focus:border-indigo-500">
+              </div>
+              <div class="flex-1 min-w-[180px]">
+                <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Capital.com Epic</label>
+                <input id="add-streaming-capital-input" type="text" placeholder="e.g. NVDA or US100" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-indigo-500">
+              </div>
+              <div class="flex-1 min-w-[180px]">
+                <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Databento Ticker (Optional)</label>
+                <input id="add-streaming-databento-input" type="text" placeholder="e.g. NVDA" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-indigo-500">
+              </div>
+              <div class="pt-5">
+                <button id="add-streaming-symbol-btn" onclick="addStreamingSymbol()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-lg transition flex items-center gap-1.5 shadow">
+                  <span>+</span> Add Symbol
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Monitored Symbols Table -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+            <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+              <h4 class="text-sm font-semibold text-white flex items-center gap-2">
+                <span>📋 Active Streaming Registry</span>
+              </h4>
+              <button onclick="loadStreamingSymbolsTable()" class="text-xs text-slate-400 hover:text-white transition flex items-center gap-1">
+                <span>↻</span> Refresh
+              </button>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table id="streaming-symbols-table" class="w-full text-left text-xs border-collapse">
+                <thead class="bg-slate-850 border-b border-slate-800 text-slate-400 uppercase font-mono text-[11px]">
+                  <tr>
+                    <th class="py-2.5 px-4">Symbol</th>
+                    <th class="py-2.5 px-4">Capital.com Epic</th>
+                    <th class="py-2.5 px-4">Databento Ticker</th>
+                    <th class="py-2.5 px-4 text-center">Status</th>
+                    <th class="py-2.5 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="streaming-symbols-table-body" class="divide-y divide-slate-800 text-slate-300 font-mono">
+                  <tr>
+                    <td colspan="5" class="py-6 text-center text-slate-500">Loading streaming symbols...</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

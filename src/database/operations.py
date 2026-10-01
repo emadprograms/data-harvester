@@ -309,6 +309,22 @@ def remove_streaming_symbol_from_db(display_name: str, client=None) -> bool:
             table_name = "streaming_symbol_map"
 
         client.execute(f"DELETE FROM {table_name} WHERE display_name = ?", [display_name])
+        if "tick_data" in tables:
+            client.execute("DELETE FROM tick_data WHERE symbol = ?", [display_name])
+        elif "ticks" in tables:
+            client.execute("DELETE FROM ticks WHERE symbol = ?", [display_name])
+        else:
+            try:
+                client.execute("DELETE FROM tick_data WHERE symbol = ?", [display_name])
+            except Exception:
+                pass
+
+        if hasattr(client, "commit"):
+            try:
+                client.commit()
+            except Exception:
+                pass
+
         return True
     except Exception as e:
         print(f"❌ Error removing streaming symbol {display_name}: {e}")

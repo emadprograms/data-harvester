@@ -43,18 +43,25 @@ def test_get_streaming_candles_pure_isolation():
     # Ensure there is at least one tick in streaming.duckdb for testing
     s_client = get_streaming_db_connection()
     now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
-    save_ticks_to_storage(s_client, [
-        (now_ts, "TEST_STREAM", 100.0, 1.0, 99.9, 100.1, "CAPITAL", "REG")
-    ])
-    s_client.close()
+    try:
+        save_ticks_to_storage(s_client, [
+            (now_ts, "TEST_STREAM", 100.0, 1.0, 99.9, 100.1, "CAPITAL", "REG")
+        ])
 
-    res = get_streaming_candles("TEST_STREAM", timeframe="1m", limit=10)
-    assert res.get("database") == "streaming"
-    assert res.get("symbol") == "TEST_STREAM"
-    assert len(res.get("candles")) >= 1
-    candle = res["candles"][0]
-    assert candle["source"] in ("CAPITAL", "CAPITAL_STREAM")
-    assert candle["tick_count"] >= 1
+        res = get_streaming_candles("TEST_STREAM", timeframe="1m", limit=10)
+        assert res.get("database") == "streaming"
+        assert res.get("symbol") == "TEST_STREAM"
+        assert len(res.get("candles")) >= 1
+        candle = res["candles"][0]
+        assert candle["source"] in ("CAPITAL", "CAPITAL_STREAM")
+        assert candle["tick_count"] >= 1
+    finally:
+        try:
+            s_client.execute("DELETE FROM tick_data WHERE symbol = 'TEST_STREAM'")
+            s_client.commit()
+        except Exception:
+            pass
+        s_client.close()
 
 
 def test_get_candles_routing():

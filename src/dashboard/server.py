@@ -401,7 +401,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     }, status=400)
                     return
 
-            disp = payload.get("display_name", "").strip().upper() if isinstance(payload, dict) else ""
+            disp = (payload.get("display_name") or payload.get("symbol") or "").strip().upper() if isinstance(payload, dict) else ""
             if not disp:
                 self._send_json({"success": False, "error": "display_name is required"}, status=400)
                 return
