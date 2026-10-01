@@ -6,34 +6,34 @@
 const API_BASE = window.location.origin;
 
 // Application State - Historical Dashboard
-let currentSymbol = 'NVDA';
-let currentTimeframe = '1m';
-let currentLimit = 500;
-let currentDbSource = 'historical'; // Canonical Historical DB
-let loadedCandles = [];
-let allSymbolsCoverage = [];
-let previousTicks = {};
+var currentSymbol = 'NVDA';
+var currentTimeframe = '1m';
+var currentLimit = 500;
+var currentDbSource = 'historical'; // Canonical Historical DB
+var loadedCandles = [];
+var allSymbolsCoverage = [];
+var previousTicks = {};
 
 // Application State - Streaming Dashboard
-let currentStreamingSymbol = 'NVDA';
-let currentStreamingTimeframe = '1m';
-let currentStreamingLimit = 10000;
+var currentStreamingSymbol = 'NVDA';
+var currentStreamingTimeframe = '1m';
+var currentStreamingLimit = 10000;
 if (typeof window !== 'undefined') window.currentStreamingLimit = currentStreamingLimit;
 if (typeof global !== 'undefined') global.currentStreamingLimit = currentStreamingLimit;
-let loadedStreamingCandles = [];
-let streamingSymbolsList = [];
-let currentDashboardView = 'historical'; // 'historical' or 'streaming'
-let currentStreamingTab = 'chart'; // 'chart', 'tape', or 'daemon'
+var loadedStreamingCandles = [];
+var streamingSymbolsList = [];
+var currentDashboardView = 'historical'; // 'historical' or 'streaming'
+var currentStreamingTab = 'chart'; // 'chart', 'tape', or 'daemon'
 
 // TradingView Chart reference handles - Historical
-let tvChart = null;
-let candleSeries = null;
-let volumeSeries = null;
+var tvChart = null;
+var candleSeries = null;
+var volumeSeries = null;
 
 // TradingView Chart reference handles - Streaming
-let tvStreamingChart = null;
-let streamingCandleSeries = null;
-let streamingVolumeSeries = null;
+var tvStreamingChart = null;
+var streamingCandleSeries = null;
+var streamingVolumeSeries = null;
 
 /**
  * Display floating toast notification in bottom right corner.

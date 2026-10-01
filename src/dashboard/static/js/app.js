@@ -39,6 +39,11 @@ function switchDashboardView(viewId) {
       setTimeout(resizeStreamingChart, 50);
     }
     fetchStreamingSymbols();
+    fetchStreamStatus();
+    fetchStreamTape();
+    if (typeof loadStreamingContinuity === 'function') {
+      loadStreamingContinuity('all', 5, false);
+    }
   }
 }
 
