@@ -17,7 +17,9 @@ let previousTicks = {};
 // Application State - Streaming Dashboard
 let currentStreamingSymbol = 'NVDA';
 let currentStreamingTimeframe = '1m';
-let currentStreamingLimit = 500;
+let currentStreamingLimit = 10000;
+if (typeof window !== 'undefined') window.currentStreamingLimit = currentStreamingLimit;
+if (typeof global !== 'undefined') global.currentStreamingLimit = currentStreamingLimit;
 let loadedStreamingCandles = [];
 let streamingSymbolsList = [];
 let currentDashboardView = 'historical'; // 'historical' or 'streaming'

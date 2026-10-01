@@ -376,7 +376,10 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             except (ValueError, TypeError):
                 days = 5
             symbol = query.get("symbol", ["all"])[0]
-            res = get_streaming_continuity_analysis(days=days, symbol=symbol)
+            ext_param = query.get("extended", ["false"])[0]
+            hours_param = query.get("hours", ["regular"])[0]
+            include_extended = (str(ext_param).strip().lower() == "true" or str(hours_param).strip().lower() == "extended")
+            res = get_streaming_continuity_analysis(days=days, symbol=symbol, include_extended=include_extended)
             self._send_json(res)
             return
 

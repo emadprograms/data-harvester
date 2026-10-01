@@ -15,6 +15,13 @@
 const EXCHANGE_TIMEZONE = 'America/New_York';
 const EXCHANGE_TIMEZONE_LABEL = 'ET';
 
+if (typeof tvStreamingChart === 'undefined') {
+  var tvStreamingChart = null;
+}
+if (typeof currentStreamingLimit === 'undefined') {
+  var currentStreamingLimit = 10000;
+}
+
 let chartTimezone = EXCHANGE_TIMEZONE;
 const exchangeFormatterCache = {};
 
@@ -365,7 +372,7 @@ function findStreamingCandleByTime(time) {
 
 function initStreamingChart() {
   const container = document.getElementById('streaming-chart-container');
-  if (!container || tvStreamingChart) return;
+  if (!container || (typeof tvStreamingChart !== 'undefined' && tvStreamingChart)) return;
 
   tvStreamingChart = LightweightCharts.createChart(container, {
     layout: {
@@ -379,7 +386,7 @@ function initStreamingChart() {
       horzLines: { color: '#1e293b' }
     },
     crosshair: {
-      mode: LightweightCharts.CrosshairMode.Normal,
+      mode: (typeof LightweightCharts !== 'undefined' && LightweightCharts.CrosshairMode && LightweightCharts.CrosshairMode.Normal !== undefined) ? LightweightCharts.CrosshairMode.Normal : 0,
       vertLine: { color: '#6366f1', width: 1, style: 1 },
       horzLine: { color: '#6366f1', width: 1, style: 1 }
     },
@@ -412,6 +419,13 @@ function initStreamingChart() {
       scaleMargins: { top: 0.1, bottom: 0.25 }
     }
   });
+
+  if (typeof window !== 'undefined') {
+    window.tvStreamingChart = tvStreamingChart;
+  }
+  if (typeof global !== 'undefined') {
+    global.tvStreamingChart = tvStreamingChart;
+  }
 
   streamingCandleSeries = tvStreamingChart.addCandlestickSeries({
     upColor: '#6366f1',
@@ -458,7 +472,14 @@ async function loadStreamingChart() {
   if (loading) loading.classList.remove('hidden');
 
   const limitSelect = document.getElementById('streaming-chart-limit-select');
-  currentStreamingLimit = limitSelect ? parseInt(limitSelect.value) : 500;
+  if (limitSelect && parseInt(limitSelect.value) >= 5000) {
+    currentStreamingLimit = parseInt(limitSelect.value);
+  } else {
+    currentStreamingLimit = 10000;
+    if (limitSelect) limitSelect.value = '10000';
+  }
+  if (typeof window !== 'undefined') window.currentStreamingLimit = currentStreamingLimit;
+  if (typeof global !== 'undefined') global.currentStreamingLimit = currentStreamingLimit;
 
   try {
     const res = await fetch(`${API_BASE}/api/streaming/candles?symbol=${encodeURIComponent(currentStreamingSymbol)}&tf=${currentStreamingTimeframe}&limit=${currentStreamingLimit}`);
@@ -589,4 +610,77 @@ function selectSymbolInStreamingChart(sym) {
 function resizeChart() {
   resizeHistoricalChart();
   resizeStreamingChart();
+}
+
+/**
+ * Redesign: Opens single-symbol detail view with extended hours continuity and chart.
+ * Hides spectrum view, shows detail view and chart card, and triggers extended data load.
+ * @param {string} symbol - Ticker symbol (e.g. 'NVDA')
+ */
+function openSymbolDetail(symbol) {
+  if (!symbol) return;
+  currentStreamingSymbol = symbol.toUpperCase();
+  if (typeof window !== 'undefined') window.currentStreamingSymbol = currentStreamingSymbol;
+  if (typeof global !== 'undefined') global.currentStreamingSymbol = currentStreamingSymbol;
+
+  const select = document.getElementById('streaming-symbol-select');
+  if (select) select.value = currentStreamingSymbol;
+
+  const specEl = document.getElementById('streaming-spectrum-view');
+  if (specEl) specEl.classList.add('hidden');
+
+  const detailEl = document.getElementById('streaming-detail-view');
+  if (detailEl) detailEl.classList.remove('hidden');
+
+  const chartCardEl = document.getElementById('streaming-chart-card');
+  if (chartCardEl) chartCardEl.classList.remove('hidden');
+
+  const titleEl = document.getElementById('streaming-detail-symbol-title');
+  if (titleEl) {
+    titleEl.innerText = `${currentStreamingSymbol} - Extended Session Continuity & Candlestick Chart`;
+  }
+
+  if (typeof loadStreamingContinuity === 'function') {
+    loadStreamingContinuity(currentStreamingSymbol, 5, true);
+  }
+  if (typeof loadStreamingChart === 'function') {
+    loadStreamingChart();
+  }
+  if (typeof resizeStreamingChart === 'function') {
+    resizeStreamingChart();
+  }
+}
+
+/**
+ * Redesign: Closes single-symbol detail view and returns to 19-symbol spectrum view.
+ */
+function closeSymbolDetail() {
+  const specEl = document.getElementById('streaming-spectrum-view');
+  if (specEl) specEl.classList.remove('hidden');
+
+  const detailEl = document.getElementById('streaming-detail-view');
+  if (detailEl) detailEl.classList.add('hidden');
+
+  const chartCardEl = document.getElementById('streaming-chart-card');
+  if (chartCardEl) chartCardEl.classList.add('hidden');
+
+  if (typeof loadStreamingContinuity === 'function') {
+    loadStreamingContinuity('all', 5, false);
+  }
+}
+
+// Global window and environment exports
+if (typeof window !== 'undefined') {
+  window.openSymbolDetail = openSymbolDetail;
+  window.closeSymbolDetail = closeSymbolDetail;
+  window.initStreamingChart = initStreamingChart;
+  window.loadStreamingChart = loadStreamingChart;
+  window.resizeStreamingChart = resizeStreamingChart;
+}
+if (typeof global !== 'undefined') {
+  global.openSymbolDetail = openSymbolDetail;
+  global.closeSymbolDetail = closeSymbolDetail;
+  global.initStreamingChart = initStreamingChart;
+  global.loadStreamingChart = loadStreamingChart;
+  global.resizeStreamingChart = resizeStreamingChart;
 }

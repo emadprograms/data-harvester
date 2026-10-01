@@ -805,20 +805,21 @@ MONITORED_19_SYMBOLS = [
 ]
 
 
-def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client=None) -> dict:
+def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client=None, include_extended: bool = False) -> dict:
     """
     Bird's Eye View Data Continuity & Integrity Visualizer Analysis Engine.
     Exclusively queries streaming.duckdb (tick_data / ticks table). Zero access to historical.duckdb.
 
-    Evaluates regular market session hours (09:30 to 16:00 ET) across the last N trading days
-    (Mon-Fri, excluding holidays and weekends). Non-market hours (overnight and weekends)
-    never trigger false gap alerts.
+    Evaluates regular market session hours (09:30 to 16:00 ET, 390 min) or extended hours
+    (04:00 to 20:00 ET, 960 min) across the last N trading days (Mon-Fri, excluding holidays and weekends).
+    Non-market hours (overnight 20:00 to 04:00 ET and weekends) never trigger false gap alerts.
 
     Returns:
       - Master pulse health status: 'healthy' (green), 'partial' (amber), 'outage' (red).
-      - Day-by-day minute-level buckets and detected gap incidents.
+      - Day-by-day minute-level buckets and detected gap incidents with exact UTC start_epoch and end_epoch.
       - 19-symbol spectrogram breakdown when symbol == 'all'.
       - Single-symbol continuity tracking when symbol != 'all'.
+      - "extended_hours": bool indicating active window mode.
     """
     try:
         days = max(1, int(days or 5))
@@ -828,6 +829,7 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
     symbol = (symbol or "all").strip().upper()
     is_all = (symbol == "ALL")
     view_mode = "all" if is_all else symbol
+    include_extended = bool(include_extended)
 
     own_client = False
     if client is None:
@@ -841,6 +843,8 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 "view_mode": view_mode,
                 "symbol": symbol,
                 "monitored_symbols_count": 19 if is_all else 1,
+                "extended_hours": include_extended,
+                "hours": "extended" if include_extended else "regular",
                 "days": [],
                 "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
                 "spectrogram": {},
@@ -877,6 +881,8 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 "view_mode": view_mode,
                 "symbol": symbol,
                 "monitored_symbols_count": monitored_count,
+                "extended_hours": include_extended,
+                "hours": "extended" if include_extended else "regular",
                 "days": [],
                 "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
                 "spectrogram": {},
@@ -892,6 +898,8 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 "view_mode": view_mode,
                 "symbol": symbol,
                 "monitored_symbols_count": monitored_count,
+                "extended_hours": include_extended,
+                "hours": "extended" if include_extended else "regular",
                 "days": [],
                 "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
                 "spectrogram": empty_spec if is_all else {},
@@ -903,7 +911,10 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
         ts_type = detect_timestamp_column_type(client, table_name)
         local_ts_sql = build_exchange_local_sql(ts_type, "timestamp")
 
-        # Discover trading dates in streaming database (regular market hours only)
+        # Discover trading dates in streaming database
+        start_time_sql = "04:00:00" if include_extended else "09:30:00"
+        end_time_sql = "20:00:00" if include_extended else "16:00:00"
+
         # Fast path: query MAX(timestamp) and look back enough days to find target trading days
         max_ts_row = client.execute(f"SELECT MAX(timestamp) FROM {table_name}").fetchone()
         if not max_ts_row or not max_ts_row[0]:
@@ -912,6 +923,8 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 "view_mode": view_mode,
                 "symbol": symbol,
                 "monitored_symbols_count": monitored_count,
+                "extended_hours": include_extended,
+                "hours": "extended" if include_extended else "regular",
                 "days": [],
                 "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
                 "spectrogram": {},
@@ -931,8 +944,8 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
             SELECT DISTINCT CAST({local_ts_sql} AS DATE) as d
             FROM {table_name}
             WHERE {build_timestamp_range_clause(ts_type, 'timestamp', '>=')}
-              AND CAST({local_ts_sql} AS TIME) >= TIME '09:30:00'
-              AND CAST({local_ts_sql} AS TIME) <= TIME '16:00:00'
+              AND CAST({local_ts_sql} AS TIME) >= TIME '{start_time_sql}'
+              AND CAST({local_ts_sql} AS TIME) <= TIME '{end_time_sql}'
             ORDER BY d ASC
         """, [cutoff_str]).fetchall()
 
@@ -952,8 +965,8 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
             dates_res_full = client.execute(f"""
                 SELECT DISTINCT CAST({local_ts_sql} AS DATE) as d
                 FROM {table_name}
-                WHERE CAST({local_ts_sql} AS TIME) >= TIME '09:30:00'
-                  AND CAST({local_ts_sql} AS TIME) <= TIME '16:00:00'
+                WHERE CAST({local_ts_sql} AS TIME) >= TIME '{start_time_sql}'
+                  AND CAST({local_ts_sql} AS TIME) <= TIME '{end_time_sql}'
                 ORDER BY d ASC
             """).fetchall()
             trading_dates = []
@@ -970,6 +983,8 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 "view_mode": view_mode,
                 "symbol": symbol,
                 "monitored_symbols_count": monitored_count,
+                "extended_hours": include_extended,
+                "hours": "extended" if include_extended else "regular",
                 "days": [],
                 "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
                 "spectrogram": {},
@@ -989,6 +1004,9 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
             sym_filter = "AND symbol = ?"
             params.append(symbol)
 
+        start_time_bucket = "04:00:00" if include_extended else "09:30:00"
+        end_time_bucket = "19:59:59" if include_extended else "15:59:59"
+
         q = f"""
             SELECT 
                 CAST({local_ts_sql} AS DATE) as d,
@@ -999,8 +1017,8 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
             WHERE {build_timestamp_range_clause(ts_type, 'timestamp', '>=')}
               AND CAST({local_ts_sql} AS DATE) >= ?::DATE
               AND CAST({local_ts_sql} AS DATE) <= ?::DATE
-              AND CAST({local_ts_sql} AS TIME) >= TIME '09:30:00'
-              AND CAST({local_ts_sql} AS TIME) <= TIME '15:59:59'
+              AND CAST({local_ts_sql} AS TIME) >= TIME '{start_time_bucket}'
+              AND CAST({local_ts_sql} AS TIME) <= TIME '{end_time_bucket}'
               {sym_filter}
             GROUP BY 1, 2, 3
             ORDER BY 1, 2, 3
@@ -1013,13 +1031,18 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
             d_str = d_val.strftime("%Y-%m-%d") if hasattr(d_val, "strftime") else str(d_val)
             day_minute_symbols[d_str][m_val].add(sym_val)
 
-        # Standard 390 session minutes (09:30 to 15:59 ET)
+        # Build session minutes (390 min for regular 09:30-15:59, 960 min for extended 04:00-19:59)
         session_minutes = []
-        cur_t = datetime(2000, 1, 1, 9, 30)
-        end_t = datetime(2000, 1, 1, 16, 0)
+        if include_extended:
+            cur_t = datetime(2000, 1, 1, 4, 0)
+            end_t = datetime(2000, 1, 1, 20, 0)
+        else:
+            cur_t = datetime(2000, 1, 1, 9, 30)
+            end_t = datetime(2000, 1, 1, 16, 0)
         while cur_t < end_t:
             session_minutes.append(cur_t.strftime("%H:%M"))
             cur_t += timedelta(minutes=1)
+        session_day_minutes = len(session_minutes)
 
         def next_minute_str(m_str: str) -> str:
             hh, mm = map(int, m_str.split(":"))
@@ -1036,7 +1059,7 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 spectrogram[s] = {
                     "symbol": s,
                     "active_minutes": 0,
-                    "total_minutes": len(target_dates) * 390,
+                    "total_minutes": len(target_dates) * session_day_minutes,
                     "coverage_pct": 100.0,
                     "status": "healthy",
                     "total_gaps": 0,
@@ -1052,7 +1075,7 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
             day_buckets = []
             day_gaps = []
 
-            # 1. Evaluate per-minute status
+            # 1. Evaluate per-minute status and attach exact UTC epoch seconds
             minute_statuses = {}
             for m in session_minutes:
                 active_syms = min_data.get(m, set()).intersection(eval_symbols)
@@ -1068,11 +1091,20 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                     m_status = "healthy" if cnt > 0 else "outage"
 
                 minute_statuses[m] = m_status
+
+                # Calculate start_epoch and end_epoch in UTC seconds for minute m on date td
+                b_hh, b_mm = map(int, m.split(":"))
+                b_dt_et = datetime(td.year, td.month, td.day, b_hh, b_mm, tzinfo=ET)
+                b_start_epoch = int(b_dt_et.timestamp())
+                b_end_epoch = b_start_epoch + 60
+
                 day_buckets.append({
                     "time": m,
                     "status": m_status,
                     "active_count": cnt,
                     "total_count": len(eval_symbols),
+                    "start_epoch": b_start_epoch,
+                    "end_epoch": b_end_epoch,
                 })
 
                 if is_all:
@@ -1099,12 +1131,20 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 end_m = next_minute_str(seg[-1])
                 for m in seg:
                     global_blackout_minutes.add(m)
+
+                s_hh, s_mm = map(int, start_m.split(":"))
+                g_dt_et = datetime(td.year, td.month, td.day, s_hh, s_mm, tzinfo=ET)
+                g_start_epoch = int(g_dt_et.timestamp())
+                g_end_epoch = g_start_epoch + (dur * 60)
+
                 gap_obj = {
                     "date": td_str,
                     "start_time": f"{td_str} {start_m}:00",
                     "end_time": f"{td_str} {end_m}:00",
                     "start_str": start_m,
                     "end_str": end_m,
+                    "start_epoch": g_start_epoch,
+                    "end_epoch": g_end_epoch,
                     "duration": dur,
                     "duration_minutes": dur,
                     "missing_minutes": dur,
@@ -1140,12 +1180,19 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                         is_blackout = all(m in global_blackout_minutes for m in seg)
                         gap_status = "outage" if is_blackout else "partial"
 
+                        sg_hh, sg_mm = map(int, start_m.split(":"))
+                        sg_dt_et = datetime(td.year, td.month, td.day, sg_hh, sg_mm, tzinfo=ET)
+                        sg_start_epoch = int(sg_dt_et.timestamp())
+                        sg_end_epoch = sg_start_epoch + (dur * 60)
+
                         s_gap_obj = {
                             "date": td_str,
                             "start_time": f"{td_str} {start_m}:00",
                             "end_time": f"{td_str} {end_m}:00",
                             "start_str": start_m,
                             "end_str": end_m,
+                            "start_epoch": sg_start_epoch,
+                            "end_epoch": sg_end_epoch,
                             "duration": dur,
                             "duration_minutes": dur,
                             "missing_minutes": dur,
@@ -1166,11 +1213,11 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
                 day_sym_coverages = []
                 for s in eval_symbols:
                     s_active = sum(1 for m in session_minutes if s in min_data.get(m, set()))
-                    day_sym_coverages.append((s_active / 390.0) * 100.0)
+                    day_sym_coverages.append((s_active / float(session_day_minutes)) * 100.0)
                 day_cov = round(sum(day_sym_coverages) / len(day_sym_coverages), 2)
             else:
                 active_cnt = sum(1 for m in session_minutes if len(min_data.get(m, set())) > 0)
-                day_cov = round((active_cnt / 390.0) * 100.0, 2)
+                day_cov = round((active_cnt / float(session_day_minutes)) * 100.0, 2)
 
             # Day status
             has_outage = any(g.get("status") == "outage" for g in day_gaps)
@@ -1228,6 +1275,8 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
             "view_mode": view_mode,
             "symbol": symbol,
             "monitored_symbols_count": monitored_count,
+            "extended_hours": include_extended,
+            "hours": "extended" if include_extended else "regular",
             "days": day_objs,
             "summary": summary,
             "spectrogram": spectrogram if is_all else {},
