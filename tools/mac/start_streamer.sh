@@ -36,4 +36,5 @@ sleep 1
 
 echo "Starting Streamer supervisor (Capital.com 24/7 tick engine)..."
 nohup "$PYTHON_BIN" "$REPO_ROOT/tools/service_supervisor.py" --name streamer --module src.stream.runner >/dev/null 2>&1 &
+disown -h $! 2>/dev/null || true
 echo "✓ Streamer started. Logs: $REPO_ROOT/logs/streamer.log"

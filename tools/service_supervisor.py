@@ -83,6 +83,8 @@ class ProcessSupervisor:
 
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
+        if hasattr(signal, "SIGHUP"):
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
     def _handle_signal(self, signum, frame):
         self._log(f"Received stop signal ({signum}). Stopping {self.name}...")

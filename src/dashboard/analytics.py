@@ -543,7 +543,7 @@ def get_stream_tape(symbol: str = None, limit: int = 50) -> dict:
     Returns latest raw ticks from streaming.duckdb, calculating spread and throughput.
     """
     limit = min(max(1, int(limit or 50)), 200)
-    client = get_streaming_db_connection()
+    client = get_streaming_db_connection(read_only=True)
     if not client:
         return {"ticks": [], "count": 0, "error": "Streaming DB unavailable"}
 
@@ -603,7 +603,7 @@ def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int
     offset = max(0, int(offset or 0))
     direction = "DESC" if str(direction).lower() == "desc" else "ASC"
     
-    client = get_streaming_db_connection()
+    client = get_streaming_db_connection(read_only=True)
     if not client:
         return {"ticks": [], "count": 0, "error": "Streaming DB unavailable"}
 
@@ -689,7 +689,7 @@ def get_stream_status() -> dict:
     active_pid = running_pids[0] if is_alive else None
 
     # Database tick activity
-    client = get_streaming_db_connection()
+    client = get_streaming_db_connection(read_only=True)
     ticks_total = 0
     latest_ts = None
     seconds_ago = None

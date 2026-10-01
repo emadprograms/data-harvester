@@ -42,14 +42,28 @@ cat <<EOF > "$STREAMER_PLIST"
     <key>ProgramArguments</key>
     <array>
         <string>$PYTHON_BIN</string>
+        <string>-u</string>
         <string>$REPO_ROOT/tools/service_supervisor.py</string>
         <string>--name</string>
         <string>streamer</string>
         <string>--module</string>
         <string>src.stream.runner</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>$PATH</string>
+        <key>HOME</key>
+        <string>$HOME</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>PYTHONPATH</key>
+        <string>$REPO_ROOT</string>
+    </dict>
     <key>WorkingDirectory</key>
     <string>$REPO_ROOT</string>
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -74,14 +88,28 @@ cat <<EOF > "$DASHBOARD_PLIST"
     <key>ProgramArguments</key>
     <array>
         <string>$PYTHON_BIN</string>
+        <string>-u</string>
         <string>$REPO_ROOT/tools/service_supervisor.py</string>
         <string>--name</string>
         <string>dashboard</string>
         <string>--module</string>
         <string>src.dashboard.server</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>$PATH</string>
+        <key>HOME</key>
+        <string>$HOME</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>PYTHONPATH</key>
+        <string>$REPO_ROOT</string>
+    </dict>
     <key>WorkingDirectory</key>
     <string>$REPO_ROOT</string>
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

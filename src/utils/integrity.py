@@ -194,7 +194,7 @@ def detect_stream_quiet_intervals(symbol: str, lookback_minutes: int = 60, thres
     """
     own_client = False
     if not client:
-        client = get_streaming_db_connection()
+        client = get_streaming_db_connection(read_only=True)
         own_client = True
 
     if not client:

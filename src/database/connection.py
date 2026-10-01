@@ -141,6 +141,15 @@ class DuckDBClient:
                 if "lock" in err_msg.lower() and attempt < max_retries - 1:
                     time.sleep(retry_delay)
                     continue
+                # 3. If opening in read-write mode failed due to an existing lock and DuckDB indicates
+                # read-only mode is possible, gracefully fall back to read-only mode
+                if not self.read_only and ("read-only mode" in err_msg.lower() or "conflicting lock" in err_msg.lower()):
+                    try:
+                        self.read_only = True
+                        conn = duckdb.connect(self.db_path, read_only=True)
+                        break
+                    except Exception as inner_e:
+                        last_error = inner_e
                 break
 
         if conn is None:

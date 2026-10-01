@@ -47,11 +47,13 @@ sleep 1
 echo "Starting Streamer supervisor (Capital.com 24/7 tick engine)..."
 nohup "$PYTHON_BIN" "$REPO_ROOT/tools/service_supervisor.py" --name streamer --module src.stream.runner >/dev/null 2>&1 &
 STREAMER_SUPERVISOR_PID=$!
+disown -h "$STREAMER_SUPERVISOR_PID" 2>/dev/null || true
 
 # 5. Launch Dashboard under Supervisor
 echo "Starting Dashboard supervisor (Command Center on port 8420)..."
 nohup "$PYTHON_BIN" "$REPO_ROOT/tools/service_supervisor.py" --name dashboard --module src.dashboard.server >/dev/null 2>&1 &
 DASHBOARD_SUPERVISOR_PID=$!
+disown -h "$DASHBOARD_SUPERVISOR_PID" 2>/dev/null || true
 
 sleep 2
 

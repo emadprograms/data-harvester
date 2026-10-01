@@ -36,4 +36,5 @@ sleep 1
 
 echo "Starting Dashboard supervisor (port 8420)..."
 nohup "$PYTHON_BIN" "$REPO_ROOT/tools/service_supervisor.py" --name dashboard --module src.dashboard.server >/dev/null 2>&1 &
+disown -h $! 2>/dev/null || true
 echo "✓ Dashboard started at http://localhost:8420. Logs: $REPO_ROOT/logs/dashboard.log"
