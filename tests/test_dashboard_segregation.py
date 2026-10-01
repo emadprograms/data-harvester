@@ -410,6 +410,110 @@ class TestDashboardHTMLStructureSegregation:
             "The streaming chart must be dedicated exclusively to streaming data."
         )
 
+    def test_sidebar_has_strictly_two_primary_options(self, html_soup):
+        """
+        Sidebar must contain ONLY two primary navigation options:
+        1. 'Historical' (#nav-historical)
+        2. 'Streaming' (#nav-streaming)
+        No extra nav sections (e.g. 'Historical Views', 'Streaming Controls'),
+        no extra navigation buttons/links, and no engine footers in the sidebar.
+        """
+        sidebar = html_soup.select_one("aside#sidebar, nav#sidebar, #sidebar")
+        assert sidebar is not None, "Sidebar element must exist"
+
+        # Check that the two primary nav options exist
+        hist_btn = sidebar.select_one("#nav-historical")
+        strm_btn = sidebar.select_one("#nav-streaming")
+        assert hist_btn is not None, "Sidebar must contain '#nav-historical'"
+        assert strm_btn is not None, "Sidebar must contain '#nav-streaming'"
+
+        # All clickable navigation options (buttons or links) in #sidebar must be strictly these two
+        interactive_elements = sidebar.find_all(["button", "a"])
+        interactive_ids = [el.get("id") for el in interactive_elements if el.get("id")]
+
+        assert len(interactive_elements) == 2, (
+            f"VIOLATION: #sidebar must contain strictly 2 navigation options, but found {len(interactive_elements)}: "
+            f"{[el.get_text(strip=True)[:30] for el in interactive_elements]}. "
+            "Remove all extra nav sections (e.g. 'Historical Views', 'Streaming Controls') and extra buttons from sidebar."
+        )
+        assert set(interactive_ids) == {"nav-historical", "nav-streaming"}, (
+            f"Expected sidebar buttons to have IDs 'nav-historical' and 'nav-streaming', got: {interactive_ids}"
+        )
+
+        # No extra section headers or engine footers in sidebar
+        sidebar_text = sidebar.get_text()
+        forbidden_phrases = [
+            "Historical Views",
+            "Streaming Controls",
+            "DuckDB Engine",
+            "Dual Isolated",
+        ]
+        for phrase in forbidden_phrases:
+            assert phrase.lower() not in sidebar_text.lower(), (
+                f"VIOLATION: Sidebar still contains forbidden section/footer text '{phrase}'. "
+                "Sidebar must contain strictly the two primary navigation options without extra sections or footers."
+            )
+
+    def test_no_verbose_explanatory_banners(self, html_soup):
+        """
+        Bloated explanatory paragraph banners must be completely removed from the dashboard:
+        - 'Live Ephemeral Buffer Architecture: WebSocket tick quotes are stored strictly in...'
+        - 'Historical Archive Mode: Querying permanent canonical 1m bars from data/historical.duckdb with Source-Tiering...'
+        """
+        html_text = html_soup.get_text()
+
+        bloated_phrases = [
+            "Live Ephemeral Buffer Architecture",
+            "Querying permanent canonical 1m bars from data/historical.duckdb with Source-Tiering",
+            "Querying permanent canonical 1m bars",
+            "ticks during downtime cannot be recovered via WebSocket",
+        ]
+
+        for phrase in bloated_phrases:
+            assert phrase.lower() not in html_text.lower(), (
+                f"VIOLATION: Cluttered explanatory banner text detected in dashboard: '{phrase}'. "
+                "All bloated explanatory paragraph banners must be completely removed to declutter the UI."
+            )
+
+    def test_streaming_view_has_sub_tab_navigation(self, html_soup):
+        """
+        #view-streaming must contain horizontal sub-tab navigation (similar to #view-historical)
+        to cleanly tab between streaming components (e.g. Live Chart, Ticker Tape / Feed, Streamer Controls)
+        rather than stacking all widgets vertically.
+        """
+        strm_view = html_soup.select_one("#view-streaming, #streaming-dashboard, #section-streaming")
+        assert strm_view is not None, "Streaming container #view-streaming must exist"
+
+        # Check for sub-navigation element inside #view-streaming
+        sub_nav = strm_view.select_one("nav, [role='tablist']")
+        assert sub_nav is not None, (
+            "VIOLATION: #view-streaming must contain a horizontal sub-tab navigation element (<nav> or [role='tablist']) "
+            "similar to #view-historical to tab between streaming components rather than stacking widgets vertically."
+        )
+
+        # Sub-nav must contain tab buttons (e.g. at least 2 sub-tab buttons)
+        tab_buttons = sub_nav.find_all("button")
+        assert len(tab_buttons) >= 2, (
+            f"Expected at least 2 sub-tab buttons in #view-streaming sub-navigation, but found {len(tab_buttons)}."
+        )
+
+        tab_texts = [btn.get_text(strip=True).lower() for btn in tab_buttons]
+        combined_tab_text = " ".join(tab_texts)
+
+        # Check that streaming components are represented in sub-tabs
+        assert any(term in combined_tab_text for term in ["chart", "live"]), (
+            f"Streaming sub-tabs must include a Live Chart tab. Current tabs: {tab_texts}"
+        )
+        assert any(term in combined_tab_text for term in ["tape", "ticker", "feed"]), (
+            f"Streaming sub-tabs must include a Ticker Tape / Feed tab. Current tabs: {tab_texts}"
+        )
+
+        # Check that distinct tab content sections exist within #view-streaming
+        tab_panels = strm_view.select("[id^='tab-stream'], [id^='stream-tab'], [id*='tab-live'], [id*='tab-tape'], [id*='tab-controls']")
+        assert len(tab_panels) >= 2 or len(strm_view.find_all("div", recursive=False)) >= 2, (
+            "#view-streaming must contain distinct tab content panels for the sub-tab navigation."
+        )
+
 
 # ============================================================================
 # 3. Frontend JS Logic Segregation

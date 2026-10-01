@@ -78,6 +78,49 @@ function switchTab(tabId) {
   }
 }
 
+// --- Streaming Tab Switching & Navigation ---
+currentStreamingTab = 'chart';
+
+function switchStreamingTab(tabId) {
+  let normId = (tabId || 'chart').toLowerCase();
+  if (normId.includes('chart')) normId = 'chart';
+  else if (normId.includes('tape') || normId.includes('feed') || normId.includes('ticker')) normId = 'tape';
+  else if (normId.includes('daemon') || normId.includes('control')) normId = 'daemon';
+  else normId = 'chart';
+
+  currentStreamingTab = normId;
+
+  // Ensure streaming dashboard is active
+  if (currentDashboardView !== 'streaming') {
+    switchDashboardView('streaming');
+  }
+
+  const tabs = ['chart', 'tape', 'daemon'];
+  tabs.forEach(t => {
+    const el = document.getElementById(`stream-tab-${t}`);
+    const btn = document.getElementById(`streaming-tab-btn-${t}`);
+    if (el) el.classList.add('hidden');
+    if (btn) {
+      btn.className = "py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 font-medium";
+    }
+  });
+
+  const activeEl = document.getElementById(`stream-tab-${normId}`);
+  const activeBtn = document.getElementById(`streaming-tab-btn-${normId}`);
+  if (activeEl) activeEl.classList.remove('hidden');
+  if (activeBtn) {
+    activeBtn.className = "py-3 border-b-2 border-indigo-500 text-white flex items-center gap-2 font-semibold";
+  }
+
+  if (normId === 'chart') {
+    if (!tvStreamingChart) {
+      initStreamingChart();
+    } else {
+      setTimeout(resizeStreamingChart, 50);
+    }
+  }
+}
+
 // --- Symbol Coverage Matrix Loader (Historical Symbols) ---
 async function fetchSymbolsCoverage() {
   try {

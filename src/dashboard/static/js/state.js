@@ -21,6 +21,7 @@ let currentStreamingLimit = 500;
 let loadedStreamingCandles = [];
 let streamingSymbolsList = [];
 let currentDashboardView = 'historical'; // 'historical' or 'streaming'
+let currentStreamingTab = 'chart'; // 'chart', 'tape', or 'daemon'
 
 // TradingView Chart reference handles - Historical
 let tvChart = null;

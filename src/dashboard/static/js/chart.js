@@ -554,6 +554,9 @@ function selectSymbolInStreamingChart(sym) {
   if (typeof switchDashboardView === 'function') {
     switchDashboardView('streaming');
   }
+  if (typeof switchStreamingTab === 'function') {
+    switchStreamingTab('chart');
+  }
   handleStreamingSymbolChange(sym);
 }
 
