@@ -61,9 +61,16 @@ def init_historical_db(client=None):
         except Exception as e:
             print(f"⚠️ Seeding warning: {e}")
 
-        # --- HISTORICAL MARKET DATA TABLE ---
+        # --- HISTORICAL MINUTE DATA TABLE ---
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        if "market_data" in tables and "minute_data" not in tables:
+            try:
+                client.execute("ALTER TABLE market_data RENAME TO minute_data")
+            except Exception:
+                pass
+
         client.execute("""
-            CREATE TABLE IF NOT EXISTS market_data (
+            CREATE TABLE IF NOT EXISTS minute_data (
                 timestamp TIMESTAMP NOT NULL,
                 symbol VARCHAR NOT NULL,
                 open DOUBLE, 
@@ -79,8 +86,14 @@ def init_historical_db(client=None):
 
         # --- INDEXES FOR FAST TIME-SERIES QUERIES ---
         try:
-            client.execute("CREATE INDEX IF NOT EXISTS idx_market_data_ts ON market_data (timestamp)")
-            client.execute("CREATE INDEX IF NOT EXISTS idx_market_data_sym_ts ON market_data (symbol, timestamp)")
+            client.execute("CREATE INDEX IF NOT EXISTS idx_minute_data_ts ON minute_data (timestamp)")
+            client.execute("CREATE INDEX IF NOT EXISTS idx_minute_data_sym_ts ON minute_data (symbol, timestamp)")
+        except Exception:
+            pass
+
+        # --- BACKWARD-COMPATIBLE VIEW ---
+        try:
+            client.execute("CREATE VIEW IF NOT EXISTS market_data AS SELECT * FROM minute_data")
         except Exception:
             pass
 
@@ -92,7 +105,7 @@ def init_historical_db(client=None):
 
 
 def init_streaming_db(client=None, db_path=None):
-    """Initializes the dedicated streaming DuckDB database (ticks table and streaming_ticks view)."""
+    """Initializes the dedicated streaming DuckDB database (tick_data table and streaming_ticks/ticks views)."""
     own_client = False
     if not client:
         client = get_streaming_db_connection(db_path=db_path)
@@ -129,12 +142,21 @@ def init_streaming_db(client=None, db_path=None):
             res = client.execute("SELECT count(*) FROM streaming_database_symbols")
             if res.rows and res.rows[0][0] == 0:
                 _seed_streaming_symbols(client)
+            elif res.rows and res.rows[0][0] < 19:
+                _seed_streaming_symbols(client)
         except Exception as e:
             print(f"⚠️ Streaming seeding warning: {e}")
 
-        # --- RAW TICKS TABLE (streaming.duckdb tick-by-tick storage) ---
+        # --- RAW TICK DATA TABLE (streaming.duckdb tick-by-tick storage) ---
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        if "ticks" in tables and "tick_data" not in tables:
+            try:
+                client.execute("ALTER TABLE ticks RENAME TO tick_data")
+            except Exception:
+                pass
+
         client.execute("""
-            CREATE TABLE IF NOT EXISTS ticks (
+            CREATE TABLE IF NOT EXISTS tick_data (
                 timestamp TIMESTAMP NOT NULL,
                 symbol VARCHAR NOT NULL,
                 price DOUBLE NOT NULL,
@@ -148,14 +170,18 @@ def init_streaming_db(client=None, db_path=None):
 
         # --- FAST TIME-SERIES INDEXES ---
         try:
-            client.execute("CREATE INDEX IF NOT EXISTS idx_ticks_ts ON ticks (timestamp)")
-            client.execute("CREATE INDEX IF NOT EXISTS idx_ticks_sym_ts ON ticks (symbol, timestamp)")
+            client.execute("CREATE INDEX IF NOT EXISTS idx_tick_data_ts ON tick_data (timestamp)")
+            client.execute("CREATE INDEX IF NOT EXISTS idx_tick_data_sym_ts ON tick_data (symbol, timestamp)")
         except Exception:
             pass
 
-        # --- COMPATIBILITY VIEW ---
+        # --- COMPATIBILITY VIEWS ---
         try:
-            client.execute("CREATE VIEW IF NOT EXISTS streaming_ticks AS SELECT * FROM ticks")
+            client.execute("CREATE VIEW IF NOT EXISTS ticks AS SELECT * FROM tick_data")
+        except Exception:
+            pass
+        try:
+            client.execute("CREATE OR REPLACE VIEW streaming_ticks AS SELECT * FROM tick_data")
         except Exception:
             pass
 

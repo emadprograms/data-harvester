@@ -88,7 +88,7 @@ def fetch_from_source(source_name, specific_ticker, start_dt, end_dt, logger, ma
                     client = get_archive_db_connection()
                     if client:
                         res = client.execute(
-                            "SELECT 1 FROM market_data WHERE symbol = ? AND timestamp >= ? AND timestamp < ? LIMIT 1",
+                            "SELECT 1 FROM minute_data WHERE symbol = ? AND timestamp >= ? AND timestamp < ? LIMIT 1",
                             [specific_ticker, missing_start_str, missing_end_str]
                         )
                         has_missing_data = len(res.rows) > 0

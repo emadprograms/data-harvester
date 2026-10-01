@@ -31,19 +31,34 @@ _STREAMING_WRITE_RE = re.compile(
     r"\b(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+streaming_symbol_map\b",
     re.IGNORECASE,
 )
+_MARKET_DATA_WRITE_RE = re.compile(
+    r"\b(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+market_data\b",
+    re.IGNORECASE,
+)
+_TICKS_WRITE_RE = re.compile(
+    r"\b(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+(?:ticks|streaming_ticks)\b",
+    re.IGNORECASE,
+)
 
 
 def _redirect_symbol_map_writes(query: str) -> str:
     """
     DuckDB does not allow mutating VIEWs (raises Catalog Error: <view> is not an table).
-    To provide seamless backward compatibility when symbol_map, historical_symbol_map, or streaming_symbol_map
+    To provide seamless backward compatibility when symbol_map, market_data, or ticks
     are VIEWs, redirect write statements (INSERT, UPDATE, DELETE) to their underlying base tables:
-    historical_database_symbols and streaming_database_symbols.
+    - symbol_map -> historical_database_symbols
+    - streaming_symbol_map -> streaming_database_symbols
+    - market_data -> minute_data
+    - ticks / streaming_ticks -> tick_data
     """
     if isinstance(query, str):
         if "symbol_map" in query:
             query = _HISTORICAL_WRITE_RE.sub(r"\1 historical_database_symbols", query)
             query = _STREAMING_WRITE_RE.sub(r"\1 streaming_database_symbols", query)
+        if "market_data" in query:
+            query = _MARKET_DATA_WRITE_RE.sub(r"\1 minute_data", query)
+        if "ticks" in query:
+            query = _TICKS_WRITE_RE.sub(r"\1 tick_data", query)
     return query
 
 

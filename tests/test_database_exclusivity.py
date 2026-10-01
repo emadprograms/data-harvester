@@ -121,18 +121,20 @@ def test_init_historical_db_schema_purity():
 
         # Must contain historical tables/views
         assert "historical_database_symbols" in tables
+        assert "minute_data" in tables
         assert "market_data" in tables
         assert "historical_symbol_map" in tables
         assert "symbol_map" in tables
 
         # Must strictly NOT contain streaming tables/views
         assert "ticks" not in tables, "historical.duckdb must NOT contain 'ticks' table"
+        assert "tick_data" not in tables, "historical.duckdb must NOT contain 'tick_data' table"
         assert "streaming_ticks" not in tables, "historical.duckdb must NOT contain 'streaming_ticks' view"
         assert "streaming_database_symbols" not in tables, "historical.duckdb must NOT contain 'streaming_database_symbols'"
         assert "streaming_symbol_map" not in tables, "historical.duckdb must NOT contain 'streaming_symbol_map'"
 
         # Verify historical queries run cleanly without requiring ticks table
-        count = client.execute("SELECT COUNT(*) FROM market_data").fetchone()[0]
+        count = client.execute("SELECT COUNT(*) FROM minute_data").fetchone()[0]
         assert count >= 0
     finally:
         client.close()
@@ -147,17 +149,19 @@ def test_init_streaming_db_schema_purity():
 
         # Must contain streaming tables/views
         assert "streaming_database_symbols" in tables
+        assert "tick_data" in tables
         assert "ticks" in tables
         assert "streaming_symbol_map" in tables
         assert "streaming_ticks" in tables
 
         # Must strictly NOT contain historical tables/views
+        assert "minute_data" not in tables, "streaming.duckdb must NOT contain 'minute_data' table"
         assert "market_data" not in tables, "streaming.duckdb must NOT contain 'market_data' table"
         assert "historical_database_symbols" not in tables, "streaming.duckdb must NOT contain 'historical_database_symbols'"
         assert "historical_symbol_map" not in tables, "streaming.duckdb must NOT contain 'historical_symbol_map'"
 
         # Verify streaming queries run cleanly without requiring market_data table
-        count = client.execute("SELECT COUNT(*) FROM ticks").fetchone()[0]
+        count = client.execute("SELECT COUNT(*) FROM tick_data").fetchone()[0]
         assert count >= 0
     finally:
         client.close()
@@ -169,8 +173,10 @@ def test_disk_databases_schema_exclusivity():
         h_client = get_historical_db_connection(read_only=True)
         try:
             h_tables = [t[0] for t in h_client.execute("SHOW TABLES").fetchall()]
+            assert "minute_data" in h_tables
             assert "market_data" in h_tables
             assert "ticks" not in h_tables, "data/historical.duckdb must not have a ticks table"
+            assert "tick_data" not in h_tables, "data/historical.duckdb must not have a tick_data table"
             assert "streaming_database_symbols" not in h_tables
         finally:
             h_client.close()
@@ -179,7 +185,9 @@ def test_disk_databases_schema_exclusivity():
         s_client = get_streaming_db_connection(read_only=True)
         try:
             s_tables = [t[0] for t in s_client.execute("SHOW TABLES").fetchall()]
+            assert "tick_data" in s_tables
             assert "ticks" in s_tables
+            assert "minute_data" not in s_tables, "data/streaming.duckdb must not have a minute_data table"
             assert "market_data" not in s_tables, "data/streaming.duckdb must not have a market_data table"
             assert "historical_database_symbols" not in s_tables
         finally:

@@ -322,7 +322,7 @@ def remove_streaming_symbol_from_db(display_name: str, client=None) -> bool:
 
 def clear_market_data_for_range(client, start_utc: datetime, end_utc: datetime, logger=None, label="DuckDB", symbols=None):
     """
-    Deletes records within a specific UTC range from market_data.
+    Deletes records within a specific UTC range from minute_data.
     If symbols is provided, only deletes for those specific symbols.
     """
     try:
@@ -331,14 +331,14 @@ def clear_market_data_for_range(client, start_utc: datetime, end_utc: datetime, 
 
         if symbols:
             placeholders = ",".join(["?"] * len(symbols))
-            query = f"DELETE FROM market_data WHERE timestamp::TIMESTAMP >= ?::TIMESTAMP AND timestamp::TIMESTAMP < ?::TIMESTAMP AND symbol IN ({placeholders})"
+            query = f"DELETE FROM minute_data WHERE timestamp::TIMESTAMP >= ?::TIMESTAMP AND timestamp::TIMESTAMP < ?::TIMESTAMP AND symbol IN ({placeholders})"
             params = [start_str, end_str] + list(symbols)
             client.execute(query, params)
             if logger:
                 logger.log(f"   ✅ {label}: Cleaned {len(symbols)} symbols for range: {start_str} to {end_str}")
         else:
             client.execute(
-                "DELETE FROM market_data WHERE timestamp::TIMESTAMP >= ?::TIMESTAMP AND timestamp::TIMESTAMP < ?::TIMESTAMP",
+                "DELETE FROM minute_data WHERE timestamp::TIMESTAMP >= ?::TIMESTAMP AND timestamp::TIMESTAMP < ?::TIMESTAMP",
                 [start_str, end_str]
             )
             if logger:
@@ -366,7 +366,7 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DuckDB"):
             flat_values = [item for sublist in batch for item in sublist]
 
             query = f"""
-                INSERT INTO market_data 
+                INSERT INTO minute_data 
                 (timestamp, symbol, open, high, low, close, volume, session, source) 
                 VALUES {placeholders}
                 ON CONFLICT(symbol, timestamp) DO UPDATE SET
@@ -378,7 +378,7 @@ def _save_to_client(client, rows_to_insert, logger=None, label="DuckDB"):
                     session=excluded.session,
                     source=excluded.source
                 WHERE 
-                    (market_data.source NOT IN ('MASSIVE', 'BINANCE')) OR 
+                    (minute_data.source NOT IN ('MASSIVE', 'BINANCE')) OR 
                     (excluded.source IN ('MASSIVE', 'BINANCE'))
             """
             client.execute(query, flat_values)
@@ -467,7 +467,7 @@ def get_session_row_counts(client, symbols, start_utc: datetime, end_utc: dateti
 
     query = f"""
         SELECT symbol, COUNT(*) 
-        FROM market_data 
+        FROM minute_data 
         WHERE timestamp::TIMESTAMP >= ?::TIMESTAMP AND timestamp::TIMESTAMP < ?::TIMESTAMP AND symbol IN ({placeholders})
         GROUP BY symbol
     """
@@ -535,7 +535,7 @@ def query_candlesticks(symbol: str, start_time=None, end_time=None, timeframe="1
                 min(low) AS low,
                 last(close ORDER BY timestamp) AS close,
                 sum(volume) AS volume
-            FROM market_data
+            FROM minute_data
             WHERE {where_stmt}
             GROUP BY time, symbol
             ORDER BY time ASC
@@ -636,7 +636,7 @@ def save_ticks_to_storage(client_or_ticks, ticks=None, logger=None, label="DuckD
             flat_values = [val for row in batch for val in row]
 
             query = f"""
-                INSERT INTO ticks 
+                INSERT INTO tick_data 
                 (timestamp, symbol, price, volume, bid, ask, source, session) 
                 VALUES {placeholders}
             """
@@ -691,7 +691,7 @@ def query_ticks(symbol: str, start_time=None, end_time=None, limit=1000, client=
 
         query = f"""
             SELECT timestamp, symbol, price, volume, bid, ask, source, session
-            FROM ticks
+            FROM tick_data
             WHERE {where_stmt}
             ORDER BY timestamp ASC
             {limit_clause}
@@ -761,7 +761,7 @@ def query_candlesticks_from_ticks(symbol: str, timeframe="1m", start_time=None, 
                 last(price ORDER BY timestamp) AS close,
                 sum(coalesce(volume, 1.0)) AS volume,
                 count(*) AS tick_count
-            FROM ticks
+            FROM tick_data
             WHERE {where_stmt}
             GROUP BY time, symbol
             ORDER BY time ASC

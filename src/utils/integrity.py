@@ -38,7 +38,7 @@ def compute_fingerprint(client, start_utc, end_utc):
         res = client.execute(
             "SELECT COUNT(*), COALESCE(SUM(CAST(volume AS DOUBLE)), 0), "
             "MAX(timestamp), MIN(timestamp) "
-            "FROM market_data WHERE timestamp >= ?::TIMESTAMP AND timestamp < ?::TIMESTAMP",
+            "FROM minute_data WHERE timestamp >= ?::TIMESTAMP AND timestamp < ?::TIMESTAMP",
             [start_str, end_str]
         )
         row = res.rows[0]
@@ -87,7 +87,7 @@ def verify_db_md5(client, df: pd.DataFrame, start_utc, end_utc, logger=None) -> 
         start_str, end_str = _range_params(start_utc, end_utc)
         col_list = ', '.join(SCHEMA_COLS)
         res = client.execute(
-            f"SELECT {col_list} FROM market_data WHERE timestamp >= ?::TIMESTAMP AND timestamp < ?::TIMESTAMP",
+            f"SELECT {col_list} FROM minute_data WHERE timestamp >= ?::TIMESTAMP AND timestamp < ?::TIMESTAMP",
             [start_str, end_str]
         )
 
@@ -127,7 +127,7 @@ def detect_1m_gaps(symbol: str, start_utc: datetime, end_utc: datetime, client=N
         start_str, end_str = _range_params(start_utc, end_utc)
         res = client.execute("""
             SELECT timestamp::TIMESTAMP as ts
-            FROM market_data
+            FROM minute_data
             WHERE symbol = ? AND timestamp::TIMESTAMP >= ?::TIMESTAMP AND timestamp::TIMESTAMP < ?::TIMESTAMP
             ORDER BY timestamp ASC
         """, [symbol, start_str, end_str])
@@ -207,7 +207,7 @@ def detect_stream_quiet_intervals(symbol: str, lookback_minutes: int = 60, thres
 
         res = client.execute("""
             SELECT timestamp::TIMESTAMP as ts, price
-            FROM ticks
+            FROM tick_data
             WHERE symbol = ? AND timestamp >= ?::TIMESTAMP
             ORDER BY timestamp ASC
         """, [symbol, since_str])
@@ -215,7 +215,7 @@ def detect_stream_quiet_intervals(symbol: str, lookback_minutes: int = 60, thres
         ticks = res.rows
         if not ticks:
             # Check latest recorded tick ever for this symbol
-            latest_res = client.execute("SELECT MAX(timestamp) FROM ticks WHERE symbol = ?", [symbol])
+            latest_res = client.execute("SELECT MAX(timestamp) FROM tick_data WHERE symbol = ?", [symbol])
             latest_ts_row = latest_res.fetchone()
             last_recorded = str(latest_ts_row[0]) if latest_ts_row and latest_ts_row[0] else None
 
@@ -297,7 +297,7 @@ def validate_ohlcv_anomalies(symbol: str = None, limit: int = 10000, client=None
                     WHEN volume < 0 THEN 'NEGATIVE_VOLUME'
                     ELSE 'OK'
                 END AS anomaly_type
-            FROM market_data
+            FROM minute_data
             {where_clause}
             ORDER BY timestamp DESC
             LIMIT {int(limit)}
@@ -359,7 +359,7 @@ def analyze_price_drift(symbol: str, tolerance: float = 0.50, client=None, hist_
                     time_bucket(INTERVAL '1 minute', timestamp::TIMESTAMP) AS time,
                     symbol,
                     last(price ORDER BY timestamp) AS close_stream
-                FROM live.ticks
+                FROM live.tick_data
                 WHERE symbol = ?
                 GROUP BY time, symbol
             )
@@ -369,7 +369,7 @@ def analyze_price_drift(symbol: str, tolerance: float = 0.50, client=None, hist_
                 h.close AS rest_close,
                 s.close_stream AS stream_close,
                 ABS(h.close - s.close_stream) AS drift
-            FROM hist.market_data h
+            FROM hist.minute_data h
             JOIN stream_1m s ON h.symbol = s.symbol AND h.timestamp::TIMESTAMP = s.time
             WHERE h.symbol = ?
             ORDER BY h.timestamp ASC
@@ -441,15 +441,17 @@ def get_database_health_report(historical_path=None, streaming_path=None) -> dic
             from src.database.connection import get_duckdb_connection
             h_client = get_duckdb_connection(hp, read_only=True)
             if h_client:
-                res_md = h_client.execute("SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM market_data").fetchone()
+                res_md = h_client.execute("SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM minute_data").fetchone()
                 res_sym = h_client.execute("SELECT COUNT(*) FROM symbol_map").fetchone()
                 h_client.close()
 
+                rows_cnt = res_md[0] if res_md else 0
                 report["historical"] = {
                     "exists": True,
                     "path": hp,
                     "size_mb": size_mb,
-                    "market_data_rows": res_md[0] if res_md else 0,
+                    "minute_data_rows": rows_cnt,
+                    "market_data_rows": rows_cnt,
                     "min_timestamp": str(res_md[1]) if res_md and res_md[1] else None,
                     "max_timestamp": str(res_md[2]) if res_md and res_md[2] else None,
                     "symbols_count": res_sym[0] if res_sym else 0
@@ -472,14 +474,16 @@ def get_database_health_report(historical_path=None, streaming_path=None) -> dic
             from src.database.connection import get_duckdb_connection
             s_client = get_duckdb_connection(sp, read_only=True)
             if s_client:
-                res_ticks = s_client.execute("SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM ticks").fetchone()
+                res_ticks = s_client.execute("SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM tick_data").fetchone()
                 s_client.close()
 
+                t_cnt = res_ticks[0] if res_ticks else 0
                 report["streaming"] = {
                     "exists": True,
                     "path": sp,
                     "size_mb": size_mb,
-                    "ticks_rows": res_ticks[0] if res_ticks else 0,
+                    "tick_data_rows": t_cnt,
+                    "ticks_rows": t_cnt,
                     "min_timestamp": str(res_ticks[1]) if res_ticks and res_ticks[1] else None,
                     "max_timestamp": str(res_ticks[2]) if res_ticks and res_ticks[2] else None
                 }

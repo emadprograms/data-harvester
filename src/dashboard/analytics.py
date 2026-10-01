@@ -151,9 +151,10 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
         return {"error": "Historical DuckDB unavailable", "candles": [], "count": 0, "database": "historical"}
 
     try:
-        # Resolve the physical storage type first: the exchange-time conversion and the UTC range
-        # filters are both built from it so results never depend on the host/session timezone.
-        ts_type = detect_timestamp_column_type(client, "market_data")
+        # Resolve the table and physical storage type first
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        table_name = "minute_data" if "minute_data" in tables else "market_data"
+        ts_type = detect_timestamp_column_type(client, table_name)
         instant_sql = build_utc_instant_sql(ts_type)
         exchange_local_sql = build_exchange_local_sql(ts_type)
 
@@ -176,7 +177,7 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
                     epoch({instant_sql}) as time_sec,
                     strftime({exchange_local_sql}, '%Y-%m-%d %H:%M:%S') as time_str,
                     open, high, low, close, COALESCE(volume, 0) as volume, source, session
-                FROM market_data
+                FROM {table_name}
                 WHERE {where_sql}
                 ORDER BY timestamp DESC
                 LIMIT ?
@@ -199,7 +200,7 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
                     SELECT 
                         time_bucket(INTERVAL '{interval_str}', {exchange_local_sql}) as bucket,
                         timestamp, open, high, low, close, volume, source, session
-                    FROM market_data
+                    FROM {table_name}
                     WHERE {where_sql}
                 )
                 GROUP BY bucket
@@ -273,7 +274,9 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
         return {"error": "Streaming DuckDB unavailable", "candles": [], "count": 0, "database": "streaming"}
 
     try:
-        ts_type = detect_timestamp_column_type(s_client, "ticks")
+        tables = [t[0] for t in s_client.execute("SHOW TABLES").fetchall()]
+        table_name = "tick_data" if "tick_data" in tables else "ticks"
+        ts_type = detect_timestamp_column_type(s_client, table_name)
         exchange_local_sql = build_exchange_local_sql(ts_type)
 
         where_clauses = ["symbol = ?"]
@@ -304,7 +307,7 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
                 SELECT 
                     time_bucket(INTERVAL '{interval_str}', {exchange_local_sql}) as bucket,
                     timestamp, price, volume, source, session
-                FROM ticks
+                FROM {table_name}
                 WHERE {where_sql}
             )
             GROUP BY bucket
@@ -367,18 +370,21 @@ def get_historical_overview() -> dict:
         return {"error": "Historical database unavailable", "database": "data/historical.duckdb"}
 
     try:
-        res_summary = client.execute("""
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        table_name = "minute_data" if "minute_data" in tables else "market_data"
+
+        res_summary = client.execute(f"""
             SELECT 
                 COUNT(*) as total_rows,
                 COUNT(DISTINCT symbol) as unique_symbols,
                 MIN(timestamp) as min_ts,
                 MAX(timestamp) as max_ts
-            FROM market_data
+            FROM {table_name}
         """).fetchone()
 
-        res_sources = client.execute("""
+        res_sources = client.execute(f"""
             SELECT source, COUNT(*) as cnt
-            FROM market_data
+            FROM {table_name}
             GROUP BY source
             ORDER BY cnt DESC
         """).fetchall()
@@ -408,7 +414,7 @@ def get_historical_overview() -> dict:
 
 def get_symbols_coverage() -> dict:
     """
-    Provides aggregated metadata across all symbols in symbol_map and market_data:
+    Provides aggregated metadata across all symbols in symbol_map and minute_data:
     total bars, first/last timestamps, latest price, and data source distribution.
     """
     client = get_historical_db_connection()
@@ -416,14 +422,20 @@ def get_symbols_coverage() -> dict:
         return {"symbols": [], "total_symbols": 0, "error": "Database unavailable"}
 
     try:
-        query = """
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        table_name = "minute_data" if "minute_data" in tables else "market_data"
+        symbol_table = "symbol_map"
+        if "symbol_map" not in tables and "historical_database_symbols" in tables:
+            symbol_table = "historical_database_symbols"
+
+        query = f"""
             WITH stats AS (
                 SELECT 
                     symbol,
                     COUNT(*) as bar_count,
                     MIN(timestamp) as first_ts,
                     MAX(timestamp) as last_ts
-                FROM market_data
+                FROM {table_name}
                 GROUP BY symbol
             ),
             latest_rows AS (
@@ -436,14 +448,14 @@ def get_symbols_coverage() -> dict:
                     SELECT 
                         symbol, close, source, timestamp,
                         ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY timestamp DESC) as rn
-                    FROM market_data
+                    FROM {table_name}
                 ) WHERE rn = 1
             ),
             sources AS (
                 SELECT 
                     symbol,
                     string_agg(DISTINCT source, ', ') as sources_list
-                FROM market_data
+                FROM {table_name}
                 GROUP BY symbol
             )
             SELECT 
@@ -458,7 +470,7 @@ def get_symbols_coverage() -> dict:
                 lr.latest_close,
                 lr.latest_source,
                 COALESCE(src.sources_list, 'NONE') as sources_list
-            FROM symbol_map sm
+            FROM {symbol_table} sm
             LEFT JOIN stats s ON sm.display_name = s.symbol
             LEFT JOIN latest_rows lr ON sm.display_name = lr.symbol
             LEFT JOIN sources src ON sm.display_name = src.symbol
@@ -535,6 +547,8 @@ def get_stream_tape(symbol: str = None, limit: int = 50) -> dict:
         return {"ticks": [], "count": 0, "error": "Streaming DB unavailable"}
 
     try:
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        table_name = "tick_data" if "tick_data" in tables else "ticks"
         where_clause = "WHERE symbol = ?" if symbol else ""
         params = [symbol.strip().upper()] if symbol else []
 
@@ -542,7 +556,7 @@ def get_stream_tape(symbol: str = None, limit: int = 50) -> dict:
             SELECT 
                 strftime(timestamp::TIMESTAMP, '%Y-%m-%d %H:%M:%S.%f') as time_str,
                 symbol, price, COALESCE(volume, 1.0) as volume, bid, ask, source, session
-            FROM ticks
+            FROM {table_name}
             {where_clause}
             ORDER BY timestamp DESC
             LIMIT ?
@@ -593,6 +607,8 @@ def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int
         return {"ticks": [], "count": 0, "error": "Streaming DB unavailable"}
 
     try:
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        table_name = "tick_data" if "tick_data" in tables else "ticks"
         where_clauses = []
         params = []
         if symbol:
@@ -610,7 +626,7 @@ def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int
             SELECT 
                 strftime(timestamp::TIMESTAMP, '%Y-%m-%d %H:%M:%S.%f') as time_str,
                 symbol, price, COALESCE(volume, 1.0) as volume, bid, ask, source, session
-            FROM ticks
+            FROM {table_name}
             {where_sql}
             ORDER BY timestamp {direction}
             LIMIT ? OFFSET ?
@@ -680,7 +696,9 @@ def get_stream_status() -> dict:
 
     if client:
         try:
-            res = client.execute("SELECT COUNT(*), MAX(timestamp) FROM ticks").fetchone()
+            tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+            table_name = "tick_data" if "tick_data" in tables else "ticks"
+            res = client.execute(f"SELECT COUNT(*), MAX(timestamp) FROM {table_name}").fetchone()
             if res:
                 ticks_total = res[0] or 0
                 latest_ts = str(res[1]) if res[1] else None
@@ -694,7 +712,7 @@ def get_stream_status() -> dict:
 
             # Count ticks in last 60 seconds
             one_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
-            res_m = client.execute("SELECT COUNT(*) FROM ticks WHERE timestamp >= ?::TIMESTAMP", [one_min_ago]).fetchone()
+            res_m = client.execute(f"SELECT COUNT(*) FROM {table_name} WHERE timestamp >= ?::TIMESTAMP", [one_min_ago]).fetchone()
             if res_m:
                 ticks_last_min = res_m[0] or 0
         except Exception:

@@ -167,7 +167,7 @@ def is_day_already_backfilled(trading_date: date, symbols: List[str], streaming_
         try:
             row = client.execute(
                 """
-                SELECT COUNT(*) FROM ticks 
+                SELECT COUNT(*) FROM tick_data 
                 WHERE source = 'DATABENTO' 
                   AND timestamp::DATE = ?::DATE
                 """,
@@ -194,7 +194,7 @@ def fetch_and_normalize_day(
     dataset: str = "DBEQ.BASIC"
 ) -> pd.DataFrame:
     """
-    Downloads tick TBBO data from Databento and maps it into the streaming.duckdb ticks schema:
+    Downloads tick TBBO data from Databento and maps it into the streaming.duckdb tick_data schema:
     [timestamp, symbol, price, volume, bid, ask, source, session]
     """
     start_utc, reg_open_utc, end_utc = get_day_trading_bounds(trading_date)
@@ -258,7 +258,7 @@ def fetch_and_normalize_day(
 
 def insert_ticks_to_streaming_db(df: pd.DataFrame, streaming_client=None) -> int:
     """
-    Inserts normalized ticks DataFrame in bulk directly into streaming.duckdb ticks table.
+    Inserts normalized ticks DataFrame in bulk directly into streaming.duckdb tick_data table.
     Retries gracefully if the live streaming daemon holds an intermittent lock.
     """
     if df.empty:
@@ -273,9 +273,11 @@ def insert_ticks_to_streaming_db(df: pd.DataFrame, streaming_client=None) -> int
 
         try:
             # High-performance bulk registration & insertion
+            tables = [t[0] for t in client.conn.execute("SHOW TABLES").fetchall()]
+            target_table = "tick_data" if "tick_data" in tables else "ticks"
             client.conn.register("_batch_ticks_df", df)
-            client.conn.execute("""
-                INSERT INTO ticks (timestamp, symbol, price, volume, bid, ask, source, session)
+            client.conn.execute(f"""
+                INSERT INTO {target_table} (timestamp, symbol, price, volume, bid, ask, source, session)
                 SELECT timestamp, symbol, price, volume, bid, ask, source, session
                 FROM _batch_ticks_df
             """)

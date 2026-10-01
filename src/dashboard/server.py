@@ -230,7 +230,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     # Discover latest recorded timestamp for this symbol
                     if client:
                         try:
-                            max_ts_row = client.execute("SELECT MAX(timestamp) FROM market_data WHERE symbol = ?", [sym]).fetchone()
+                            max_ts_row = client.execute("SELECT MAX(timestamp) FROM minute_data WHERE symbol = ?", [sym]).fetchone()
                             if max_ts_row and max_ts_row[0]:
                                 max_dt = max_ts_row[0]
                                 if isinstance(max_dt, str):
