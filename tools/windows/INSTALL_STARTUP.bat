@@ -1,6 +1,7 @@
 @echo off
 title Data Harvester - 24/7 Startup Installer
-cd /d "%~dp0"
+for %%I in ("%~dp0..\..") do set "DIR=%%~fI"
+cd /d "%DIR%"
 
 echo ====================================================
 echo   Data Harvester - 24/7 Windows Setup (Zero Config)
@@ -9,9 +10,6 @@ echo.
 
 set "STARTUP_FOLDER=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 set "VBS_FILE=%STARTUP_FOLDER%\DataHarvester.vbs"
-
-set "DIR=%~dp0"
-if "%DIR:~-1%"=="\" set "DIR=%DIR:~0,-1%"
 
 set "PYTHONW=pythonw.exe"
 for /f "delims=" %%I in ('where pythonw.exe 2^>nul') do set "PYTHONW=%%I"
@@ -41,7 +39,7 @@ echo      - Streamer:  Ingesting live ticks 24/7 into data/streaming.duckdb
 echo      - Dashboard: Running at http://localhost:8420
 echo      - Auto-Update: Detects code changes in src/ and git updates
 echo.
-echo Logs are saved to: %~dp0logs\
+echo Logs are saved to: %DIR%\logs\
 echo.
 echo Setup finished! You can close this window.
 echo.

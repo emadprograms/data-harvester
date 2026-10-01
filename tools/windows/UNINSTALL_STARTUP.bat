@@ -1,6 +1,7 @@
 @echo off
 title Data Harvester - Remove from Startup
-cd /d "%~dp0"
+for %%I in ("%~dp0..\..") do set "DIR=%%~fI"
+cd /d "%DIR%"
 
 set "STARTUP_FOLDER=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 set "VBS_FILE=%STARTUP_FOLDER%\DataHarvester.vbs"

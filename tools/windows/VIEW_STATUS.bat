@@ -1,7 +1,8 @@
 @echo off
 chcp 65001 >nul
 title Data Harvester - Status
-cd /d "%~dp0"
+for %%I in ("%~dp0..\..") do set "DIR=%%~fI"
+cd /d "%DIR%"
 
 echo ====================================================
 echo   Data Harvester - Background Services Status

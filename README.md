@@ -58,12 +58,20 @@ data-harvester/
 
 ## 🚀 Quickstart & Usage
 
+### 🍎 macOS 24/7 Always-On (Zero Config)
+To run the streamer and dashboard on macOS with supervisor auto-reload:
+- **Start Services**: Run `./START_SERVICES.sh` (or `./tools/mac/start_services.sh`)
+- **Check Status & Logs**: Run `./VIEW_STATUS.sh` (or `./tools/mac/status_services.sh`)
+- **Stop Services**: Run `./STOP_SERVICES.sh` (or `./tools/mac/stop_services.sh`)
+- **Install Login Startup (LaunchAgent)**: Run `./tools/mac/install_startup.sh`
+- **Uninstall Login Startup**: Run `./tools/mac/uninstall_startup.sh`
+
 ### 🪟 Windows 24/7 Always-On (Zero Config)
-To run the streamer and dashboard 24/7 on Windows with automatic startup and auto-reload on code change:
-- **Install & Start**: Double-click `INSTALL_STARTUP.bat` (runs silently in the background on startup).
-- **Check Status & Logs**: Double-click `VIEW_STATUS.bat` (inspects running PIDs and recent log lines).
-- **Stop Services**: Double-click `STOP_SERVICES.bat`.
-- **Remove from Startup**: Double-click `UNINSTALL_STARTUP.bat`.
+All Windows scripts are located in `tools/windows/`:
+- **Install & Start**: Double-click `tools\windows\INSTALL_STARTUP.bat` (or run `tools\windows\install_services.ps1`).
+- **Check Status & Logs**: Double-click `tools\windows\VIEW_STATUS.bat` (or run `tools\windows\status_services.ps1`).
+- **Stop Services**: Double-click `tools\windows\STOP_SERVICES.bat` (or run `tools\windows\stop_services.ps1`).
+- **Remove from Startup**: Double-click `tools\windows\UNINSTALL_STARTUP.bat` (or run `tools\windows\uninstall_services.ps1`).
 
 ### 1. Run Tests
 Run the entire test suite across all nested test packages:

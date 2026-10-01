@@ -1,6 +1,7 @@
 @echo off
 title Data Harvester - Stop Services
-cd /d "%~dp0"
+for %%I in ("%~dp0..\..") do set "DIR=%%~fI"
+cd /d "%DIR%"
 
 echo Stopping Data Harvester background services...
 
