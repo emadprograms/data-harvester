@@ -491,6 +491,10 @@ async function loadStreamingChart() {
         updateStreamingLegend(loadedStreamingCandles[loadedStreamingCandles.length - 1]);
       }
     }
+
+    if (typeof loadStreamingContinuity === 'function') {
+      loadStreamingContinuity(currentStreamingSymbol);
+    }
   } catch (err) {
     console.error("Error loading streaming chart data:", err);
     showToast("Error loading streaming chart candles", "error");
@@ -548,6 +552,9 @@ function handleStreamingSymbolChange(sym) {
   const select = document.getElementById('streaming-symbol-select');
   if (select) select.value = currentStreamingSymbol;
   loadStreamingChart();
+  if (typeof loadStreamingContinuity === 'function') {
+    loadStreamingContinuity(currentStreamingSymbol);
+  }
 }
 
 function selectSymbolInStreamingChart(sym) {

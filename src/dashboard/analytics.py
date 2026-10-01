@@ -8,6 +8,7 @@ Provides high-performance DuckDB query execution for:
 """
 import os
 import time
+import collections
 from datetime import datetime, timezone, timedelta, time as dtime
 from zoneinfo import ZoneInfo
 import psutil
@@ -793,3 +794,450 @@ def get_market_session_info() -> dict:
         "is_weekend": is_weekend,
         "is_holiday": is_holiday
     }
+
+
+# 19 Monitored Single-Stock Equities (AAPL to TSM)
+MONITORED_19_SYMBOLS = [
+    "AAPL", "ADBE", "AMD", "AMZN", "APP",
+    "AVGO", "BABA", "GOOGL", "META", "MSFT",
+    "MU", "NDAQ", "NVDA", "ORCL", "PANW",
+    "QCOM", "SHOP", "TSLA", "TSM"
+]
+
+
+def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client=None) -> dict:
+    """
+    Bird's Eye View Data Continuity & Integrity Visualizer Analysis Engine.
+    Exclusively queries streaming.duckdb (tick_data / ticks table). Zero access to historical.duckdb.
+
+    Evaluates regular market session hours (09:30 to 16:00 ET) across the last N trading days
+    (Mon-Fri, excluding holidays and weekends). Non-market hours (overnight and weekends)
+    never trigger false gap alerts.
+
+    Returns:
+      - Master pulse health status: 'healthy' (green), 'partial' (amber), 'outage' (red).
+      - Day-by-day minute-level buckets and detected gap incidents.
+      - 19-symbol spectrogram breakdown when symbol == 'all'.
+      - Single-symbol continuity tracking when symbol != 'all'.
+    """
+    try:
+        days = max(1, int(days or 5))
+    except (ValueError, TypeError):
+        days = 5
+
+    symbol = (symbol or "all").strip().upper()
+    is_all = (symbol == "ALL")
+    view_mode = "all" if is_all else symbol
+
+    own_client = False
+    if client is None:
+        client = get_streaming_db_connection(read_only=True)
+        own_client = True
+
+    try:
+        if not client:
+            return {
+                "database": "streaming",
+                "view_mode": view_mode,
+                "symbol": symbol,
+                "monitored_symbols_count": 19 if is_all else 1,
+                "days": [],
+                "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
+                "spectrogram": {},
+                "symbols_breakdown": {},
+                "symbols": {},
+            }
+
+        # Resolve monitored symbols inventory from streaming_database_symbols
+        monitored_symbols = []
+        try:
+            tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+            if "streaming_database_symbols" in tables:
+                s_rows = client.execute("SELECT display_name FROM streaming_database_symbols WHERE is_active = true ORDER BY display_name").fetchall()
+                monitored_symbols = [r[0] for r in s_rows if r[0]]
+        except Exception:
+            pass
+
+        if not monitored_symbols:
+            monitored_symbols = list(MONITORED_19_SYMBOLS)
+
+        if not is_all:
+            eval_symbols = [symbol]
+            monitored_count = 1
+        else:
+            eval_symbols = monitored_symbols
+            monitored_count = len(monitored_symbols)
+
+        # Check table presence
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        table_name = "tick_data" if "tick_data" in tables else ("ticks" if "ticks" in tables else None)
+        if not table_name:
+            return {
+                "database": "streaming",
+                "view_mode": view_mode,
+                "symbol": symbol,
+                "monitored_symbols_count": monitored_count,
+                "days": [],
+                "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
+                "spectrogram": {},
+                "symbols_breakdown": {},
+                "symbols": {},
+            }
+
+        count_row = client.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
+        if not count_row or count_row[0] == 0:
+            empty_spec = {s: {"symbol": s, "coverage_pct": 100.0, "status": "healthy", "total_gaps": 0, "total_outage_minutes": 0, "gaps": []} for s in eval_symbols}
+            return {
+                "database": "streaming",
+                "view_mode": view_mode,
+                "symbol": symbol,
+                "monitored_symbols_count": monitored_count,
+                "days": [],
+                "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
+                "spectrogram": empty_spec if is_all else {},
+                "symbols_breakdown": empty_spec if is_all else {},
+                "symbols": empty_spec if is_all else {},
+            }
+
+        # Timezone conversion SQL for exchange-local time
+        ts_type = detect_timestamp_column_type(client, table_name)
+        local_ts_sql = build_exchange_local_sql(ts_type, "timestamp")
+
+        # Discover trading dates in streaming database (regular market hours only)
+        # Fast path: query MAX(timestamp) and look back enough days to find target trading days
+        max_ts_row = client.execute(f"SELECT MAX(timestamp) FROM {table_name}").fetchone()
+        if not max_ts_row or not max_ts_row[0]:
+            return {
+                "database": "streaming",
+                "view_mode": view_mode,
+                "symbol": symbol,
+                "monitored_symbols_count": monitored_count,
+                "days": [],
+                "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
+                "spectrogram": {},
+                "symbols_breakdown": {},
+                "symbols": {},
+            }
+
+        max_ts_val = max_ts_row[0]
+        if isinstance(max_ts_val, str):
+            max_ts_val = datetime.strptime(max_ts_val.split('.')[0], "%Y-%m-%d %H:%M:%S")
+
+        lookback_days = max(30, days * 4)
+        cutoff_dt = max_ts_val - timedelta(days=lookback_days)
+        cutoff_str = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        dates_res = client.execute(f"""
+            SELECT DISTINCT CAST({local_ts_sql} AS DATE) as d
+            FROM {table_name}
+            WHERE {build_timestamp_range_clause(ts_type, 'timestamp', '>=')}
+              AND CAST({local_ts_sql} AS TIME) >= TIME '09:30:00'
+              AND CAST({local_ts_sql} AS TIME) <= TIME '16:00:00'
+            ORDER BY d ASC
+        """, [cutoff_str]).fetchall()
+
+        cal = USFederalHolidayCalendar()
+        holidays = set(cal.holidays(start="2020-01-01", end="2035-01-01").date)
+
+        trading_dates = []
+        for r in dates_res:
+            d = r[0]
+            if isinstance(d, datetime):
+                d = d.date()
+            if d and d.weekday() < 5 and d not in holidays:
+                trading_dates.append(d)
+
+        # Fallback if fewer than `days` trading dates found in pruned window
+        if len(trading_dates) < days:
+            dates_res_full = client.execute(f"""
+                SELECT DISTINCT CAST({local_ts_sql} AS DATE) as d
+                FROM {table_name}
+                WHERE CAST({local_ts_sql} AS TIME) >= TIME '09:30:00'
+                  AND CAST({local_ts_sql} AS TIME) <= TIME '16:00:00'
+                ORDER BY d ASC
+            """).fetchall()
+            trading_dates = []
+            for r in dates_res_full:
+                d = r[0]
+                if isinstance(d, datetime):
+                    d = d.date()
+                if d and d.weekday() < 5 and d not in holidays:
+                    trading_dates.append(d)
+
+        if not trading_dates:
+            return {
+                "database": "streaming",
+                "view_mode": view_mode,
+                "symbol": symbol,
+                "monitored_symbols_count": monitored_count,
+                "days": [],
+                "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
+                "spectrogram": {},
+                "symbols_breakdown": {},
+                "symbols": {},
+            }
+
+        target_dates = trading_dates[-days:]
+
+        # Query 1-minute buckets across target dates
+        min_date_str = target_dates[0].strftime("%Y-%m-%d")
+        max_date_str = target_dates[-1].strftime("%Y-%m-%d")
+
+        sym_filter = ""
+        params = [min_date_str + " 00:00:00", min_date_str, max_date_str]
+        if not is_all:
+            sym_filter = "AND symbol = ?"
+            params.append(symbol)
+
+        q = f"""
+            SELECT 
+                CAST({local_ts_sql} AS DATE) as d,
+                strftime(time_bucket(INTERVAL '1 minute', {local_ts_sql}), '%H:%M') as m,
+                symbol,
+                count(*) as tick_count
+            FROM {table_name}
+            WHERE {build_timestamp_range_clause(ts_type, 'timestamp', '>=')}
+              AND CAST({local_ts_sql} AS DATE) >= ?::DATE
+              AND CAST({local_ts_sql} AS DATE) <= ?::DATE
+              AND CAST({local_ts_sql} AS TIME) >= TIME '09:30:00'
+              AND CAST({local_ts_sql} AS TIME) <= TIME '15:59:59'
+              {sym_filter}
+            GROUP BY 1, 2, 3
+            ORDER BY 1, 2, 3
+        """
+        rows = client.execute(q, params).fetchall()
+
+        # Build minute map: day_str -> minute_str -> set of symbols
+        day_minute_symbols = collections.defaultdict(lambda: collections.defaultdict(set))
+        for d_val, m_val, sym_val, _ in rows:
+            d_str = d_val.strftime("%Y-%m-%d") if hasattr(d_val, "strftime") else str(d_val)
+            day_minute_symbols[d_str][m_val].add(sym_val)
+
+        # Standard 390 session minutes (09:30 to 15:59 ET)
+        session_minutes = []
+        cur_t = datetime(2000, 1, 1, 9, 30)
+        end_t = datetime(2000, 1, 1, 16, 0)
+        while cur_t < end_t:
+            session_minutes.append(cur_t.strftime("%H:%M"))
+            cur_t += timedelta(minutes=1)
+
+        def next_minute_str(m_str: str) -> str:
+            hh, mm = map(int, m_str.split(":"))
+            nxt = datetime(2000, 1, 1, hh, mm) + timedelta(minutes=1)
+            return nxt.strftime("%H:%M")
+
+        day_objs = []
+        all_gaps = []
+        spectrogram = {}
+
+        # Initialize spectrogram trackers for all monitored symbols if is_all
+        if is_all:
+            for s in eval_symbols:
+                spectrogram[s] = {
+                    "symbol": s,
+                    "active_minutes": 0,
+                    "total_minutes": len(target_dates) * 390,
+                    "coverage_pct": 100.0,
+                    "status": "healthy",
+                    "total_gaps": 0,
+                    "total_outage_minutes": 0,
+                    "gaps": [],
+                }
+
+        for td in target_dates:
+            td_str = td.strftime("%Y-%m-%d")
+            day_name = td.strftime("%A")
+            min_data = day_minute_symbols[td_str]
+
+            day_buckets = []
+            day_gaps = []
+
+            # 1. Evaluate per-minute status
+            minute_statuses = {}
+            for m in session_minutes:
+                active_syms = min_data.get(m, set()).intersection(eval_symbols)
+                cnt = len(active_syms)
+                if is_all:
+                    if cnt == len(eval_symbols):
+                        m_status = "healthy"
+                    elif cnt > 0:
+                        m_status = "partial"
+                    else:
+                        m_status = "outage"
+                else:
+                    m_status = "healthy" if cnt > 0 else "outage"
+
+                minute_statuses[m] = m_status
+                day_buckets.append({
+                    "time": m,
+                    "status": m_status,
+                    "active_count": cnt,
+                    "total_count": len(eval_symbols),
+                })
+
+                if is_all:
+                    for s in active_syms:
+                        spectrogram[s]["active_minutes"] += 1
+
+            # 2. Detect global outage gaps (all monitored symbols silent)
+            outage_segments = []
+            cur_outage = []
+            for m in session_minutes:
+                if minute_statuses[m] == "outage":
+                    cur_outage.append(m)
+                else:
+                    if cur_outage:
+                        outage_segments.append(cur_outage)
+                        cur_outage = []
+            if cur_outage:
+                outage_segments.append(cur_outage)
+
+            global_blackout_minutes = set()
+            for seg in outage_segments:
+                dur = len(seg)
+                start_m = seg[0]
+                end_m = next_minute_str(seg[-1])
+                for m in seg:
+                    global_blackout_minutes.add(m)
+                gap_obj = {
+                    "date": td_str,
+                    "start_time": f"{td_str} {start_m}:00",
+                    "end_time": f"{td_str} {end_m}:00",
+                    "start_str": start_m,
+                    "end_str": end_m,
+                    "duration": dur,
+                    "duration_minutes": dur,
+                    "missing_minutes": dur,
+                    "status": "outage",
+                    "type": "outage",
+                    "severity": "outage",
+                    "symbol": "ALL" if is_all else symbol,
+                    "impacted_symbols": list(eval_symbols),
+                    "description": f"{dur}m global blackout ({start_m} - {end_m} ET)" if is_all else f"{dur}m gap on {symbol} ({start_m} - {end_m} ET)"
+                }
+                day_gaps.append(gap_obj)
+                all_gaps.append(gap_obj)
+
+            # 3. Detect per-symbol gaps
+            if is_all:
+                for s in eval_symbols:
+                    cur_sym_gap = []
+                    sym_gap_segments = []
+                    for m in session_minutes:
+                        if s not in min_data.get(m, set()):
+                            cur_sym_gap.append(m)
+                        else:
+                            if cur_sym_gap:
+                                sym_gap_segments.append(cur_sym_gap)
+                                cur_sym_gap = []
+                    if cur_sym_gap:
+                        sym_gap_segments.append(cur_sym_gap)
+
+                    for seg in sym_gap_segments:
+                        dur = len(seg)
+                        start_m = seg[0]
+                        end_m = next_minute_str(seg[-1])
+                        is_blackout = all(m in global_blackout_minutes for m in seg)
+                        gap_status = "outage" if is_blackout else "partial"
+
+                        s_gap_obj = {
+                            "date": td_str,
+                            "start_time": f"{td_str} {start_m}:00",
+                            "end_time": f"{td_str} {end_m}:00",
+                            "start_str": start_m,
+                            "end_str": end_m,
+                            "duration": dur,
+                            "duration_minutes": dur,
+                            "missing_minutes": dur,
+                            "status": gap_status,
+                            "type": gap_status,
+                            "severity": gap_status,
+                            "symbol": s,
+                            "impacted_symbols": [s],
+                            "description": f"{dur}m gap on {s} ({start_m} - {end_m} ET)"
+                        }
+                        spectrogram[s]["gaps"].append(s_gap_obj)
+                        if not is_blackout:
+                            day_gaps.append(s_gap_obj)
+                            all_gaps.append(s_gap_obj)
+
+            # Day coverage calculation
+            if is_all:
+                day_sym_coverages = []
+                for s in eval_symbols:
+                    s_active = sum(1 for m in session_minutes if s in min_data.get(m, set()))
+                    day_sym_coverages.append((s_active / 390.0) * 100.0)
+                day_cov = round(sum(day_sym_coverages) / len(day_sym_coverages), 2)
+            else:
+                active_cnt = sum(1 for m in session_minutes if len(min_data.get(m, set())) > 0)
+                day_cov = round((active_cnt / 390.0) * 100.0, 2)
+
+            # Day status
+            has_outage = any(g.get("status") == "outage" for g in day_gaps)
+            has_partial = any(g.get("status") == "partial" for g in day_gaps)
+            if has_outage:
+                day_status = "outage"
+            elif has_partial:
+                day_status = "partial"
+            else:
+                day_status = "healthy"
+
+            day_objs.append({
+                "date": td_str,
+                "day_name": day_name,
+                "coverage_pct": day_cov,
+                "status": day_status,
+                "buckets": day_buckets,
+                "gaps": day_gaps,
+            })
+
+        # Finalize spectrogram if is_all
+        if is_all:
+            for s in eval_symbols:
+                tot_min = spectrogram[s]["total_minutes"]
+                act_min = spectrogram[s]["active_minutes"]
+                cov = round((act_min / tot_min) * 100.0, 2) if tot_min > 0 else 100.0
+                spectrogram[s]["coverage_pct"] = cov
+                spectrogram[s]["total_gaps"] = len(spectrogram[s]["gaps"])
+                spectrogram[s]["total_outage_minutes"] = sum(g["duration"] for g in spectrogram[s]["gaps"])
+                if spectrogram[s]["total_outage_minutes"] == 0:
+                    spectrogram[s]["status"] = "healthy"
+                elif any(g["status"] == "outage" for g in spectrogram[s]["gaps"]):
+                    spectrogram[s]["status"] = "outage"
+                else:
+                    spectrogram[s]["status"] = "partial"
+
+        # Overall summary
+        total_gaps = len(all_gaps)
+        if is_all:
+            total_outage_mins = sum(g["duration"] for g in all_gaps if g.get("status") == "outage")
+        else:
+            total_outage_mins = sum(g["duration"] for g in all_gaps)
+
+        avg_cov = round(sum(d["coverage_pct"] for d in day_objs) / len(day_objs), 2) if day_objs else 100.0
+
+        summary = {
+            "total_gaps": total_gaps,
+            "total_outage_minutes": total_outage_mins,
+            "average_coverage": avg_cov,
+            "gaps": all_gaps,
+        }
+
+        return {
+            "database": "streaming",
+            "view_mode": view_mode,
+            "symbol": symbol,
+            "monitored_symbols_count": monitored_count,
+            "days": day_objs,
+            "summary": summary,
+            "spectrogram": spectrogram if is_all else {},
+            "symbols_breakdown": spectrogram if is_all else {},
+            "symbols": spectrogram if is_all else {},
+        }
+    finally:
+        if own_client and client:
+            try:
+                client.close()
+            except Exception:
+                pass
+

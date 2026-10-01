@@ -37,6 +37,7 @@ from src.dashboard.analytics import (
     get_ticks,
     get_stream_status,
     get_market_session_info,
+    get_streaming_continuity_analysis,
 )
 from src.dashboard.harvester_job import harvester_manager
 from src.database.connection import get_historical_db_connection, DEFAULT_DATA_DIR
@@ -365,6 +366,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/harvester/logs":
             logs = harvester_manager.get_all_logs()
             self._send_json({"logs": logs, "total_lines": len(logs)})
+            return
+
+        # 12. API: Streaming Data Continuity & Integrity Visualizer (Bird's Eye View)
+        if path == "/api/streaming/continuity":
+            days_param = query.get("days", ["5"])[0]
+            try:
+                days = int(days_param)
+            except (ValueError, TypeError):
+                days = 5
+            symbol = query.get("symbol", ["all"])[0]
+            res = get_streaming_continuity_analysis(days=days, symbol=symbol)
+            self._send_json(res)
             return
 
         self._send_json({"error": "Not Found", "path": path}, status=404)
