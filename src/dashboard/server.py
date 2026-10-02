@@ -38,6 +38,7 @@ from src.dashboard.analytics import (
     get_stream_status,
     get_market_session_info,
     get_streaming_continuity_analysis,
+    discover_available_weeks,
 )
 from src.dashboard.harvester_job import harvester_manager
 from src.database.connection import get_historical_db_connection, DEFAULT_DATA_DIR
@@ -370,7 +371,13 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"logs": logs, "total_lines": len(logs)})
             return
 
-        # 12. API: Streaming Data Continuity & Integrity Visualizer (Bird's Eye View)
+        # 12. API: Available Streaming Weeks
+        if path == "/api/streaming/continuity/weeks":
+            weeks = discover_available_weeks()
+            self._send_json({"database": "streaming", "weeks": weeks, "count": len(weeks)})
+            return
+
+        # 13. API: Streaming Data Continuity & Integrity Visualizer (Bird's Eye View)
         if path == "/api/streaming/continuity":
             days_param = query.get("days", ["5"])[0]
             try:
@@ -383,12 +390,24 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             include_extended = (str(ext_param).strip().lower() == "true" or str(hours_param).strip().lower() == "extended")
             week_start = query.get("week_start", query.get("week", [None]))[0]
             target_date = query.get("date", query.get("target_date", [None]))[0]
+            week_offset_param = query.get("week_offset", [None])[0]
+            week_offset = None
+            if week_offset_param is not None:
+                try:
+                    week_offset = int(week_offset_param)
+                except (ValueError, TypeError):
+                    week_offset = None
+            target_week = query.get("target_week", [None])[0]
+            end_date = query.get("end_date", [None])[0]
             res = get_streaming_continuity_analysis(
                 days=days,
                 symbol=symbol,
                 include_extended=include_extended,
                 week_start=week_start,
                 target_date=target_date,
+                week_offset=week_offset,
+                target_week=target_week,
+                end_date=end_date,
             )
             self._send_json(res)
             return

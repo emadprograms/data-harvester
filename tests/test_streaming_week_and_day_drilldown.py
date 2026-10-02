@@ -228,6 +228,7 @@ global.visibleRangeCalls = [];
 global.fitContentCalls = [];
 global.lastSetCandles = [];
 global.lastSetVolumes = [];
+global.lastSetMarkers = [];
 global.API_BASE = '';
 global.currentStreamingSymbol = 'NVDA';
 global.currentStreamingTimeframe = '1m';
@@ -251,6 +252,9 @@ global.LightweightCharts = {{
       addCandlestickSeries: () => ({{
         setData: (candles) => {{
           global.lastSetCandles = candles;
+        }},
+        setMarkers: (markers) => {{
+          global.lastSetMarkers = markers;
         }}
       }}),
       addHistogramSeries: () => ({{
@@ -270,7 +274,7 @@ global.fetch = async (url) => {{
     return {{
       ok: true,
       json: async () => ({{
-        symbol: 'NVDA',
+        symbol: global.currentStreamingSymbol || 'NVDA',
         timeframe: '1m',
         database: 'streaming',
         session_start_epoch: 1790668800,
@@ -279,6 +283,14 @@ global.fetch = async (url) => {{
           {{ time: 1790668800, open: 120.0, high: 121.0, low: 119.5, close: 120.5, volume: 100 }},
           {{ time: 1790668860, open: 120.5, high: 121.5, low: 120.0, close: 121.0, volume: 150 }},
           {{ time: 1790669100, open: 121.0, high: 122.0, low: 120.5, close: 121.5, volume: 200 }}
+        ],
+        gaps: [
+          {{
+            start_epoch: 1790668920,
+            end_epoch: 1790669040,
+            duration: 3,
+            description: "3m Gap"
+          }}
         ]
       }})
     }};
@@ -497,6 +509,86 @@ class TestBackendWeekAndDayAnalytics:
             mem_client.close = DuckDBClient.close.__get__(mem_client, DuckDBClient)
             mem_client.close()
 
+    def test_get_available_streaming_weeks_exported(self):
+        """
+        Verifies get_available_streaming_weeks can be imported from src.dashboard.analytics
+        and returns discovered week dictionaries.
+        """
+        from src.dashboard import analytics
+        assert hasattr(analytics, "get_available_streaming_weeks"), (
+            "get_available_streaming_weeks must be defined and exported from src.dashboard.analytics"
+        )
+        fn = getattr(analytics, "get_available_streaming_weeks")
+        assert callable(fn), "get_available_streaming_weeks must be callable"
+
+        mem_client = create_in_memory_streaming_db()
+        try:
+            populate_ticks_for_day(mem_client, date(2026, 9, 28), "NVDA")
+            populate_ticks_for_day(mem_client, date(2026, 9, 29), "NVDA")
+            weeks = fn(client=mem_client)
+            assert isinstance(weeks, list), f"Expected list of weeks, got {type(weeks)}"
+            assert len(weeks) >= 1, "Expected at least one discovered week"
+            w = weeks[0]
+            assert "week_start" in w and "week_end" in w, "Discovered week dict must contain 'week_start' and 'week_end'"
+            assert "label" in w, "Discovered week dict must contain 'label'"
+        finally:
+            mem_client.close()
+
+    def test_continuity_analysis_parameter_aliases(self):
+        """
+        Verifies get_streaming_continuity_analysis accepts parameter aliases
+        week_offset, target_week, and end_date without raising TypeError.
+        """
+        assert callable(get_streaming_continuity_analysis), "get_streaming_continuity_analysis must be defined"
+        mem_client = create_in_memory_streaming_db()
+        try:
+            populate_ticks_for_day(mem_client, date(2026, 9, 28), "NVDA")
+            populate_ticks_for_day(mem_client, date(2026, 9, 29), "NVDA")
+
+            # 1. Test week_offset alias (should not raise TypeError)
+            res_offset = get_streaming_continuity_analysis(client=mem_client, week_offset=0)
+            assert isinstance(res_offset, dict), "Must return dict when called with week_offset"
+
+            # 2. Test target_week alias (should not raise TypeError)
+            res_tw = get_streaming_continuity_analysis(client=mem_client, target_week="2026-09-28")
+            assert isinstance(res_tw, dict), "Must return dict when called with target_week"
+            assert res_tw.get("week_start") == "2026-09-28"
+
+            # 3. Test end_date alias (should not raise TypeError)
+            res_end = get_streaming_continuity_analysis(client=mem_client, end_date="2026-09-29")
+            assert isinstance(res_end, dict), "Must return dict when called with end_date"
+        finally:
+            mem_client.close()
+
+    def test_get_streaming_candles_single_date_gaps(self):
+        """
+        Verifies get_streaming_candles with single date parameter includes
+        a 'gaps' list in the response for visual gap markers on the candlestick chart.
+        """
+        assert callable(get_streaming_candles), "get_streaming_candles must be defined"
+        mem_client = create_in_memory_streaming_db()
+        try:
+            # Populate sparse ticks with an intentional gap between 05:00 and 10:00 ET
+            populate_ticks_for_day(mem_client, date(2026, 9, 29), "NVDA", minutes_list=[(4, 30), (5, 0), (10, 0), (19, 30)])
+            mem_client.close = MagicMock()
+            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client):
+                res = get_streaming_candles(symbol="NVDA", date="2026-09-29", hours="extended", limit=2000)
+
+                assert res.get("error") is None, f"get_streaming_candles error: {res.get('error')}"
+                assert "gaps" in res, (
+                    "Response from get_streaming_candles must include 'gaps' list when date parameter is provided"
+                )
+                assert isinstance(res["gaps"], list), f"Expected 'gaps' to be a list, got {type(res['gaps'])}"
+                assert len(res["gaps"]) > 0, "Expected at least one gap in 'gaps' list for sparse session"
+                gap = res["gaps"][0]
+                assert "start_epoch" in gap and "end_epoch" in gap, (
+                    f"Gap item must contain 'start_epoch' and 'end_epoch', got {gap}"
+                )
+                assert gap["end_epoch"] > gap["start_epoch"]
+        finally:
+            mem_client.close = DuckDBClient.close.__get__(mem_client, DuckDBClient)
+            mem_client.close()
+
 
 # ============================================================================
 # 2. REST API Tests (src/dashboard/server.py)
@@ -537,6 +629,23 @@ class TestRestApiWeekAndDayDrilldown:
         assert "session_end_epoch" in data, "Response must include session_end_epoch for single-day query"
         assert data.get("symbol") == "NVDA"
 
+    def test_api_continuity_weeks_endpoint(self, api_test_server):
+        """
+        GET /api/streaming/continuity/weeks returns HTTP 200 with available trading weeks.
+        """
+        url = f"{api_test_server}/api/streaming/continuity/weeks"
+        resp = requests.get(url, timeout=5)
+        assert resp.status_code == 200, (
+            f"Expected HTTP 200 for /api/streaming/continuity/weeks, got {resp.status_code}"
+        )
+        data = resp.json()
+        assert isinstance(data, dict), f"Expected JSON object response, got {type(data)}"
+        assert "weeks" in data or "available_weeks" in data, (
+            f"Expected 'weeks' or 'available_weeks' key in response, got keys: {list(data.keys())}"
+        )
+        weeks_list = data.get("weeks") if "weeks" in data else data.get("available_weeks")
+        assert isinstance(weeks_list, list), f"Expected list of weeks, got {type(weeks_list)}"
+
 
 # ============================================================================
 # 3. DOM & HTML Tests (src/dashboard/static/index.html)
@@ -570,6 +679,20 @@ class TestHtmlStructureWeekAndDayDrilldown:
         back_btn = detail_view.select_one("#back-to-spectrum-btn")
         assert back_btn is not None, (
             "Back button #back-to-spectrum-btn must exist inside #streaming-detail-view"
+        )
+
+    def test_back_to_all_symbols_button_label(self, html_soup):
+        """
+        Verifies #back-to-spectrum-btn in index.html has text containing 'Back to All Symbols'
+        instead of hardcoded '19-Symbol Spectrum'.
+        """
+        detail_view = html_soup.select_one("#streaming-detail-view")
+        assert detail_view is not None, "Missing #streaming-detail-view in index.html"
+        back_btn = detail_view.select_one("#back-to-spectrum-btn")
+        assert back_btn is not None, "Missing #back-to-spectrum-btn in index.html"
+        btn_text = back_btn.get_text()
+        assert "Back to All Symbols" in btn_text, (
+            f"Expected #back-to-spectrum-btn text to contain 'Back to All Symbols', but got: '{btn_text.strip()}'"
         )
 
 
@@ -729,4 +852,120 @@ class TestFrontendJsSimulationWeekAndDayDrilldown:
         )
         assert result.get("hasDisruptiveZoom") is False, (
             "Single-day detail view gap pills must not attach disruptive chart zoom-in handlers"
+        )
+
+    def test_spectrogram_detail_button_removed(self):
+        """
+        Verifies renderSpectrogramView output does NOT contain 'Detail →' and does NOT contain 'Action' header,
+        since the entire symbol row is clickable and dedicated Action button/header clutters the UI.
+        """
+        result = run_js_simulation("""
+        const fnRender = typeof renderSpectrogramView === 'function' ? renderSpectrogramView : window.renderSpectrogramView;
+        if (!fnRender) return { error: 'renderSpectrogramView is not defined' };
+
+        const testData = {
+          database: 'streaming',
+          view_mode: 'all',
+          spectrogram: {
+            'AAPL': { coverage_pct: 100.0, status: 'healthy', gaps: [] },
+            'NVDA': { coverage_pct: 95.0, status: 'partial', gaps: [{ duration: 15 }] }
+          },
+          days: [
+            { date: '2026-10-02', day_name: 'Friday', gaps: [] }
+          ]
+        };
+        const container = elements['continuity-ribbon-view'];
+        fnRender(testData, container);
+
+        const html = container ? container.innerHTML : '';
+        return {
+          hasDetailButton: html.includes('Detail →'),
+          hasActionHeader: html.includes('Action')
+        };
+        """)
+
+        assert "error" not in result, result.get("error")
+        assert result["hasDetailButton"] is False, (
+            "renderSpectrogramView output must NOT contain 'Detail →' button because rows are directly clickable"
+        )
+        assert result["hasActionHeader"] is False, (
+            "renderSpectrogramView output must NOT contain 'Action' column header"
+        )
+
+    def test_open_symbol_day_detail_single_day_continuity(self):
+        """
+        Verifies openSymbolDayDetail("AAPL", "2026-10-02") sets single-day date
+        and calls loadStreamingContinuity with days=1 and targetDate="2026-10-02".
+        """
+        result = run_js_simulation("""
+        let capturedContinuityCall = null;
+        const origLoadContinuity = typeof loadStreamingContinuity === 'function' ? loadStreamingContinuity : window.loadStreamingContinuity;
+
+        const trackingContinuity = (sym, days, ext, week, targetDate) => {
+          capturedContinuityCall = { sym, days, ext, week, targetDate };
+          if (origLoadContinuity) {
+            return origLoadContinuity(sym, days, ext, week, targetDate);
+          }
+        };
+        global.loadStreamingContinuity = trackingContinuity;
+        if (typeof window !== 'undefined') window.loadStreamingContinuity = trackingContinuity;
+
+        const fnOpen = typeof openSymbolDayDetail === 'function' ? openSymbolDayDetail : window.openSymbolDayDetail;
+        if (!fnOpen) return { error: 'openSymbolDayDetail is not defined' };
+
+        fnOpen('AAPL', '2026-10-02');
+
+        const activeSymbol = global.currentStreamingSymbol || (typeof window !== 'undefined' ? window.currentStreamingSymbol : null);
+        const activeDate = global.currentContinuityDayDate || (typeof window !== 'undefined' ? window.currentContinuityDayDate : null);
+
+        return {
+          activeSymbol,
+          activeDate,
+          capturedContinuityCall
+        };
+        """)
+
+        assert "error" not in result, result.get("error")
+        assert result["activeSymbol"] == "AAPL", f"Expected active symbol AAPL, got {result.get('activeSymbol')}"
+        assert result["activeDate"] == "2026-10-02", f"Expected active date 2026-10-02, got {result.get('activeDate')}"
+        call = result.get("capturedContinuityCall")
+        assert call is not None, "loadStreamingContinuity was not called"
+        assert call["sym"] == "AAPL", f"Expected symbol 'AAPL', got {call.get('sym')}"
+        assert call["days"] == 1, f"Expected days=1 for single-day drilldown, got {call.get('days')}"
+        assert call["targetDate"] == "2026-10-02", f"Expected targetDate='2026-10-02', got {call.get('targetDate')}"
+
+    def test_chart_sets_gap_markers_on_single_day(self):
+        """
+        Verifies loadStreamingChart("2026-10-02") calls streamingCandleSeries.setMarkers
+        with red markers ("⚠️ <duration>m Gap") at gap points.
+        """
+        result = run_js_simulation("""
+        const fnInit = typeof initStreamingChart === 'function' ? initStreamingChart : window.initStreamingChart;
+        const fnLoad = typeof loadStreamingChart === 'function' ? loadStreamingChart : window.loadStreamingChart;
+
+        if (fnInit) fnInit();
+        lastSetMarkers = [];
+
+        await fnLoad('2026-10-02');
+
+        return {
+          markerCount: lastSetMarkers.length,
+          markers: lastSetMarkers
+        };
+        """)
+
+        assert "error" not in result, f"loadStreamingChart failed: {result.get('error')}"
+        markers = result.get("markers", [])
+        assert len(markers) > 0, (
+            "Expected streamingCandleSeries.setMarkers to be called with gap markers for single-day session with gaps"
+        )
+        first_marker = markers[0]
+        assert "time" in first_marker, "Marker must specify 'time'"
+        assert "text" in first_marker, "Marker must specify 'text'"
+        assert "⚠️" in first_marker["text"] and "Gap" in first_marker["text"], (
+            f"Expected gap warning marker text to contain '⚠️' and 'Gap', got: {first_marker.get('text')}"
+        )
+        color = str(first_marker.get("color", "")).lower()
+        assert color in ["#f43f5e", "#ef4444", "#e11d48", "red"] or "rose" in color or "red" in color, (
+            f"Expected red/rose warning marker color, got: {first_marker.get('color')}"
         )

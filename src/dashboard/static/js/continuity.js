@@ -401,7 +401,6 @@ function renderSpectrogramView(data, container) {
         <div class="flex-1 flex justify-between px-1">
           ${days.map(d => `<span class="flex-1 text-center font-bold text-slate-300 border-l border-slate-800 first:border-l-0">${d.day_name ? d.day_name.slice(0, 3) : 'Day'} <span class="text-[9px] text-slate-500">${d.date ? d.date.slice(5) : ''}</span></span>`).join('')}
         </div>
-        <span class="w-12 text-right">Action</span>
       </div>` : ''}
 
       <div class="space-y-1">
@@ -459,9 +458,6 @@ function renderSpectrogramView(data, container) {
 
     html += `
         </div>
-        <button onclick="${clickRowHandler}" class="px-1.5 py-0.5 text-[9px] font-mono bg-indigo-950 hover:bg-indigo-900 text-indigo-300 rounded border border-indigo-800 transition-colors">
-          Detail →
-        </button>
       </div>
     `;
   });
@@ -582,6 +578,8 @@ if (typeof window !== 'undefined') {
   window.cachedContinuityData = cachedContinuityData;
   window.cachedAllContinuityData = cachedAllContinuityData;
   window.cachedSymbolContinuityData = cachedSymbolContinuityData;
+  window.currentContinuitySymbol = currentContinuitySymbol;
+  window.currentContinuityDays = currentContinuityDays;
 }
 if (typeof global !== 'undefined') {
   global.loadStreamingContinuity = loadStreamingContinuity;
@@ -598,4 +596,6 @@ if (typeof global !== 'undefined') {
   global.cachedContinuityData = cachedContinuityData;
   global.cachedAllContinuityData = cachedAllContinuityData;
   global.cachedSymbolContinuityData = cachedSymbolContinuityData;
+  global.currentContinuitySymbol = currentContinuitySymbol;
+  global.currentContinuityDays = currentContinuityDays;
 }

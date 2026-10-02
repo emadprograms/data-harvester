@@ -381,6 +381,29 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
             resp["session_end_epoch"] = session_end_epoch
             resp["date"] = date
             resp["hours"] = hours
+            gaps = []
+            if len(candles) >= 2:
+                for i in range(len(candles) - 1):
+                    t1 = candles[i]["time"]
+                    t2 = candles[i + 1]["time"]
+                    diff_sec = t2 - t1
+                    missing_min = (diff_sec // 60) - 1
+                    if missing_min >= 2:
+                        gap_start_epoch = t1 + 60
+                        gap_end_epoch = t2 - 60
+                        s_dt = datetime.fromtimestamp(gap_start_epoch, tz=timezone.utc).astimezone(ET)
+                        e_dt = datetime.fromtimestamp(gap_end_epoch, tz=timezone.utc).astimezone(ET)
+                        start_str = s_dt.strftime("%H:%M")
+                        end_str = e_dt.strftime("%H:%M")
+                        gaps.append({
+                            "start_epoch": gap_start_epoch,
+                            "end_epoch": gap_end_epoch,
+                            "duration": missing_min,
+                            "start_str": start_str,
+                            "end_str": end_str,
+                            "description": f"{missing_min}m Gap ({start_str} - {end_str})"
+                        })
+            resp["gaps"] = gaps
         return resp
     except Exception as e:
         return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "streaming", "timezone": EXCHANGE_TZ}
@@ -918,6 +941,8 @@ def discover_available_weeks(client=None) -> list[dict]:
             weeks.append({
                 "week_start": mon_str,
                 "week_end": fri_str,
+                "start_date": mon_str,
+                "end_date": fri_str,
                 "label": label,
                 "is_current": is_current,
                 "trading_days_count": len(week_days_map[mon_str])
@@ -938,7 +963,21 @@ def discover_available_weeks(client=None) -> list[dict]:
                 pass
 
 
-def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client=None, include_extended: bool = False, week_start: str = None, target_date: str = None) -> dict:
+# Backward compatibility alias
+get_available_streaming_weeks = discover_available_weeks
+
+
+def get_streaming_continuity_analysis(
+    days: int = 5,
+    symbol: str = "all",
+    client=None,
+    include_extended: bool = False,
+    week_start: str = None,
+    target_date: str = None,
+    week_offset: int = None,
+    target_week: str = None,
+    end_date: str = None,
+) -> dict:
     """
     Bird's Eye View Data Continuity & Integrity Visualizer Analysis Engine.
     Exclusively queries streaming.duckdb (tick_data / ticks table). Zero access to historical.duckdb.
@@ -974,6 +1013,17 @@ def get_streaming_continuity_analysis(days: int = 5, symbol: str = "all", client
 
     try:
         available_weeks = discover_available_weeks(client=client)
+        if target_week and not week_start:
+            week_start = target_week
+        if end_date and not target_date:
+            target_date = end_date
+        if week_offset is not None and not week_start:
+            try:
+                w_off = int(week_offset)
+                if 0 <= w_off < len(available_weeks):
+                    week_start = available_weeks[w_off].get("week_start") or available_weeks[w_off].get("start_date")
+            except Exception:
+                pass
         active_week_start = week_start or (available_weeks[0]["week_start"] if available_weeks else None)
 
         if not client:

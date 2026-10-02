@@ -544,6 +544,40 @@ async function loadStreamingChart(targetDate = null) {
 
       streamingCandleSeries.setData(chartCandles);
       streamingVolumeSeries.setData(chartVolumes);
+
+      if (data.gaps && Array.isArray(data.gaps) && data.gaps.length > 0) {
+        const markers = [];
+        data.gaps.forEach(gap => {
+          let anchorTime = gap.start_epoch;
+          if (loadedStreamingCandles && loadedStreamingCandles.length > 0) {
+            for (let i = loadedStreamingCandles.length - 1; i >= 0; i--) {
+              if (loadedStreamingCandles[i].time < gap.start_epoch) {
+                anchorTime = loadedStreamingCandles[i].time;
+                break;
+              }
+            }
+          }
+          let gapLabel = `⚠️ ${gap.duration}m Gap`;
+          if (gap.start_str && gap.end_str) {
+            gapLabel += ` (${gap.start_str} - ${gap.end_str})`;
+          } else if (gap.description && gap.description.includes('(')) {
+            const match = gap.description.match(/\((.*?)\)/);
+            if (match) gapLabel += ` (${match[1]})`;
+          }
+          markers.push({
+            time: anchorTime,
+            position: 'aboveBar',
+            color: '#f43f5e',
+            shape: 'arrowDown',
+            text: gapLabel
+          });
+        });
+        markers.sort((a, b) => a.time - b.time);
+        streamingCandleSeries.setMarkers(markers);
+      } else {
+        streamingCandleSeries.setMarkers([]);
+      }
+
       tvStreamingChart.timeScale().fitContent();
 
       if (loadedStreamingCandles.length > 0) {
@@ -698,13 +732,19 @@ function openSymbolDetail(symbol) {
 function openSymbolDayDetail(symbol, date) {
   if (!symbol) return;
   currentStreamingSymbol = symbol.toUpperCase();
+  currentContinuitySymbol = symbol.toUpperCase();
+  currentContinuityDays = 1;
   currentContinuityDayDate = date || null;
   if (typeof window !== 'undefined') {
     window.currentStreamingSymbol = currentStreamingSymbol;
+    window.currentContinuitySymbol = currentContinuitySymbol;
+    window.currentContinuityDays = currentContinuityDays;
     window.currentContinuityDayDate = currentContinuityDayDate;
   }
   if (typeof global !== 'undefined') {
     global.currentStreamingSymbol = currentStreamingSymbol;
+    global.currentContinuitySymbol = currentContinuitySymbol;
+    global.currentContinuityDays = currentContinuityDays;
     global.currentContinuityDayDate = currentContinuityDayDate;
   }
 
@@ -726,7 +766,7 @@ function openSymbolDayDetail(symbol, date) {
   }
 
   if (typeof loadStreamingContinuity === 'function') {
-    loadStreamingContinuity(currentStreamingSymbol, 1, true, null, date);
+    loadStreamingContinuity(currentContinuitySymbol, 1, false, null, date);
   }
   if (typeof loadStreamingChart === 'function') {
     loadStreamingChart(date);
