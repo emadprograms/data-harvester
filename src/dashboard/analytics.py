@@ -294,6 +294,8 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
 
         session_start_epoch = None
         session_end_epoch = None
+        day_total_ticks = 0
+        session_total_ticks = 0
 
         if date:
             d_parts = date.strip().split("-")
@@ -309,6 +311,35 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
 
             s_dt_utc = s_dt.astimezone(timezone.utc)
             e_dt_utc = e_dt.astimezone(timezone.utc)
+
+            day_start_et = datetime(d_obj.year, d_obj.month, d_obj.day, 0, 0, 0, tzinfo=ET)
+            day_end_et = day_start_et + timedelta(days=1)
+            day_start_utc = day_start_et.astimezone(timezone.utc)
+            day_end_utc = day_end_et.astimezone(timezone.utc)
+
+            day_ge = build_timestamp_range_clause(ts_type, "timestamp", ">=")
+            day_lt = build_timestamp_range_clause(ts_type, "timestamp", "<")
+            sess_ge = build_timestamp_range_clause(ts_type, "timestamp", ">=")
+            sess_lt = build_timestamp_range_clause(ts_type, "timestamp", "<")
+
+            counts_query = f"""
+                SELECT 
+                    COUNT(*) as day_total_ticks,
+                    COUNT(CASE WHEN {sess_ge} AND {sess_lt} THEN 1 END) as session_total_ticks
+                FROM {table_name}
+                WHERE symbol = ?
+                  AND {day_ge}
+                  AND {day_lt}
+            """
+            c_row = s_client.execute(counts_query, [
+                s_dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
+                e_dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
+                symbol,
+                day_start_utc.strftime("%Y-%m-%d %H:%M:%S"),
+                day_end_utc.strftime("%Y-%m-%d %H:%M:%S")
+            ]).fetchone()
+            day_total_ticks = int(c_row[0]) if c_row and c_row[0] is not None else 0
+            session_total_ticks = int(c_row[1]) if c_row and c_row[1] is not None else 0
 
             where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", ">="))
             params.append(s_dt_utc.strftime("%Y-%m-%d %H:%M:%S"))
@@ -381,6 +412,8 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
             resp["session_end_epoch"] = session_end_epoch
             resp["date"] = date
             resp["hours"] = hours
+            resp["day_total_ticks"] = day_total_ticks
+            resp["session_total_ticks"] = session_total_ticks
             gaps = []
 
             def is_candle_gap_flagged(start_ep: int, end_ep: int, missing_m: int) -> bool:

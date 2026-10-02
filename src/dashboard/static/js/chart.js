@@ -692,6 +692,32 @@ async function loadStreamingChart(targetDate = null, targetHours = null) {
     loadedStreamingCandles = data.candles || [];
     streamingCandleTimeIndex = new Map(loadedStreamingCandles.map(c => [c.time, c]));
 
+    const symEl = document.getElementById('streaming-legend-symbol');
+    if (symEl) {
+      symEl.innerText = (data.symbol || currentStreamingSymbol).toUpperCase();
+    }
+
+    const durationEl = document.getElementById('streaming-legend-duration');
+    if (durationEl) {
+      const activeDate = data.date || targetDate || (typeof currentContinuityDayDate !== 'undefined' ? currentContinuityDayDate : null);
+      const isExtended = (data.hours || hoursParam || 'extended').toLowerCase() === 'extended';
+      const hoursWindow = isExtended ? '04:00–20:00 ET (Extended)' : '09:30–16:00 ET (Regular)';
+      durationEl.innerText = activeDate ? `${activeDate} • ${hoursWindow}` : hoursWindow;
+    }
+
+    const ticksEl = document.getElementById('streaming-legend-ticks');
+    if (ticksEl) {
+      let tickCount = 0;
+      if (typeof data.day_total_ticks === 'number') {
+        tickCount = data.day_total_ticks;
+      } else if (typeof data.session_total_ticks === 'number') {
+        tickCount = data.session_total_ticks;
+      } else if (loadedStreamingCandles && loadedStreamingCandles.length > 0) {
+        tickCount = loadedStreamingCandles.reduce((acc, c) => acc + (c.tick_count || 0), 0);
+      }
+      ticksEl.innerText = `${tickCount.toLocaleString()} ticks in database`;
+    }
+
     if (streamingCandleSeries && streamingVolumeSeries && tvStreamingChart) {
       let chartCandles = [];
       let chartVolumes = [];
@@ -755,10 +781,6 @@ async function loadStreamingChart(targetDate = null, targetHours = null) {
       }
 
       tvStreamingChart.timeScale().fitContent();
-
-      if (loadedStreamingCandles.length > 0) {
-        updateStreamingLegend(loadedStreamingCandles[loadedStreamingCandles.length - 1]);
-      }
     }
 
     if (typeof loadStreamingContinuity === 'function' && !targetDate) {
@@ -784,7 +806,6 @@ async function loadStreamingChart(targetDate = null, targetHours = null) {
 
 function updateStreamingLegend(candle) {
   if (!candle) return;
-  const symEl = document.getElementById('streaming-legend-symbol');
   const timeEl = document.getElementById('streaming-legend-time');
   const openEl = document.getElementById('streaming-legend-open');
   const highEl = document.getElementById('streaming-legend-high');
@@ -792,16 +813,13 @@ function updateStreamingLegend(candle) {
   const closeEl = document.getElementById('streaming-legend-close');
   const volEl = document.getElementById('streaming-legend-volume');
   const chgEl = document.getElementById('streaming-legend-change');
-  const ticksEl = document.getElementById('streaming-legend-ticks');
 
-  if (symEl) symEl.innerText = `${currentStreamingSymbol} (${currentStreamingTimeframe.toUpperCase()})`;
   if (timeEl) timeEl.innerText = candleTimeLabel(candle);
   if (openEl) openEl.innerText = Number(candle.open).toFixed(2);
   if (highEl) highEl.innerText = Number(candle.high).toFixed(2);
   if (lowEl) lowEl.innerText = Number(candle.low).toFixed(2);
   if (closeEl) closeEl.innerText = Number(candle.close).toFixed(2);
   if (volEl) volEl.innerText = Number(candle.volume || 0).toLocaleString();
-  if (ticksEl) ticksEl.innerText = candle.tick_count ? `${candle.tick_count} ticks` : '--';
 
   if (chgEl) {
     const change = candle.close - candle.open;
