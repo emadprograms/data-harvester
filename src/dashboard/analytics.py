@@ -382,6 +382,19 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
             resp["date"] = date
             resp["hours"] = hours
             gaps = []
+
+            def is_candle_gap_flagged(start_ep: int, end_ep: int, missing_m: int) -> bool:
+                if str(hours).lower() == "regular":
+                    return missing_m >= 1
+                rth_start = int(datetime(d_obj.year, d_obj.month, d_obj.day, 9, 30, 0, tzinfo=ET).timestamp())
+                rth_end = int(datetime(d_obj.year, d_obj.month, d_obj.day, 15, 59, 0, tzinfo=ET).timestamp())
+                ov_s = max(start_ep, rth_start)
+                ov_e = min(end_ep, rth_end)
+                rth_m = ((ov_e - ov_s) // 60 + 1) if ov_s <= ov_e else 0
+                if rth_m >= 1:
+                    return True
+                return missing_m >= 5
+
             if len(candles) >= 2:
                 for i in range(len(candles) - 1):
                     t1 = candles[i]["time"]
@@ -391,27 +404,28 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
                     if missing_min >= 1:
                         gap_start_epoch = t1 + 60
                         gap_end_epoch = t2 - 60
-                        s_dt = datetime.fromtimestamp(gap_start_epoch, tz=timezone.utc).astimezone(ET)
-                        e_dt = datetime.fromtimestamp(gap_end_epoch, tz=timezone.utc).astimezone(ET)
-                        start_str = s_dt.strftime("%H:%M")
-                        end_str = e_dt.strftime("%H:%M")
-                        gaps.append({
-                            "start_epoch": gap_start_epoch,
-                            "end_epoch": gap_end_epoch,
-                            "duration": missing_min,
-                            "start_str": start_str,
-                            "end_str": end_str,
-                            "description": f"{missing_min}m Gap ({start_str} - {end_str})"
-                        })
+                        if is_candle_gap_flagged(gap_start_epoch, gap_end_epoch, missing_min):
+                            s_dt = datetime.fromtimestamp(gap_start_epoch, tz=timezone.utc).astimezone(ET)
+                            e_dt = datetime.fromtimestamp(gap_end_epoch, tz=timezone.utc).astimezone(ET)
+                            start_str = s_dt.strftime("%H:%M")
+                            end_str = e_dt.strftime("%H:%M")
+                            gaps.append({
+                                "start_epoch": gap_start_epoch,
+                                "end_epoch": gap_end_epoch,
+                                "duration": missing_min,
+                                "start_str": start_str,
+                                "end_str": end_str,
+                                "description": f"{missing_min}m Gap ({start_str} - {end_str})"
+                            })
 
             # Detect leading boundary gap
             if len(candles) > 0:
                 first_candle_time = candles[0]["time"]
                 if first_candle_time > session_start_epoch:
                     missing_min = (first_candle_time - session_start_epoch) // 60
-                    if missing_min >= 1:
-                        leading_gap_start = session_start_epoch
-                        leading_gap_end = first_candle_time - 60
+                    leading_gap_start = session_start_epoch
+                    leading_gap_end = first_candle_time - 60
+                    if missing_min >= 1 and is_candle_gap_flagged(leading_gap_start, leading_gap_end, missing_min):
                         s_dt = datetime.fromtimestamp(leading_gap_start, tz=timezone.utc).astimezone(ET)
                         e_dt = datetime.fromtimestamp(leading_gap_end, tz=timezone.utc).astimezone(ET)
                         start_str = s_dt.strftime("%H:%M")
@@ -429,9 +443,9 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
                 last_candle_time = candles[-1]["time"]
                 if last_candle_time + 60 < session_end_epoch:
                     missing_min = (session_end_epoch - (last_candle_time + 60)) // 60
-                    if missing_min >= 1:
-                        trailing_gap_start = last_candle_time + 60
-                        trailing_gap_end = session_end_epoch - 60
+                    trailing_gap_start = last_candle_time + 60
+                    trailing_gap_end = session_end_epoch - 60
+                    if missing_min >= 1 and is_candle_gap_flagged(trailing_gap_start, trailing_gap_end, missing_min):
                         s_dt = datetime.fromtimestamp(trailing_gap_start, tz=timezone.utc).astimezone(ET)
                         e_dt = datetime.fromtimestamp(trailing_gap_end, tz=timezone.utc).astimezone(ET)
                         start_str = s_dt.strftime("%H:%M")
@@ -446,7 +460,7 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
                         })
             else:
                 missing_min = (session_end_epoch - session_start_epoch) // 60
-                if missing_min >= 1:
+                if missing_min >= 1 and is_candle_gap_flagged(session_start_epoch, session_end_epoch - 60, missing_min):
                     s_dt = datetime.fromtimestamp(session_start_epoch, tz=timezone.utc).astimezone(ET)
                     e_dt = datetime.fromtimestamp(session_end_epoch - 60, tz=timezone.utc).astimezone(ET)
                     start_str = s_dt.strftime("%H:%M")
@@ -1352,6 +1366,17 @@ def get_streaming_continuity_analysis(
             nxt = datetime(2000, 1, 1, hh, mm) + timedelta(minutes=1)
             return nxt.strftime("%H:%M")
 
+        def is_continuity_gap_flagged(missing_minutes_list: list, is_ext: bool) -> bool:
+            if not missing_minutes_list:
+                return False
+            dur = len(missing_minutes_list)
+            if not is_ext:
+                return dur >= 1
+            rth_missing = sum(1 for m in missing_minutes_list if "09:30" <= m < "16:00")
+            if rth_missing >= 1:
+                return True
+            return dur >= 5
+
         day_objs = []
         all_gaps = []
         spectrogram = {}
@@ -1429,6 +1454,8 @@ def get_streaming_continuity_analysis(
 
             global_blackout_minutes = set()
             for seg in outage_segments:
+                if not is_continuity_gap_flagged(seg, include_extended):
+                    continue
                 dur = len(seg)
                 start_m = seg[0]
                 end_m = next_minute_str(seg[-1])
@@ -1477,6 +1504,8 @@ def get_streaming_continuity_analysis(
                         sym_gap_segments.append(cur_sym_gap)
 
                     for seg in sym_gap_segments:
+                        if not is_continuity_gap_flagged(seg, include_extended):
+                            continue
                         dur = len(seg)
                         start_m = seg[0]
                         end_m = next_minute_str(seg[-1])

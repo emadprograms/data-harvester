@@ -483,13 +483,17 @@ async function loadStreamingChart(targetDate = null, targetHours = null) {
 
   try {
     let fetchUrl = `${API_BASE}/api/streaming/candles?symbol=${encodeURIComponent(currentStreamingSymbol)}&tf=${currentStreamingTimeframe}&limit=${currentStreamingLimit}`;
+    const isGlobalExtended = (typeof window !== 'undefined' && typeof window.currentContinuityExtended === 'boolean')
+      ? window.currentContinuityExtended
+      : ((typeof global !== 'undefined' && typeof global.currentContinuityExtended === 'boolean')
+          ? global.currentContinuityExtended
+          : ((typeof currentContinuityExtended !== 'undefined') ? Boolean(currentContinuityExtended) : true));
+
     let hoursParam = 'extended';
     if (targetHours) {
       hoursParam = targetHours;
-    } else if (targetDate) {
-      hoursParam = 'regular';
     } else {
-      hoursParam = 'extended';
+      hoursParam = isGlobalExtended ? 'extended' : 'regular';
     }
 
     if (targetDate) {
@@ -721,8 +725,14 @@ function openSymbolDetail(symbol) {
     titleEl.innerText = `${currentStreamingSymbol} - Extended Session Continuity & Candlestick Chart`;
   }
 
+  const isExtended = (typeof window !== 'undefined' && typeof window.currentContinuityExtended === 'boolean')
+    ? window.currentContinuityExtended
+    : ((typeof global !== 'undefined' && typeof global.currentContinuityExtended === 'boolean')
+        ? global.currentContinuityExtended
+        : ((typeof currentContinuityExtended !== 'undefined') ? Boolean(currentContinuityExtended) : true));
+
   if (typeof loadStreamingContinuity === 'function') {
-    loadStreamingContinuity(currentStreamingSymbol, 5, true);
+    loadStreamingContinuity(currentStreamingSymbol, 5, isExtended);
   }
   if (typeof loadStreamingChart === 'function') {
     loadStreamingChart();
@@ -774,11 +784,17 @@ function openSymbolDayDetail(symbol, date) {
     titleEl.innerText = `${currentStreamingSymbol} • ${date || 'Session'} - Daily Continuity & Candlestick Chart`;
   }
 
+  const isExtended = (typeof window !== 'undefined' && typeof window.currentContinuityExtended === 'boolean')
+    ? window.currentContinuityExtended
+    : ((typeof global !== 'undefined' && typeof global.currentContinuityExtended === 'boolean')
+        ? global.currentContinuityExtended
+        : ((typeof currentContinuityExtended !== 'undefined') ? Boolean(currentContinuityExtended) : true));
+
   if (typeof loadStreamingContinuity === 'function') {
-    loadStreamingContinuity(currentContinuitySymbol, 1, false, null, date);
+    loadStreamingContinuity(currentContinuitySymbol, 1, isExtended, null, date);
   }
   if (typeof loadStreamingChart === 'function') {
-    loadStreamingChart(date, 'regular');
+    loadStreamingChart(date, isExtended ? 'extended' : 'regular');
   }
   if (typeof resizeStreamingChart === 'function') {
     resizeStreamingChart();
@@ -803,9 +819,14 @@ function closeSymbolDetail() {
   if (chartCardEl) chartCardEl.classList.add('hidden');
 
   if (typeof loadStreamingContinuity === 'function') {
+    const isExtended = (typeof window !== 'undefined' && typeof window.currentContinuityExtended === 'boolean')
+      ? window.currentContinuityExtended
+      : ((typeof global !== 'undefined' && typeof global.currentContinuityExtended === 'boolean')
+          ? global.currentContinuityExtended
+          : ((typeof currentContinuityExtended !== 'undefined') ? Boolean(currentContinuityExtended) : true));
     const weekStart = (typeof currentContinuityWeekStart !== 'undefined' && currentContinuityWeekStart) ||
                       (typeof window !== 'undefined' && window.currentContinuityWeekStart);
-    loadStreamingContinuity('all', 5, false, weekStart, null);
+    loadStreamingContinuity('all', 5, isExtended, weekStart, null);
   }
 }
 

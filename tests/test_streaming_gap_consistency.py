@@ -472,6 +472,7 @@ def test_single_day_drilldown_hours_synchronized_to_regular():
     # Dynamic JS simulation: trigger openSymbolDayDetail from regular view
     test_js = """
     global.fetchCalls = [];
+    global.currentContinuityExtended = false;
     openSymbolDayDetail('ADBE', '2026-09-15');
 
     // Wait for any async calls to be scheduled

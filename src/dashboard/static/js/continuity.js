@@ -20,6 +20,7 @@ let currentContinuitySymbol = 'all';
 let currentContinuityDays = 5;
 let currentContinuityWeekStart = null;
 let currentContinuityDayDate = null;
+let currentContinuityExtended = true;
 
 // Expose state globally on window and global
 if (typeof window !== 'undefined') {
@@ -29,6 +30,7 @@ if (typeof window !== 'undefined') {
   window.cachedSymbolContinuityData = cachedSymbolContinuityData;
   window.currentContinuityWeekStart = currentContinuityWeekStart;
   window.currentContinuityDayDate = currentContinuityDayDate;
+  window.currentContinuityExtended = currentContinuityExtended;
 }
 if (typeof global !== 'undefined') {
   global.currentContinuityView = currentContinuityView;
@@ -37,6 +39,7 @@ if (typeof global !== 'undefined') {
   global.cachedSymbolContinuityData = cachedSymbolContinuityData;
   global.currentContinuityWeekStart = currentContinuityWeekStart;
   global.currentContinuityDayDate = currentContinuityDayDate;
+  global.currentContinuityExtended = currentContinuityExtended;
 }
 
 function hasSpectrogramData(d) {
@@ -65,6 +68,49 @@ function populateWeekSelect(weeks, selectedWeek) {
 }
 
 /**
+ * Toggles global extended trading hours mode (04:00-20:00 ET vs 09:30-16:00 ET).
+ * Updates UI labels, subtitle, badges, and triggers fresh data fetches.
+ * @param {boolean} checked - Whether extended hours should be enabled
+ */
+function toggleExtendedHours(checked) {
+  currentContinuityExtended = Boolean(checked);
+  if (typeof window !== 'undefined') window.currentContinuityExtended = currentContinuityExtended;
+  if (typeof global !== 'undefined') global.currentContinuityExtended = currentContinuityExtended;
+
+  const toggleEl = document.getElementById('continuity-extended-toggle');
+  if (toggleEl && toggleEl.checked !== currentContinuityExtended) {
+    toggleEl.checked = currentContinuityExtended;
+  }
+  const subtitleEl = document.getElementById('continuity-hours-subtitle');
+  if (subtitleEl) {
+    subtitleEl.innerText = currentContinuityExtended
+      ? '04:00–20:00 ET (Click any symbol row to inspect detail & chart)'
+      : '09:30–16:00 ET (Click any symbol row to inspect detail & chart)';
+  }
+  const badgeEl = document.getElementById('detail-session-hours-badge');
+  if (badgeEl) {
+    badgeEl.innerText = currentContinuityExtended
+      ? 'Extended Hours (04:00–20:00 ET)'
+      : 'Regular Hours (09:30–16:00 ET)';
+  }
+
+  const detailView = document.getElementById('streaming-detail-view');
+  const isDetailOpen = detailView && !detailView.classList.contains('hidden');
+
+  if (isDetailOpen) {
+    loadStreamingContinuity(currentContinuitySymbol, 1, currentContinuityExtended, null, currentContinuityDayDate);
+    if (typeof loadStreamingChart === 'function') {
+      loadStreamingChart(currentContinuityDayDate, currentContinuityExtended ? 'extended' : 'regular');
+    }
+  } else {
+    const weekStart = (typeof currentContinuityWeekStart !== 'undefined' && currentContinuityWeekStart) ||
+                      (typeof window !== 'undefined' && window.currentContinuityWeekStart);
+    loadStreamingContinuity(currentContinuitySymbol || 'all', currentContinuityDays || 5, currentContinuityExtended, weekStart, null);
+  }
+}
+const handleExtendedToggle = toggleExtendedHours;
+
+/**
  * Handler for #continuity-week-select changes.
  */
 function handleWeekChange(weekStart) {
@@ -78,18 +124,18 @@ function handleWeekChange(weekStart) {
     global.currentContinuityWeekStart = currentContinuityWeekStart;
     global.currentContinuityDayDate = null;
   }
-  loadStreamingContinuity('all', 5, false, weekStart, null);
+  loadStreamingContinuity('all', 5, currentContinuityExtended, weekStart, null);
 }
 
 /**
  * Loads streaming continuity analysis data from REST API.
  * @param {string} symbol - 'all' or specific symbol (e.g. 'NVDA')
  * @param {number} days - Number of trading days to analyze (default 5)
- * @param {boolean} [extended=false] - Whether to include extended trading hours (04:00–20:00 ET)
+ * @param {boolean} [extended=null] - Whether to include extended trading hours (04:00–20:00 ET)
  * @param {string} [weekStart=null] - Week start date YYYY-MM-DD
  * @param {string} [targetDate=null] - Single day target date YYYY-MM-DD
  */
-async function loadStreamingContinuity(symbol, days, extended = false, weekStart = null, targetDate = null) {
+async function loadStreamingContinuity(symbol, days, extended = null, weekStart = null, targetDate = null) {
   if (symbol !== undefined && symbol !== null) {
     currentContinuitySymbol = symbol;
   }
@@ -103,13 +149,15 @@ async function loadStreamingContinuity(symbol, days, extended = false, weekStart
     currentContinuityDayDate = targetDate;
   }
 
-  const isExtended = Boolean(extended);
+  const isExtended = (extended !== null && extended !== undefined)
+    ? Boolean(extended)
+    : ((typeof currentContinuityExtended !== 'undefined') ? Boolean(currentContinuityExtended) : true);
   const ribbonView = document.getElementById('continuity-ribbon-view');
   const summaryBadge = document.getElementById('continuity-incident-summary');
 
   try {
     const symParam = encodeURIComponent(currentContinuitySymbol || 'all');
-    let url = `/api/streaming/continuity?days=${currentContinuityDays}&symbol=${symParam}&extended=${isExtended ? 'true' : 'false'}`;
+    let url = `/api/streaming/continuity?days=${currentContinuityDays}&symbol=${symParam}&extended=${isExtended ? 'true' : 'false'}&hours=${isExtended ? 'extended' : 'regular'}`;
     if (targetDate || currentContinuityDayDate) {
       url += `&date=${encodeURIComponent(targetDate || currentContinuityDayDate)}`;
     } else if (weekStart || currentContinuityWeekStart) {
@@ -451,12 +499,22 @@ function renderSpectrogramView(data, container) {
             if (!isNaN(h) && !isNaN(m)) minOfDay = h * 60 + m;
           } catch (_) {}
         }
-        if (minOfDay === null) minOfDay = 570;
+        const isGlobalExtended = (typeof window !== 'undefined' && typeof window.currentContinuityExtended === 'boolean')
+          ? window.currentContinuityExtended
+          : ((typeof global !== 'undefined' && typeof global.currentContinuityExtended === 'boolean')
+              ? global.currentContinuityExtended
+              : currentContinuityExtended);
+        const isExtended = (data && (data.hours === 'regular' || data.extended_hours === false))
+          ? false
+          : Boolean(data.extended_hours || data.hours === 'extended' || isGlobalExtended);
+        const baseStartMin = isExtended ? 240 : 570;
+        const spanMin = isExtended ? 960 : 390;
+        if (minOfDay === null) minOfDay = baseStartMin;
 
-        const offsetMin = Math.max(0, minOfDay - 570);
-        const leftPct = Math.min(100, Math.max(0, (offsetMin / 390) * 100));
+        const offsetMin = Math.max(0, minOfDay - baseStartMin);
+        const leftPct = Math.min(100, Math.max(0, (offsetMin / spanMin) * 100));
         const dur = g.duration || g.duration_minutes || g.missing_minutes || 1;
-        const widthPct = Math.min(100 - leftPct, Math.max(0.6, (dur / 390) * 100));
+        const widthPct = Math.min(100 - leftPct, Math.max(0.4, (dur / spanMin) * 100));
         return `<div class="absolute inset-y-0 bg-rose-500 rounded-[1px] pointer-events-none" style="left: ${leftPct.toFixed(2)}%; width: max(2px, ${widthPct.toFixed(2)}%);" title="${g.description || `${dur}m gap`}"></div>`;
       }).join('');
     };
@@ -604,10 +662,13 @@ if (typeof window !== 'undefined') {
   window.renderMasterPulseView = renderMasterPulseView;
   window.renderSpectrogramView = renderSpectrogramView;
   window.toggleContinuityView = toggleContinuityView;
+  window.toggleExtendedHours = toggleExtendedHours;
+  window.handleExtendedToggle = handleExtendedToggle;
   window.syncChartToGap = syncChartToGap;
   window.currentContinuityView = currentContinuityView;
   window.currentContinuityWeekStart = currentContinuityWeekStart;
   window.currentContinuityDayDate = currentContinuityDayDate;
+  window.currentContinuityExtended = currentContinuityExtended;
   window.cachedContinuityData = cachedContinuityData;
   window.cachedAllContinuityData = cachedAllContinuityData;
   window.cachedSymbolContinuityData = cachedSymbolContinuityData;
@@ -622,10 +683,13 @@ if (typeof global !== 'undefined') {
   global.renderMasterPulseView = renderMasterPulseView;
   global.renderSpectrogramView = renderSpectrogramView;
   global.toggleContinuityView = toggleContinuityView;
+  global.toggleExtendedHours = toggleExtendedHours;
+  global.handleExtendedToggle = handleExtendedToggle;
   global.syncChartToGap = syncChartToGap;
   global.currentContinuityView = currentContinuityView;
   global.currentContinuityWeekStart = currentContinuityWeekStart;
   global.currentContinuityDayDate = currentContinuityDayDate;
+  global.currentContinuityExtended = currentContinuityExtended;
   global.cachedContinuityData = cachedContinuityData;
   global.cachedAllContinuityData = cachedAllContinuityData;
   global.cachedSymbolContinuityData = cachedSymbolContinuityData;

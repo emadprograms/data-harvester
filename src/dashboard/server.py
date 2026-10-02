@@ -385,9 +385,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             except (ValueError, TypeError):
                 days = 5
             symbol = query.get("symbol", ["all"])[0]
-            ext_param = query.get("extended", ["false"])[0]
-            hours_param = query.get("hours", ["regular"])[0]
-            include_extended = (str(ext_param).strip().lower() == "true" or str(hours_param).strip().lower() == "extended")
+            if "extended" in query or "hours" in query:
+                ext_param = query.get("extended", ["false"])[0]
+                hours_param = query.get("hours", ["regular"])[0]
+                include_extended = (str(ext_param).strip().lower() == "true" or str(hours_param).strip().lower() == "extended")
+            else:
+                include_extended = True
             week_start = query.get("week_start", query.get("week", [None]))[0]
             target_date = query.get("date", query.get("target_date", [None]))[0]
             week_offset_param = query.get("week_offset", [None])[0]
