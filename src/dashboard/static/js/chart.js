@@ -21,6 +21,9 @@ if (typeof tvStreamingChart === 'undefined') {
 if (typeof currentStreamingLimit === 'undefined') {
   var currentStreamingLimit = 10000;
 }
+if (typeof gapShadingPlugin === 'undefined') {
+  var gapShadingPlugin = null;
+}
 
 let chartTimezone = EXCHANGE_TIMEZONE;
 const exchangeFormatterCache = {};
@@ -360,6 +363,171 @@ function selectSymbolInChart(sym) {
 }
 
 // ============================================================================
+// GAP SHADING CUSTOM SERIES PRIMITIVE (ISeriesPrimitive)
+// ============================================================================
+
+class GapShadingRenderer {
+  constructor(data) {
+    this._data = data;
+  }
+
+  draw(target) {
+    if (!this._data || !this._data.bars || this._data.bars.length === 0) return;
+    if (!target || typeof target.useMediaCoordinateSpace !== 'function') return;
+    target.useMediaCoordinateSpace((scope) => {
+      const ctx = scope.context;
+      const barSpacing = this._data.barSpacing || 6;
+      const halfWidth = barSpacing / 2;
+      for (const bar of this._data.bars) {
+        ctx.fillStyle = bar.color || 'rgba(244, 63, 94, 0.18)';
+        ctx.fillRect(
+          Math.round(bar.x - halfWidth),
+          0,
+          Math.ceil(barSpacing),
+          scope.mediaSize.height
+        );
+      }
+    });
+  }
+}
+
+class GapShadingPaneView {
+  constructor(plugin) {
+    this._plugin = plugin;
+  }
+
+  zOrder() {
+    return 'bottom';
+  }
+
+  renderer() {
+    return new GapShadingRenderer(this._plugin._getViewData());
+  }
+}
+
+class GapShadingPlugin {
+  constructor() {
+    this._chart = null;
+    this._series = null;
+    this._seriesData = [];
+    this._gaps = [];
+    this._paneViews = [new GapShadingPaneView(this)];
+    this._cache = null;
+    this._lastLogicalRange = { from: -1, to: -1 };
+    this._lastWidth = 0;
+    this._lastBarSpacing = 0;
+    this._requestUpdate = () => {};
+  }
+
+  attached({ chart, series, requestUpdate }) {
+    this._chart = chart;
+    this._series = series;
+    this._requestUpdate = requestUpdate || (() => {});
+  }
+
+  detached() {
+    this._chart = null;
+    this._series = null;
+    this._requestUpdate = () => {};
+  }
+
+  setGaps(gaps, seriesData = null) {
+    this._gaps = Array.isArray(gaps) ? gaps : [];
+    this._seriesData = seriesData || [];
+    this.updateAllViews();
+  }
+
+  getGaps() {
+    return this._gaps;
+  }
+
+  updateAllViews() {
+    this._cache = null;
+    if (typeof this._requestUpdate === 'function') {
+      this._requestUpdate();
+    }
+  }
+
+  paneViews() {
+    return this._paneViews;
+  }
+
+  _getViewData() {
+    const timeScale = this._chart && typeof this._chart.timeScale === 'function'
+      ? this._chart.timeScale()
+      : null;
+
+    let barSpacing = 6;
+    if (timeScale && typeof timeScale.options === 'function') {
+      const opts = timeScale.options();
+      if (opts && typeof opts.barSpacing === 'number') {
+        barSpacing = opts.barSpacing;
+      }
+    }
+
+    let data = (this._seriesData && this._seriesData.length > 0)
+      ? this._seriesData
+      : (this._series && typeof this._series.data === 'function' ? this._series.data() : []);
+
+    if ((!data || data.length === 0) && typeof global !== 'undefined' && global.lastSetCandles) {
+      data = global.lastSetCandles;
+    }
+    if ((!data || data.length === 0) && typeof loadedStreamingCandles !== 'undefined') {
+      data = loadedStreamingCandles;
+    }
+
+    if (!data || !Array.isArray(data) || !this._gaps || this._gaps.length === 0) {
+      return { bars: [], barSpacing };
+    }
+
+    const isTimeInGap = (t, gap) => {
+      const start = gap.start_epoch;
+      const end = (gap.duration && gap.duration > 0)
+        ? (gap.start_epoch + (gap.duration - 1) * 60)
+        : (gap.end_epoch !== undefined ? gap.end_epoch : gap.start_epoch);
+      return t >= start && t <= end;
+    };
+
+    const bars = [];
+    for (let i = 0; i < data.length; i++) {
+      const d = data[i];
+      if (!d || typeof d.time !== 'number') continue;
+
+      const matchingGap = this._gaps.find(g => isTimeInGap(d.time, g));
+      if (matchingGap) {
+        const status = (matchingGap.status || matchingGap.type || '').toLowerCase();
+        const color = (status === 'partial') ? 'rgba(245, 158, 11, 0.18)' : 'rgba(244, 63, 94, 0.18)';
+        let x = (timeScale && typeof timeScale.timeToCoordinate === 'function')
+          ? timeScale.timeToCoordinate(d.time)
+          : (i * barSpacing);
+        if (x === null || x === undefined || isNaN(x)) {
+          x = i * barSpacing;
+        }
+        bars.push({
+          time: d.time,
+          x: x,
+          color: color,
+          status: status || 'outage'
+        });
+      }
+    }
+
+    return { bars, barSpacing };
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.GapShadingRenderer = GapShadingRenderer;
+  window.GapShadingPaneView = GapShadingPaneView;
+  window.GapShadingPlugin = GapShadingPlugin;
+}
+if (typeof global !== 'undefined') {
+  global.GapShadingRenderer = GapShadingRenderer;
+  global.GapShadingPaneView = GapShadingPaneView;
+  global.GapShadingPlugin = GapShadingPlugin;
+}
+
+// ============================================================================
 // 2. DEDICATED STREAMING CHART CONTROLLER
 // ============================================================================
 
@@ -440,6 +608,23 @@ function initStreamingChart() {
     priceScaleId: '',
     scaleMargins: { top: 0.82, bottom: 0 }
   });
+
+  gapShadingPlugin = new GapShadingPlugin();
+  if (streamingCandleSeries && typeof streamingCandleSeries.attachPrimitive === 'function') {
+    streamingCandleSeries.attachPrimitive(gapShadingPlugin);
+  }
+  if (typeof window !== 'undefined') {
+    window.gapShadingPlugin = gapShadingPlugin;
+    window.GapShadingPlugin = GapShadingPlugin;
+    window.GapShadingPaneView = GapShadingPaneView;
+    window.GapShadingRenderer = GapShadingRenderer;
+  }
+  if (typeof global !== 'undefined') {
+    global.gapShadingPlugin = gapShadingPlugin;
+    global.GapShadingPlugin = GapShadingPlugin;
+    global.GapShadingPaneView = GapShadingPaneView;
+    global.GapShadingRenderer = GapShadingRenderer;
+  }
 
   tvStreamingChart.subscribeCrosshairMove(param => {
     if (!param || !param.time || !param.seriesData || !param.seriesData.get(streamingCandleSeries)) {
@@ -558,36 +743,14 @@ async function loadStreamingChart(targetDate = null, targetHours = null) {
       streamingCandleSeries.setData(chartCandles);
       streamingVolumeSeries.setData(chartVolumes);
 
-      if (data.gaps && Array.isArray(data.gaps) && data.gaps.length > 0) {
-        const markers = [];
-        data.gaps.forEach(gap => {
-          let anchorTime = gap.start_epoch;
-          if (loadedStreamingCandles && loadedStreamingCandles.length > 0) {
-            for (let i = loadedStreamingCandles.length - 1; i >= 0; i--) {
-              if (loadedStreamingCandles[i].time < gap.start_epoch) {
-                anchorTime = loadedStreamingCandles[i].time;
-                break;
-              }
-            }
-          }
-          let gapLabel = `⚠️ ${gap.duration}m Gap`;
-          if (gap.start_str && gap.end_str) {
-            gapLabel += ` (${gap.start_str} - ${gap.end_str})`;
-          } else if (gap.description && gap.description.includes('(')) {
-            const match = gap.description.match(/\((.*?)\)/);
-            if (match) gapLabel += ` (${match[1]})`;
-          }
-          markers.push({
-            time: anchorTime,
-            position: 'aboveBar',
-            color: '#f43f5e',
-            shape: 'arrowDown',
-            text: gapLabel
-          });
-        });
-        markers.sort((a, b) => a.time - b.time);
-        streamingCandleSeries.setMarkers(markers);
-      } else {
+      if (gapShadingPlugin && typeof gapShadingPlugin.setGaps === 'function') {
+        gapShadingPlugin.setGaps(data.gaps || [], chartCandles);
+      } else if (typeof window !== 'undefined' && window.gapShadingPlugin && typeof window.gapShadingPlugin.setGaps === 'function') {
+        window.gapShadingPlugin.setGaps(data.gaps || [], chartCandles);
+      } else if (typeof global !== 'undefined' && global.gapShadingPlugin && typeof global.gapShadingPlugin.setGaps === 'function') {
+        global.gapShadingPlugin.setGaps(data.gaps || [], chartCandles);
+      }
+      if (streamingCandleSeries && typeof streamingCandleSeries.setMarkers === 'function') {
         streamingCandleSeries.setMarkers([]);
       }
 
@@ -838,6 +1001,10 @@ if (typeof window !== 'undefined') {
   window.initStreamingChart = initStreamingChart;
   window.loadStreamingChart = loadStreamingChart;
   window.resizeStreamingChart = resizeStreamingChart;
+  window.gapShadingPlugin = gapShadingPlugin;
+  window.GapShadingPlugin = GapShadingPlugin;
+  window.GapShadingPaneView = GapShadingPaneView;
+  window.GapShadingRenderer = GapShadingRenderer;
 }
 if (typeof global !== 'undefined') {
   global.openSymbolDetail = openSymbolDetail;
@@ -846,4 +1013,8 @@ if (typeof global !== 'undefined') {
   global.initStreamingChart = initStreamingChart;
   global.loadStreamingChart = loadStreamingChart;
   global.resizeStreamingChart = resizeStreamingChart;
+  global.gapShadingPlugin = gapShadingPlugin;
+  global.GapShadingPlugin = GapShadingPlugin;
+  global.GapShadingPaneView = GapShadingPaneView;
+  global.GapShadingRenderer = GapShadingRenderer;
 }

@@ -34,6 +34,7 @@ var volumeSeries = null;
 var tvStreamingChart = null;
 var streamingCandleSeries = null;
 var streamingVolumeSeries = null;
+var gapShadingPlugin = null;
 
 /**
  * Display floating toast notification in bottom right corner.

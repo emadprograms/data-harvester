@@ -229,6 +229,7 @@ global.fitContentCalls = [];
 global.lastSetCandles = [];
 global.lastSetVolumes = [];
 global.lastSetMarkers = [];
+global.lastAttachedPrimitive = null;
 global.API_BASE = '';
 global.currentStreamingSymbol = 'NVDA';
 global.currentStreamingTimeframe = '1m';
@@ -236,7 +237,9 @@ global.currentStreamingLimit = 10000;
 global.showToast = () => {{}};
 
 global.LightweightCharts = {{
+  CrosshairMode: {{ Normal: 0, Magnet: 1 }},
   createChart: (container, options) => {{
+    let seriesObj = null;
     const chart = {{
       container,
       options,
@@ -246,17 +249,35 @@ global.LightweightCharts = {{
         }},
         fitContent: () => {{
           global.fitContentCalls.push(true);
-        }}
+        }},
+        getVisibleLogicalRange: () => ({{ from: 0, to: 1000 }}),
+        timeToCoordinate: (time) => 100,
+        options: () => ({{ barSpacing: 6 }}),
+        width: () => 800
       }}),
       applyOptions: () => {{}},
-      addCandlestickSeries: () => ({{
-        setData: (candles) => {{
-          global.lastSetCandles = candles;
-        }},
-        setMarkers: (markers) => {{
-          global.lastSetMarkers = markers;
-        }}
-      }}),
+      addCandlestickSeries: () => {{
+        seriesObj = {{
+          setData: (candles) => {{
+            global.lastSetCandles = candles;
+          }},
+          setMarkers: (markers) => {{
+            global.lastSetMarkers = markers;
+          }},
+          attachPrimitive: (primitive) => {{
+            global.lastAttachedPrimitive = primitive;
+            if (primitive && typeof primitive.attached === 'function') {{
+              primitive.attached({{
+                chart: global.mockTvChart || chart,
+                series: seriesObj,
+                requestUpdate: () => {{}}
+              }});
+            }}
+          }},
+          data: () => global.lastSetCandles || []
+        }};
+        return seriesObj;
+      }},
       addHistogramSeries: () => ({{
         setData: (volumes) => {{
           global.lastSetVolumes = volumes;
@@ -264,6 +285,7 @@ global.LightweightCharts = {{
       }}),
       subscribeCrosshairMove: () => {{}}
     }};
+    global.mockTvChart = chart;
     return chart;
   }}
 }};
@@ -934,10 +956,13 @@ class TestFrontendJsSimulationWeekAndDayDrilldown:
         assert call["days"] == 1, f"Expected days=1 for single-day drilldown, got {call.get('days')}"
         assert call["targetDate"] == "2026-10-02", f"Expected targetDate='2026-10-02', got {call.get('targetDate')}"
 
-    def test_chart_sets_gap_markers_on_single_day(self):
+    def test_chart_applies_gap_shading_on_single_day_and_clears_markers(self):
         """
-        Verifies loadStreamingChart("2026-10-02") calls streamingCandleSeries.setMarkers
-        with red markers ("⚠️ <duration>m Gap") at gap points.
+        Verifies loadStreamingChart("2026-10-02") replaces dirty triangle markers with clean gap shading:
+        1. streamingCandleSeries.setMarkers([]) is called (dirty triangle markers eliminated).
+        2. GapShadingPlugin is attached to streamingCandleSeries (global.lastAttachedPrimitive !== null).
+        3. gapShadingPlugin.getGaps() receives the gaps from the candle response.
+        4. gapShadingPlugin.paneViews()[0].zOrder() returns 'bottom'.
         """
         result = run_js_simulation("""
         const fnInit = typeof initStreamingChart === 'function' ? initStreamingChart : window.initStreamingChart;
@@ -948,24 +973,175 @@ class TestFrontendJsSimulationWeekAndDayDrilldown:
 
         await fnLoad('2026-10-02');
 
+        const plugin = global.lastAttachedPrimitive || global.gapShadingPlugin || (typeof window !== 'undefined' ? window.gapShadingPlugin : null);
+        const gaps = plugin && typeof plugin.getGaps === 'function' ? plugin.getGaps() : null;
+        const paneViews = plugin && typeof plugin.paneViews === 'function' ? plugin.paneViews() : [];
+        const zOrder = paneViews.length > 0 && typeof paneViews[0].zOrder === 'function' ? paneViews[0].zOrder() : null;
+
         return {
           markerCount: lastSetMarkers.length,
-          markers: lastSetMarkers
+          markers: lastSetMarkers,
+          hasAttachedPrimitive: global.lastAttachedPrimitive !== null,
+          hasPlugin: plugin !== null && plugin !== undefined,
+          gaps: gaps,
+          zOrder: zOrder
         };
         """)
 
         assert "error" not in result, f"loadStreamingChart failed: {result.get('error')}"
-        markers = result.get("markers", [])
-        assert len(markers) > 0, (
-            "Expected streamingCandleSeries.setMarkers to be called with gap markers for single-day session with gaps"
+        # 1. Dirty triangle exclamation markers eliminated
+        assert result["markers"] == [], (
+            f"Expected streamingCandleSeries.setMarkers to be called with [] to clear dirty triangle markers, got: {result.get('markers')}"
         )
-        first_marker = markers[0]
-        assert "time" in first_marker, "Marker must specify 'time'"
-        assert "text" in first_marker, "Marker must specify 'text'"
-        assert "⚠️" in first_marker["text"] and "Gap" in first_marker["text"], (
-            f"Expected gap warning marker text to contain '⚠️' and 'Gap', got: {first_marker.get('text')}"
+        assert result["markerCount"] == 0, "Dirty gap markers must not be set on streamingCandleSeries"
+
+        # 2. GapShadingPlugin attached
+        assert result["hasAttachedPrimitive"] is True, (
+            "Expected GapShadingPlugin to be attached to streamingCandleSeries via attachPrimitive"
         )
-        color = str(first_marker.get("color", "")).lower()
-        assert color in ["#f43f5e", "#ef4444", "#e11d48", "red"] or "rose" in color or "red" in color, (
-            f"Expected red/rose warning marker color, got: {first_marker.get('color')}"
+        assert result["hasPlugin"] is True, "Expected gapShadingPlugin to be instantiated"
+
+        # 3. getGaps receives gaps from response
+        gaps = result.get("gaps")
+        assert gaps is not None, "Expected gapShadingPlugin.getGaps() to return gaps array"
+        assert len(gaps) > 0, "Expected gapShadingPlugin.getGaps() to contain gaps from candles response"
+        assert gaps[0].get("duration") == 3, f"Expected gap duration 3, got: {gaps[0].get('duration')}"
+
+        # 4. zOrder is 'bottom'
+        assert result["zOrder"] == "bottom", (
+            f"Expected GapShadingPaneView.zOrder() to be 'bottom' (rendering behind candles and grid), got: {result.get('zOrder')}"
+        )
+
+    def test_chart_sets_gap_markers_on_single_day(self):
+        """Backwards compatibility alias for test_chart_applies_gap_shading_on_single_day_and_clears_markers."""
+        return self.test_chart_applies_gap_shading_on_single_day_and_clears_markers()
+
+    def test_gap_shading_renderer_colors_outage_red_and_partial_yellow(self):
+        """
+        Verifies GapShadingRenderer & GapShadingPlugin background shading colors:
+        - Outage gap (status: 'outage') produces shaded bars with 'rgba(244, 63, 94, 0.18)' (soft red).
+        - Partial degradation gap (status: 'partial') produces shaded bars with 'rgba(245, 158, 11, 0.18)' (soft yellow/amber).
+        - Normal continuous trading candles (outside any gap) have NO shaded bar entries.
+        - Pane renderer executes 2D canvas ctx.fillRect with correct fillStyle in target.useMediaCoordinateSpace.
+        """
+        result = run_js_simulation("""
+        const fnInit = typeof initStreamingChart === 'function' ? initStreamingChart : window.initStreamingChart;
+        if (fnInit) fnInit();
+
+        const plugin = global.lastAttachedPrimitive || global.gapShadingPlugin || (typeof window !== 'undefined' ? window.gapShadingPlugin : null);
+        if (!plugin) {
+          return { error: 'GapShadingPlugin not instantiated or attached' };
+        }
+
+        // Setup test series candles:
+        // Minute 0: normal continuous candle (1790668800)
+        // Minute 1: outage gap candle       (1790668860)
+        // Minute 2: normal continuous candle (1790668920)
+        // Minute 3: partial gap candle      (1790668980)
+        // Minute 4: normal continuous candle (1790669040)
+        const testCandles = [
+          { time: 1790668800, open: 120, high: 121, low: 119, close: 120 },
+          { time: 1790668860, open: 120, high: 121, low: 119, close: 120 },
+          { time: 1790668920, open: 120, high: 121, low: 119, close: 120 },
+          { time: 1790668980, open: 120, high: 121, low: 119, close: 120 },
+          { time: 1790669040, open: 120, high: 121, low: 119, close: 120 }
+        ];
+        global.lastSetCandles = testCandles;
+
+        const testGaps = [
+          {
+            start_epoch: 1790668860,
+            end_epoch: 1790668860,
+            duration: 1,
+            status: 'outage',
+            description: '1m Outage'
+          },
+          {
+            start_epoch: 1790668980,
+            end_epoch: 1790668980,
+            duration: 1,
+            status: 'partial',
+            description: '1m Partial'
+          }
+        ];
+
+        plugin.setGaps(testGaps, testCandles);
+
+        const paneViews = plugin.paneViews ? plugin.paneViews() : [];
+        if (!paneViews || paneViews.length === 0) {
+          return { error: 'No pane views returned by GapShadingPlugin' };
+        }
+
+        const paneView = paneViews[0];
+        const renderer = paneView.renderer ? paneView.renderer() : null;
+        if (!renderer) {
+          return { error: 'No renderer returned by GapShadingPaneView' };
+        }
+
+        // Test canvas draw call via mock target
+        const drawnRects = [];
+        let currentFillStyle = '';
+        const mockCtx = {
+          save: () => {},
+          restore: () => {},
+          set fillStyle(val) { currentFillStyle = val; },
+          get fillStyle() { return currentFillStyle; },
+          fillRect: (x, y, w, h) => {
+            drawnRects.push({ x, y, w, h, fillStyle: currentFillStyle });
+          }
+        };
+
+        const mockTarget = {
+          useMediaCoordinateSpace: (cb) => {
+            cb({
+              context: mockCtx,
+              mediaSize: { width: 800, height: 450 }
+            });
+          }
+        };
+
+        if (typeof renderer.draw === 'function') {
+          renderer.draw(mockTarget);
+        }
+
+        const viewData = (typeof plugin._getViewData === 'function') ? plugin._getViewData() : null;
+        const bars = viewData ? viewData.bars : [];
+
+        return {
+          bars: bars,
+          drawnRects: drawnRects,
+          normalTimesInBars: bars.filter(b => b.time === 1790668800 || b.time === 1790668920 || b.time === 1790669040),
+          outageBars: bars.filter(b => b.time === 1790668860),
+          partialBars: bars.filter(b => b.time === 1790668980)
+        };
+        """)
+
+        assert "error" not in result, f"Renderer test error: {result.get('error')}"
+
+        outage_bars = result.get("outageBars", [])
+        assert len(outage_bars) == 1, f"Expected 1 outage bar, got: {len(outage_bars)}"
+        assert outage_bars[0]["color"] == "rgba(244, 63, 94, 0.18)", (
+            f"Expected outage gap to use soft red rgba(244, 63, 94, 0.18), got: {outage_bars[0].get('color')}"
+        )
+
+        partial_bars = result.get("partialBars", [])
+        assert len(partial_bars) == 1, f"Expected 1 partial bar, got: {len(partial_bars)}"
+        assert partial_bars[0]["color"] == "rgba(245, 158, 11, 0.18)", (
+            f"Expected partial gap to use soft yellow/amber rgba(245, 158, 11, 0.18), got: {partial_bars[0].get('color')}"
+        )
+
+        normal_in_bars = result.get("normalTimesInBars", [])
+        assert len(normal_in_bars) == 0, (
+            f"Continuous trading candles must NOT have shaded bar entries, found: {normal_in_bars}"
+        )
+
+        # Verify drawn rectangles in canvas context
+        drawn_rects = result.get("drawnRects", [])
+        assert len(drawn_rects) == 2, f"Expected 2 drawn shaded bars, got: {len(drawn_rects)}"
+        fill_styles = [r.get("fillStyle") for r in drawn_rects]
+        assert "rgba(244, 63, 94, 0.18)" in fill_styles, (
+            f"Canvas fillStyle missing soft red rgba(244, 63, 94, 0.18): {fill_styles}"
+        )
+        assert "rgba(245, 158, 11, 0.18)" in fill_styles, (
+            f"Canvas fillStyle missing soft yellow rgba(245, 158, 11, 0.18): {fill_styles}"
         )
