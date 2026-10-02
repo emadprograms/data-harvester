@@ -371,6 +371,9 @@ function renderMasterPulseView(data, container) {
  * Renders the 19-Symbol Spectrogram View with timeline headers and symbol row drill-downs.
  */
 function renderSpectrogramView(data, container) {
+  if (!container && typeof document !== 'undefined') {
+    container = document.getElementById('streaming-spectrum-view') || document.getElementById('continuity-ribbon-view');
+  }
   if (!container) return;
   const spectrogram = data.spectrogram || data.symbols_breakdown || data.symbols || {};
   const symbols = Object.keys(spectrogram);
@@ -430,6 +433,34 @@ function renderSpectrogramView(data, container) {
         <div class="flex-1 h-3.5 bg-slate-950 rounded border border-slate-800/90 relative overflow-hidden flex" title="${sym}: ${cov}% coverage (${gaps.length} gaps) - Click day to drill down">
     `;
 
+    const renderGapMarkers = (gapList) => {
+      return (gapList || []).map(g => {
+        let minOfDay = null;
+        if (g.start_str && typeof g.start_str === 'string' && g.start_str.includes(':')) {
+          const [h, m] = g.start_str.split(':').map(Number);
+          if (!isNaN(h) && !isNaN(m)) minOfDay = h * 60 + m;
+        } else if (g.start_time && typeof g.start_time === 'string' && g.start_time.includes(':')) {
+          const tPart = g.start_time.split(' ')[1] || g.start_time;
+          const [h, m] = tPart.split(':').map(Number);
+          if (!isNaN(h) && !isNaN(m)) minOfDay = h * 60 + m;
+        } else if (g.start_epoch) {
+          try {
+            const d = new Date(g.start_epoch * 1000);
+            const etStr = d.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour12: false, hour: '2-digit', minute: '2-digit' });
+            const [h, m] = etStr.split(':').map(Number);
+            if (!isNaN(h) && !isNaN(m)) minOfDay = h * 60 + m;
+          } catch (_) {}
+        }
+        if (minOfDay === null) minOfDay = 570;
+
+        const offsetMin = Math.max(0, minOfDay - 570);
+        const leftPct = Math.min(100, Math.max(0, (offsetMin / 390) * 100));
+        const dur = g.duration || g.duration_minutes || g.missing_minutes || 1;
+        const widthPct = Math.min(100 - leftPct, Math.max(0.6, (dur / 390) * 100));
+        return `<div class="absolute inset-y-0 bg-rose-500 rounded-[1px] pointer-events-none" style="left: ${leftPct.toFixed(2)}%; width: max(2px, ${widthPct.toFixed(2)}%);" title="${g.description || `${dur}m gap`}"></div>`;
+      }).join('');
+    };
+
     if (days.length > 0) {
       days.forEach((day, idx) => {
         const borderDivider = idx < days.length - 1 ? 'border-r border-slate-800' : '';
@@ -441,7 +472,7 @@ function renderSpectrogramView(data, container) {
         } else {
           html += `
             <div onclick="${clickDayHandler}" class="flex-1 h-full bg-emerald-500/70 hover:bg-emerald-400/80 relative ${borderDivider} cursor-pointer" title="${sym} • ${day.day_name} (${day.date}): ${dayGaps.length} gap(s) - Click to view single-day detail">
-              <div class="absolute inset-y-0 bg-rose-500" style="left: 30%; width: 25%;"></div>
+              ${renderGapMarkers(dayGaps)}
             </div>
           `;
         }
@@ -450,9 +481,11 @@ function renderSpectrogramView(data, container) {
       if (gaps.length === 0) {
         html += `<div class="w-full h-full bg-emerald-500/90"></div>`;
       } else {
-        html += `<div class="w-full h-full bg-emerald-500/80 relative">
-          <div class="absolute inset-y-0 bg-rose-500" style="left: 30%; width: 10%;"></div>
-        </div>`;
+        html += `
+          <div class="w-full h-full bg-emerald-500/80 relative">
+            ${renderGapMarkers(gaps)}
+          </div>
+        `;
       }
     }
 

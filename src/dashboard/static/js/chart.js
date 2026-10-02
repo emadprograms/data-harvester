@@ -467,7 +467,7 @@ function resizeStreamingChart() {
   }
 }
 
-async function loadStreamingChart(targetDate = null) {
+async function loadStreamingChart(targetDate = null, targetHours = null) {
   const loading = document.getElementById('streaming-chart-loading');
   if (loading) loading.classList.remove('hidden');
 
@@ -483,8 +483,17 @@ async function loadStreamingChart(targetDate = null) {
 
   try {
     let fetchUrl = `${API_BASE}/api/streaming/candles?symbol=${encodeURIComponent(currentStreamingSymbol)}&tf=${currentStreamingTimeframe}&limit=${currentStreamingLimit}`;
+    let hoursParam = 'extended';
+    if (targetHours) {
+      hoursParam = targetHours;
+    } else if (targetDate) {
+      hoursParam = 'regular';
+    } else {
+      hoursParam = 'extended';
+    }
+
     if (targetDate) {
-      fetchUrl += `&date=${encodeURIComponent(targetDate)}&hours=extended`;
+      fetchUrl += `&date=${encodeURIComponent(targetDate)}&hours=${encodeURIComponent(hoursParam)}`;
     }
 
     const res = await fetch(fetchUrl);
@@ -769,7 +778,7 @@ function openSymbolDayDetail(symbol, date) {
     loadStreamingContinuity(currentContinuitySymbol, 1, false, null, date);
   }
   if (typeof loadStreamingChart === 'function') {
-    loadStreamingChart(date);
+    loadStreamingChart(date, 'regular');
   }
   if (typeof resizeStreamingChart === 'function') {
     resizeStreamingChart();

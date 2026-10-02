@@ -388,7 +388,7 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
                     t2 = candles[i + 1]["time"]
                     diff_sec = t2 - t1
                     missing_min = (diff_sec // 60) - 1
-                    if missing_min >= 2:
+                    if missing_min >= 1:
                         gap_start_epoch = t1 + 60
                         gap_end_epoch = t2 - 60
                         s_dt = datetime.fromtimestamp(gap_start_epoch, tz=timezone.utc).astimezone(ET)
@@ -403,6 +403,64 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
                             "end_str": end_str,
                             "description": f"{missing_min}m Gap ({start_str} - {end_str})"
                         })
+
+            # Detect leading boundary gap
+            if len(candles) > 0:
+                first_candle_time = candles[0]["time"]
+                if first_candle_time > session_start_epoch:
+                    missing_min = (first_candle_time - session_start_epoch) // 60
+                    if missing_min >= 1:
+                        leading_gap_start = session_start_epoch
+                        leading_gap_end = first_candle_time - 60
+                        s_dt = datetime.fromtimestamp(leading_gap_start, tz=timezone.utc).astimezone(ET)
+                        e_dt = datetime.fromtimestamp(leading_gap_end, tz=timezone.utc).astimezone(ET)
+                        start_str = s_dt.strftime("%H:%M")
+                        end_str = e_dt.strftime("%H:%M")
+                        gaps.insert(0, {
+                            "start_epoch": leading_gap_start,
+                            "end_epoch": leading_gap_end,
+                            "duration": missing_min,
+                            "start_str": start_str,
+                            "end_str": end_str,
+                            "description": f"{missing_min}m Gap ({start_str} - {end_str})"
+                        })
+
+                # Detect trailing boundary gap
+                last_candle_time = candles[-1]["time"]
+                if last_candle_time + 60 < session_end_epoch:
+                    missing_min = (session_end_epoch - (last_candle_time + 60)) // 60
+                    if missing_min >= 1:
+                        trailing_gap_start = last_candle_time + 60
+                        trailing_gap_end = session_end_epoch - 60
+                        s_dt = datetime.fromtimestamp(trailing_gap_start, tz=timezone.utc).astimezone(ET)
+                        e_dt = datetime.fromtimestamp(trailing_gap_end, tz=timezone.utc).astimezone(ET)
+                        start_str = s_dt.strftime("%H:%M")
+                        end_str = e_dt.strftime("%H:%M")
+                        gaps.append({
+                            "start_epoch": trailing_gap_start,
+                            "end_epoch": trailing_gap_end,
+                            "duration": missing_min,
+                            "start_str": start_str,
+                            "end_str": end_str,
+                            "description": f"{missing_min}m Gap ({start_str} - {end_str})"
+                        })
+            else:
+                missing_min = (session_end_epoch - session_start_epoch) // 60
+                if missing_min >= 1:
+                    s_dt = datetime.fromtimestamp(session_start_epoch, tz=timezone.utc).astimezone(ET)
+                    e_dt = datetime.fromtimestamp(session_end_epoch - 60, tz=timezone.utc).astimezone(ET)
+                    start_str = s_dt.strftime("%H:%M")
+                    end_str = e_dt.strftime("%H:%M")
+                    gaps.append({
+                        "start_epoch": session_start_epoch,
+                        "end_epoch": session_end_epoch - 60,
+                        "duration": missing_min,
+                        "start_str": start_str,
+                        "end_str": end_str,
+                        "description": f"{missing_min}m Gap ({start_str} - {end_str})"
+                    })
+
+            gaps.sort(key=lambda g: g["start_epoch"])
             resp["gaps"] = gaps
         return resp
     except Exception as e:
