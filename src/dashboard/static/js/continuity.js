@@ -12,7 +12,7 @@
  *   4. Click-to-Sync: Clicking any gap or ribbon bucket syncs the streaming candlestick chart to that time.
  */
 
-let currentContinuityView = 'master'; // 'master' or 'spectrum'
+let currentContinuityView = 'spectrum'; // 'master' or 'spectrum'
 let cachedContinuityData = null;
 let cachedAllContinuityData = null;
 let cachedSymbolContinuityData = null;
@@ -25,21 +25,25 @@ let currentContinuityExtended = true;
 // Expose state globally on window and global
 if (typeof window !== 'undefined') {
   window.currentContinuityView = currentContinuityView;
+  window.currentContinuitySymbol = currentContinuitySymbol;
   window.cachedContinuityData = cachedContinuityData;
   window.cachedAllContinuityData = cachedAllContinuityData;
   window.cachedSymbolContinuityData = cachedSymbolContinuityData;
   window.currentContinuityWeekStart = currentContinuityWeekStart;
   window.currentContinuityDayDate = currentContinuityDayDate;
   window.currentContinuityExtended = currentContinuityExtended;
+  window.currentContinuityDays = currentContinuityDays;
 }
 if (typeof global !== 'undefined') {
   global.currentContinuityView = currentContinuityView;
+  global.currentContinuitySymbol = currentContinuitySymbol;
   global.cachedContinuityData = cachedContinuityData;
   global.cachedAllContinuityData = cachedAllContinuityData;
   global.cachedSymbolContinuityData = cachedSymbolContinuityData;
   global.currentContinuityWeekStart = currentContinuityWeekStart;
   global.currentContinuityDayDate = currentContinuityDayDate;
   global.currentContinuityExtended = currentContinuityExtended;
+  global.currentContinuityDays = currentContinuityDays;
 }
 
 function hasSpectrogramData(d) {
@@ -180,7 +184,7 @@ async function loadStreamingContinuity(symbol, days, extended = null, weekStart 
       currentContinuityWeekStart = data.week_start;
     }
 
-    if (data.view_mode === 'all' || hasSpectrogramData(data)) {
+    if (data.view_mode === 'all' || hasSpectrogramData(data) || (Array.isArray(data.symbols) && data.symbols.length > 1)) {
       cachedAllContinuityData = data;
     } else {
       cachedSymbolContinuityData = data;
@@ -191,6 +195,7 @@ async function loadStreamingContinuity(symbol, days, extended = null, weekStart 
       window.cachedAllContinuityData = cachedAllContinuityData;
       window.cachedSymbolContinuityData = cachedSymbolContinuityData;
       window.currentContinuityView = currentContinuityView;
+      window.currentContinuitySymbol = currentContinuitySymbol;
       window.currentContinuityWeekStart = currentContinuityWeekStart;
       window.currentContinuityDayDate = currentContinuityDayDate;
     }
@@ -199,6 +204,7 @@ async function loadStreamingContinuity(symbol, days, extended = null, weekStart 
       global.cachedAllContinuityData = cachedAllContinuityData;
       global.cachedSymbolContinuityData = cachedSymbolContinuityData;
       global.currentContinuityView = currentContinuityView;
+      global.currentContinuitySymbol = currentContinuitySymbol;
       global.currentContinuityWeekStart = currentContinuityWeekStart;
       global.currentContinuityDayDate = currentContinuityDayDate;
     }
@@ -223,20 +229,24 @@ function renderContinuityRibbons(data) {
   const summaryBadge = document.getElementById('continuity-incident-summary');
   if (!ribbonView) return;
 
-  const isSpectrum = (currentContinuityView === 'spectrum') ||
-                     (typeof window !== 'undefined' && window.currentContinuityView === 'spectrum') ||
-                     (data && (data.view_mode === 'all' || currentContinuitySymbol === 'all'));
+  const is19SymbolSpectrum = Boolean(
+    data && (
+      data.view_mode === 'all' ||
+      (Array.isArray(data.symbols) && data.symbols.length > 1) ||
+      hasSpectrogramData(data)
+    )
+  );
 
-  const dataHasSpectrogram = hasSpectrogramData(data);
-  const cachedAllHasSpectrogram = hasSpectrogramData(cachedAllContinuityData);
-
-  const displayData = (isSpectrum && !dataHasSpectrogram && cachedAllHasSpectrogram)
-    ? cachedAllContinuityData
-    : data;
+  const displayData = is19SymbolSpectrum
+    ? data
+    : (((typeof cachedAllContinuityData !== 'undefined' && cachedAllContinuityData && hasSpectrogramData(cachedAllContinuityData)) ||
+        (typeof window !== 'undefined' && window.cachedAllContinuityData && hasSpectrogramData(window.cachedAllContinuityData)))
+          ? (cachedAllContinuityData || window.cachedAllContinuityData)
+          : data);
 
   const summary = displayData.summary || { total_gaps: 0, total_outage_minutes: 0, average_coverage: 100.0 };
   const days = displayData.days || [];
-  const isAll = (displayData.view_mode === 'all' || currentContinuitySymbol === 'all' || isSpectrum);
+  const isAll = (displayData.view_mode === 'all' || currentContinuitySymbol === 'all' || is19SymbolSpectrum);
 
   // 1. Update Incident Summary Badge
   if (summaryBadge) {
@@ -256,24 +266,26 @@ function renderContinuityRibbons(data) {
     }
   }
 
-  // 2. Render based on active mode
-  if (isSpectrum) {
-    if (dataHasSpectrogram || (data && data.view_mode === 'all')) {
-      if (dataHasSpectrogram) {
-        cachedAllContinuityData = data;
-        if (typeof window !== 'undefined') window.cachedAllContinuityData = data;
-      }
-      renderSpectrogramView(data, ribbonView);
-    } else if (cachedAllHasSpectrogram || (cachedAllContinuityData && cachedAllContinuityData.view_mode === 'all')) {
-      renderSpectrogramView(cachedAllContinuityData, ribbonView);
-    } else {
-      loadStreamingContinuity('all', currentContinuityDays);
-    }
+  // 2. Render based on active mode / payload type
+  if (is19SymbolSpectrum) {
+    cachedAllContinuityData = data;
+    if (typeof window !== 'undefined') window.cachedAllContinuityData = data;
+    if (typeof global !== 'undefined') global.cachedAllContinuityData = data;
+    renderSpectrogramView(data, ribbonView);
   } else {
-    renderMasterPulseView(data, ribbonView);
+    // Single-symbol / single-day drill-down data
     const detailContainer = document.getElementById('detail-continuity-ribbons');
     if (detailContainer) {
       renderMasterPulseView(data, detailContainer);
+    }
+    // DO NOT overwrite #continuity-ribbon-view with single-symbol Master Pulse!
+    const ribbonHasSpectrogram = ribbonView.innerHTML && ribbonView.innerHTML.includes('Spectrogram');
+    if (!ribbonHasSpectrogram) {
+      const allCached = (typeof cachedAllContinuityData !== 'undefined' && cachedAllContinuityData) ||
+                        (typeof window !== 'undefined' && window.cachedAllContinuityData);
+      if (allCached) {
+        renderSpectrogramView(allCached, ribbonView);
+      }
     }
   }
 }

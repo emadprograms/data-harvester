@@ -42,7 +42,8 @@ function switchDashboardView(viewId) {
     fetchStreamStatus();
     fetchStreamTape();
     if (typeof loadStreamingContinuity === 'function') {
-      loadStreamingContinuity('all', 5, false);
+      const isExtended = (typeof currentContinuityExtended !== 'undefined') ? currentContinuityExtended : true;
+      loadStreamingContinuity('all', 5, isExtended);
     }
   }
 }

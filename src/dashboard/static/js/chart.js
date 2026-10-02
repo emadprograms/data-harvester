@@ -784,16 +784,20 @@ async function loadStreamingChart(targetDate = null, targetHours = null) {
     }
 
     if (typeof loadStreamingContinuity === 'function' && !targetDate) {
-      const isSpectrum = (typeof currentContinuityView !== 'undefined' && currentContinuityView === 'spectrum') ||
-                         (typeof window !== 'undefined' && window.currentContinuityView === 'spectrum');
-      const allCached = (typeof cachedAllContinuityData !== 'undefined' && cachedAllContinuityData) ||
-                        (typeof window !== 'undefined' && window.cachedAllContinuityData);
-      if (isSpectrum) {
-        if (!allCached) {
-          loadStreamingContinuity('all');
-        }
+      const detailView = document.getElementById('streaming-detail-view');
+      const isDetailOpen = detailView && !detailView.classList.contains('hidden');
+      const isGlobalExtended = (typeof currentContinuityExtended !== 'undefined') ? Boolean(currentContinuityExtended) : true;
+
+      if (isDetailOpen) {
+        // Detail view is open: fetch continuity for that specific symbol
+        loadStreamingContinuity(currentStreamingSymbol, 1, isGlobalExtended);
       } else {
-        loadStreamingContinuity(currentStreamingSymbol);
+        // Spectrum view is open: make sure 'all' is loaded/cached, NEVER fetch single-symbol NVDA here
+        const allCached = (typeof cachedAllContinuityData !== 'undefined' && cachedAllContinuityData) ||
+                          (typeof window !== 'undefined' && window.cachedAllContinuityData);
+        if (!allCached) {
+          loadStreamingContinuity('all', currentContinuityDays || 5, isGlobalExtended);
+        }
       }
     }
   } catch (err) {
