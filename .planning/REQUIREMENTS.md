@@ -22,9 +22,9 @@ Replace the locked live DuckDB tick database with an append-only, partitioned Pa
 - [x] **LAKE-P1-04**: Publication state machine & receipts - track published batches with idempotent receipts, preventing duplicate visibility or partial footers.
 
 ### Phase 17: Streaming Parquet Writer & Runner Lifecycle Integration (P2)
-- [ ] **LAKE-P2-01**: Micro-batch writer - implement `TickLakeWriter` with configurable flush thresholds (default 5s or 5,000 ticks) and bounded queue limits.
-- [ ] **LAKE-P2-02**: Off-loop PyArrow worker - move Parquet encoding and I/O to a dedicated worker thread, keeping asyncio event loop scheduling lag <20ms.
-- [ ] **LAKE-P2-03**: Runner lifecycle integration - update `src/stream/runner.py` to use `TickLakeWriter`, with honest counters and cooperative shutdown drain.
+- [x] **LAKE-P2-01**: Micro-batch writer - implement `TickLakeWriter` with configurable flush thresholds (default 5s or 5,000 ticks) and bounded queue limits.
+- [x] **LAKE-P2-02**: Off-loop PyArrow worker - move Parquet encoding and I/O to a dedicated worker thread, keeping asyncio event loop scheduling lag <20ms.
+- [x] **LAKE-P2-03**: Runner lifecycle integration - update `src/stream/runner.py` to use `TickLakeWriter`, with honest counters and cooperative shutdown drain.
 
 ### Phase 18: Versioned Symbol Registry & Administrative Compatibility (P3)
 - [ ] **LAKE-P3-01**: Atomic JSON registry - extract symbol registry out of DuckDB into versioned `registry.json` managed by a single control owner.

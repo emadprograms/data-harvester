@@ -66,9 +66,9 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - [x] **LAKE-P1-02**: Typed Schema v1 with microsecond UTC timestamp and stable unique `ingest_id` — Phase 16
 - [x] **LAKE-P1-03**: Atomic file staging (`.tmp` -> atomic rename) — Phase 16
 - [x] **LAKE-P1-04**: Publication state machine & receipts — Phase 16
-- [ ] **LAKE-P2-01**: Micro-batch writer `TickLakeWriter` with 5s / 5,000 tick thresholds
-- [ ] **LAKE-P2-02**: Off-loop PyArrow worker thread preserving <20ms event loop lag
-- [ ] **LAKE-P2-03**: Runner lifecycle integration with cooperative shutdown drain
+- [x] **LAKE-P2-01**: Micro-batch writer `TickLakeWriter` with 5s / 5,000 tick thresholds — Phase 17
+- [x] **LAKE-P2-02**: Off-loop PyArrow worker thread preserving <20ms event loop lag — Phase 17
+- [x] **LAKE-P2-03**: Runner lifecycle integration with cooperative shutdown drain — Phase 17
 - [ ] **LAKE-P3-01**: Atomic JSON symbol registry (`registry.json`)
 - [ ] **LAKE-P3-02**: Cross-process registry version polling & dynamic reload
 - [ ] **LAKE-P3-03**: Pending purge semantics & subscription fencing

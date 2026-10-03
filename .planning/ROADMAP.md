@@ -58,7 +58,7 @@ See: [.planning/milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
   - Implement `src/storage/{config, schema, publication}.py`.
   - Schema v1 with microsecond UTC timestamps and stable unique `ingest_id`.
   - Atomic `.tmp` staging, final rename, and idempotent publication receipts.
-- [ ] **Phase 17: Streaming Parquet Writer & Runner Lifecycle Integration (P2)**
+- [x] **Phase 17: Streaming Parquet Writer & Runner Lifecycle Integration (P2)** (completed 2026-10-03)
   - Implement `TickLakeWriter` with 5s / 5,000 tick thresholds and bounded queue.
   - Dedicated off-loop PyArrow worker thread preserving <20ms event loop lag.
   - Wire into `src/stream/runner.py` with graceful shutdown drain.
