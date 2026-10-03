@@ -28,6 +28,7 @@ from src.storage.config import (
 )
 
 from src.storage.schema import (
+    QuoteTick,
     SchemaValidationError,
     SCHEMA_V1_VERSION,
     SCHEMA_V1_VERSION_STR,
@@ -43,6 +44,7 @@ from src.storage.schema import (
 )
 
 from src.storage.publication import (
+    PublishError,
     LakeOwnershipError,
     BatchCollisionError,
     FilePublicationReceipt,
@@ -76,6 +78,7 @@ __all__ = [
     "decode_symbol",
     "get_partition_path",
     # Schema v1
+    "QuoteTick",
     "SchemaValidationError",
     "SCHEMA_V1_VERSION",
     "SCHEMA_V1_VERSION_STR",
@@ -89,6 +92,7 @@ __all__ = [
     "ticks_to_table",
     "table_to_ticks",
     # Publication & Recovery
+    "PublishError",
     "LakeOwnershipError",
     "BatchCollisionError",
     "FilePublicationReceipt",
