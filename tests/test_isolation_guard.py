@@ -104,8 +104,9 @@ class TestFilesystemWriteIsolationGuard:
 
         root = resolve_tick_lake_root()
         assert root == Path(os.environ["TICK_LAKE_ROOT"]).resolve()
-        assert str(root).startswith(tempfile.gettempdir())
-        assert str(Path(os.environ["DATA_DIR"]).resolve()).startswith(tempfile.gettempdir())
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        assert root.is_relative_to(temp_root)
+        assert Path(os.environ["DATA_DIR"]).resolve().is_relative_to(temp_root)
 
 
 class TestNetworkIsolationGuard:

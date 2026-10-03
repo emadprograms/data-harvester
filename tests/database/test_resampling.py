@@ -11,18 +11,26 @@ from datetime import datetime
 from src.database.connection import get_duckdb_connection
 from src.database.operations import query_candlesticks, get_symbol_map_from_db
 
-HISTORICAL_DB_PATH = "data/market_data.duckdb"
-historical_db_exists = os.path.exists(HISTORICAL_DB_PATH)
+# This benchmark needs an explicitly supplied dataset. A relative data/ path
+# may resolve to production storage on developer machines and is blocked by
+# the test isolation guard.
+HISTORICAL_DB_PATH = os.environ.get("PERFORMANCE_HISTORICAL_DB_PATH")
+historical_db_exists = bool(HISTORICAL_DB_PATH and os.path.isfile(HISTORICAL_DB_PATH))
 
 
 @pytest.mark.performance
-@pytest.mark.skipif(not historical_db_exists, reason="Historical database data/market_data.duckdb not found.")
+@pytest.mark.skipif(
+    not historical_db_exists,
+    reason="Set PERFORMANCE_HISTORICAL_DB_PATH to an isolated benchmark dataset.",
+)
 class TestHistoricalDatasetAndResampling:
     """Tests against the 3.95M+ row historical dataset."""
 
     @pytest.fixture(scope="class")
     def db_client(self):
         client = get_duckdb_connection(HISTORICAL_DB_PATH, read_only=True)
+        if client is None:
+            pytest.fail(f"Could not open isolated benchmark dataset: {HISTORICAL_DB_PATH}")
         yield client
         client.close()
 

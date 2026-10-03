@@ -15,6 +15,7 @@ Validates:
 from datetime import date, datetime, timedelta, timezone
 import json
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import pytest
 
 from src.storage.config import init_tick_lake
@@ -30,6 +31,53 @@ from tests.fixtures.deterministic_quotes import (
     generate_utc_midnight_rollover,
     generate_multisymbol_distribution,
 )
+
+
+@pytest.mark.parametrize(
+    ("trading_day", "tick_utc"),
+    [
+        (date(2026, 3, 9), datetime(2026, 3, 9, 13, 30)),
+        (date(2026, 11, 2), datetime(2026, 11, 2, 14, 30)),
+    ],
+)
+@pytest.mark.parametrize(("extended", "expected_count"), [(False, 390), (True, 960)])
+def test_continuity_cached_session_preserves_dst_and_response_isolation(
+    tmp_path, trading_day, tick_utc, extended, expected_count,
+):
+    """Cached minute templates must preserve exchange epochs and return fresh response data."""
+    lake_root = tmp_path / "lake"
+    init_tick_lake(lake_root)
+    with LakePublisher(root=lake_root, writer_id="continuity") as publisher:
+        publisher.publish_batch(
+            [QuoteTick(
+                timestamp=tick_utc,
+                symbol="AAPL",
+                price=100.0,
+                volume=1.0,
+                ingest_id="test_tick",
+            )],
+            batch_id="continuity_batch",
+            sequence=1,
+        )
+
+    reader = TickLakeReader(root=lake_root)
+    params = dict(symbol="AAPL", target_date=trading_day.isoformat(), include_extended=extended)
+    first = reader.get_streaming_continuity_analysis(**params)
+    second = reader.get_streaming_continuity_analysis(**params)
+    assert second == first
+    buckets = second["days"][0]["buckets"]
+    assert len(buckets) == expected_count
+    opening = next(bucket for bucket in buckets if bucket["time"] == "09:30")
+    expected_open = int(datetime(
+        trading_day.year, trading_day.month, trading_day.day,
+        9, 30, tzinfo=ZoneInfo("America/New_York"),
+    ).timestamp())
+    assert opening["start_epoch"] == expected_open
+    assert opening["end_epoch"] == expected_open + 60
+    assert opening["status"] == "healthy"
+
+    first["days"][0]["buckets"][0]["status"] = "mutated"
+    assert reader.get_streaming_continuity_analysis(**params) == second
 
 
 @pytest.fixture

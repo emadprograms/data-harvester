@@ -2,7 +2,7 @@
 
 **Plan:** [`tick-lake-audit-remediation.md`](tick-lake-audit-remediation.md)  
 **Audit:** [`.planning/v4.1-MILESTONE-AUDIT.md`](../../.planning/v4.1-MILESTONE-AUDIT.md)  
-**Status:** F01-F11 implementation and offline qualification passed; separate dashboard-latency performance gates remain unresolved. Prior v4.1 `PASSED` claims are still treated as historical, not evidence for this run.
+**Status:** F01-F11 and offline qualification passed. Post-merge local performance qualification passed on the macOS host described below; PR #7 had no GitHub checks. The earlier latency failures remain recorded as historical evidence.
 
 ## Environment and baseline
 
@@ -33,8 +33,8 @@
 | I3: maintenance, backend, registry, effective batching | complete | F06-F09 focused storage/runner regressions pass; lake initialization serializes boundedly against active publishers. |
 | I4: migration authorization/provenance and dry-run | complete | F04/F05/F10 migration regressions and stress suites pass; immutable publication and non-mutating dry-runs verified. |
 | I5: supervised historical cutover | complete | F11 coordinator drains the managed runner, suspends supervisor restart, publishes while exclusive owner is released, then restarts capture. Real child-process regression passes. |
-| Q: offline repository qualification | passed | `.venv/bin/python -m pytest tests -m 'not live and not performance' -q`: **742 passed, 10 deselected** in 243.92 s. |
-| Q: performance qualification | unresolved | Separate run: **2 failed, 2 passed, 4 skipped**. Two dashboard-latency p95 thresholds are slightly exceeded; record exact metrics below and do not claim all performance gates pass. |
+| Q: offline repository qualification | passed | PR #7: **742 passed, 10 deselected**. Post-merge macOS rerun: **746 passed, 11 deselected** in 117.91 s. |
+| Q: performance qualification | passed locally after follow-up | The prior run failed two dashboard latency gates. The post-merge run passed **5**, skipped **4** optional historical-dataset benchmarks; measured values and host are below. |
 
 ## T1 pre-fix regression baseline
 
@@ -109,7 +109,7 @@ Migration/tool/stress plus migration audit regression command previously returne
 
 `MigrationHandoffCoordinator` persists the handoff lifecycle, suspends automatic supervisor restart/reload, requests graceful child drain, waits for publisher ownership to be released, performs verified migration publication while ingestion is quiescent, records completion/recovery state, and resumes capture. The runner awaits its engine's one shutdown/drain owner rather than closing the same writer twice. The real subprocess regression verifies pre/post-cutover rows, ownership exclusion, supervisor suspension and resumed capture. F11 regression passes in the final T1 and offline runs. Existing real signal/chaos tests now explicitly seed a registry instrument, since F08 correctly forbids default subscriptions from an empty registry.
 
-### Final targeted and offline qualification
+### PR #7 targeted and offline qualification
 
 T1 audit regression command:
 
@@ -134,7 +134,7 @@ Full offline qualification:
 
 Result: **742 passed, 10 deselected** in 243.92 s. This also confirms test collection succeeds without the optional `databento` SDK. Offline-only Databento helpers import without it; an attempted live client raises a clear `RuntimeError` requesting the optional package.
 
-### Separately selected performance tests — unresolved
+### Previous separately selected performance tests — unresolved at PR #7 merge
 
 The two latency-gated multi-process soak tests are correctly marked `performance` and are excluded by the offline qualification command. They were run separately:
 
@@ -142,10 +142,45 @@ The two latency-gated multi-process soak tests are correctly marked `performance
 .venv/bin/python -m pytest tests -m performance -q --tb=short
 ```
 
-Latest result: **2 failed, 2 passed, 4 skipped, 744 deselected** in 13.31 s. The four database performance cases are skipped by their fixture conditions. All data-parity, corruption/lock, writer-lag and Repo B latency gates in the 10k-tick soak passed; the dashboard gate measured **102.518 ms p95** against `<100 ms`. The concurrent multi-wave test's first two waves passed, but continuity wave 3 measured **110.735 ms p95** against `<100 ms`. Earlier reruns also exceeded those limits (102.818 ms and 121.311 ms, respectively), so these are recorded as unresolved environment/performance failures, not green qualification or waived checks. No latency threshold was relaxed.
+Result at PR #7 merge: **2 failed, 2 passed, 4 skipped, 744 deselected** in 13.31 s. The four database performance cases were skipped by their fixture conditions. All data-parity, corruption/lock, writer-lag and Repo B latency gates in the 10k-tick soak passed; the dashboard gate measured **102.518 ms p95** against `<100 ms`. The concurrent multi-wave test's first two waves passed, but continuity wave 3 measured **110.735 ms p95** against `<100 ms`. Earlier reruns also exceeded those limits (102.818 ms and 121.311 ms, respectively), so these were recorded as unresolved performance failures at merge time, not green qualification or waived checks. No latency threshold was relaxed.
 
 ## Repository hygiene
 
 - `git diff --check`: passed.
 - `py_compile` for the modified migration tool, supervisor, runner, storage ownership/configuration, integrity module and optional Databento backfill module: passed.
-- No commit or push was made; all changes remain on `arena/01a10288-data-harvester`.
+- At this earlier stage no commit or push was made; those changes were later merged in PR #7.
+
+## Post-merge performance and CI follow-up (2026-10-03)
+
+**Starting commit:** `1c9af7667d97bb3bd9020301bae0465e5e5fee35` on `main` (merged PR #7). **Local host:** macOS Darwin 25.6.0, arm64; Python 3.12.13, DuckDB 1.5.5, PyArrow 22.0.0, pytest 9.0.2. Tests used temporary lake and data roots. The historical benchmark suite now requires an explicit `PERFORMANCE_HISTORICAL_DB_PATH` pointing to an isolated benchmark dataset; none was supplied, so those four tests were skipped. They are not claimed as qualified.
+
+GitHub's [PR #7 Checks tab](https://github.com/emadprograms/data-harvester/pull/7/checks) reports **“There are no checks for this commit”** for `869a15c`. Its empty rollup was not a passing CI result. A new `.github/workflows/offline-tests.yml` runs the offline suite on future PRs and pushes to `main`; it cannot retroactively add checks to merged PR #7. A hosted CI result for this follow-up remains pending until that workflow runs on GitHub.
+
+Profiling `TickLakeReader.get_streaming_continuity_analysis` with a temporary published AAPL partition showed repeated rebuilding of the same US holiday dates and 960 exchange-minute labels/epochs per request. A 20-call local sample had p95 **61.541 ms** before and **17.002 ms** after caching immutable holiday and date/session templates. The cache contains no response dictionaries or Parquet data; every request still reads current finalized files and constructs a fresh response. A new regression checks regular/extended sessions, spring/fall DST epochs and response isolation.
+
+The first post-merge full performance selection revealed that a relative `data/market_data.duckdb` existed on this machine: four optional historical benchmarks attempted to access it despite the test isolation guard. They now select only an explicitly supplied isolated benchmark file. That run also saw one writer p99 lag of 20.964 ms. Separately, an offline run saw a 21.07 ms maximum lag in a host-sensitive writer test. Its `<20 ms` threshold remains unchanged in the `performance` selection; a deterministic offline test now proves that a blocked publication worker leaves the event loop responsive.
+
+The first post-merge offline run returned **744 passed, 2 failed, 10 deselected**. The failures were a macOS `/var` versus `/private/var` temporary-path assertion and a mixed read-only/read-write DuckDB connection race. Both were repaired: the assertion resolves both paths, and the legacy connection wrapper serializes mode negotiation and close per database file. A second offline run returned **745 passed, 1 failed, 10 deselected**; the remaining failure was the host-sensitive writer lag test described above. The final offline run passed:
+
+```sh
+.venv/bin/python -m pytest tests -m 'not live and not performance' -q
+# 746 passed, 11 deselected in 117.91 s
+```
+
+Final separate performance qualification, with the original `<100 ms` dashboard p95 and `<20 ms` writer lag thresholds:
+
+```sh
+.venv/bin/python -m pytest tests -m performance -q -s --tb=short
+# 5 passed, 4 skipped, 748 deselected in 10.20 s
+```
+
+| Gate | Final measured result | Target |
+|---|---:|---:|
+| 6k-tick dashboard p95 / writer p99 | 20.12 ms / 13.99 ms | <100 ms / <20 ms |
+| 10k-tick dashboard p95 / writer p99 | 13.24 ms / 14.23 ms | <100 ms / <20 ms |
+| 100-candle request wave p95 | 3.098 ms | <100 ms |
+| 100-tape request wave p95 | 23.828 ms | <100 ms |
+| 50-continuity request wave p95 | 24.660 ms | <100 ms |
+| Repo B p95 at 6k / 10k | 2.08 ms / 2.35 ms | <100 ms |
+
+Both concurrency cases reported zero DuckDB lock exceptions, zero Parquet footer errors, zero HTTP errors and exact tick parity. `git diff --check`, Python compilation and workflow YAML parsing passed. These are local measurements on the named host. Long-duration endurance and the optional historical dataset benchmarks remain separate qualifications.

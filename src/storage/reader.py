@@ -6,6 +6,7 @@ using isolated DuckDB (:memory:) connections.
 """
 import collections
 from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
 import json
 import math
 import os
@@ -48,6 +49,29 @@ MONITORED_19_SYMBOLS = [
     "MU", "NDAQ", "NVDA", "ORCL", "PANW",
     "QCOM", "SHOP", "TSLA", "TSM"
 ]
+
+
+@lru_cache(maxsize=1)
+def _continuity_holidays() -> frozenset[date]:
+    """The continuity view uses a fixed calendar range for every request."""
+    cal = USFederalHolidayCalendar()
+    return frozenset(cal.holidays(start="2020-01-01", end="2035-01-01").date)
+
+
+@lru_cache(maxsize=64)
+def _continuity_session_buckets(trading_date: date, extended: bool) -> tuple[tuple[str, int, int], ...]:
+    """Cache immutable NYSE minute labels and epochs by date and session mode."""
+    start = 4 * 60 if extended else 9 * 60 + 30
+    end = 20 * 60 if extended else 16 * 60
+    buckets = []
+    for minute in range(start, end):
+        hour, minute_of_hour = divmod(minute, 60)
+        epoch = int(datetime(
+            trading_date.year, trading_date.month, trading_date.day,
+            hour, minute_of_hour, tzinfo=ET,
+        ).timestamp())
+        buckets.append((f"{hour:02d}:{minute_of_hour:02d}", epoch, epoch + 60))
+    return tuple(buckets)
 
 
 def _safe_float(val: Any, decimals: Optional[int] = None) -> Optional[float]:
@@ -1038,8 +1062,7 @@ class TickLakeReader:
             return empty_resp
 
         # Target dates discovery
-        cal = USFederalHolidayCalendar()
-        holidays = set(cal.holidays(start="2020-01-01", end="2035-01-01").date)
+        holidays = _continuity_holidays()
 
         target_dates: List[date] = []
         if target_date:
@@ -1127,17 +1150,7 @@ class TickLakeReader:
             d_str = d_val.strftime("%Y-%m-%d") if hasattr(d_val, "strftime") else str(d_val)
             day_minute_symbols[d_str][m_val].add(sym_val)
 
-        session_minutes: List[str] = []
-        if include_extended:
-            cur_t = datetime(2000, 1, 1, 4, 0)
-            end_t = datetime(2000, 1, 1, 20, 0)
-        else:
-            cur_t = datetime(2000, 1, 1, 9, 30)
-            end_t = datetime(2000, 1, 1, 16, 0)
-
-        while cur_t < end_t:
-            session_minutes.append(cur_t.strftime("%H:%M"))
-            cur_t += timedelta(minutes=1)
+        session_minutes = tuple(label for label, _, _ in _continuity_session_buckets(target_dates[0], include_extended))
         session_day_minutes = len(session_minutes)
 
         def next_minute_str(m_str: str) -> str:
@@ -1182,7 +1195,7 @@ class TickLakeReader:
             day_gaps: List[Dict[str, Any]] = []
             minute_statuses: Dict[str, str] = {}
 
-            for m in session_minutes:
+            for m, b_start_epoch, b_end_epoch in _continuity_session_buckets(td, include_extended):
                 active_syms = min_data.get(m, set()).intersection(eval_symbols)
                 cnt = len(active_syms)
                 if is_all:
@@ -1196,11 +1209,6 @@ class TickLakeReader:
                     m_status = "healthy" if cnt > 0 else "outage"
 
                 minute_statuses[m] = m_status
-
-                b_hh, b_mm = map(int, m.split(":"))
-                b_dt_et = datetime(td.year, td.month, td.day, b_hh, b_mm, tzinfo=ET)
-                b_start_epoch = int(b_dt_et.timestamp())
-                b_end_epoch = b_start_epoch + 60
 
                 day_buckets.append({
                     "time": m,

@@ -241,6 +241,7 @@ def test_soak_multi_wave_dashboard_load_with_writer(tmp_path):
             for i in range(100)
         ]
         w1_success, w1_err, w1_p95 = _run_wave(wave1_urls)
+        print(f"Dashboard candles wave: {w1_success} responses, {w1_err} errors, p95={w1_p95:.3f} ms")
         assert w1_err == 0 and w1_success == 100, f"Wave 1 had {w1_err} errors out of 100"
         assert w1_p95 < 100.0, f"Wave 1 p95 latency was {w1_p95:.2f}ms (threshold: 100ms)"
 
@@ -250,6 +251,7 @@ def test_soak_multi_wave_dashboard_load_with_writer(tmp_path):
             for i in range(100)
         ]
         w2_success, w2_err, w2_p95 = _run_wave(wave2_urls)
+        print(f"Dashboard tape wave: {w2_success} responses, {w2_err} errors, p95={w2_p95:.3f} ms")
         assert w2_err == 0 and w2_success == 100, f"Wave 2 had {w2_err} errors out of 100"
         assert w2_p95 < 100.0, f"Wave 2 p95 latency was {w2_p95:.2f}ms (threshold: 100ms)"
 
@@ -259,6 +261,7 @@ def test_soak_multi_wave_dashboard_load_with_writer(tmp_path):
             for i in range(50)
         ]
         w3_success, w3_err, w3_p95 = _run_wave(wave3_urls)
+        print(f"Dashboard continuity wave: {w3_success} responses, {w3_err} errors, p95={w3_p95:.3f} ms")
         assert w3_err == 0 and w3_success == 50, f"Wave 3 had {w3_err} errors out of 50"
         assert w3_p95 < 100.0, f"Wave 3 p95 latency was {w3_p95:.2f}ms (threshold: 100ms)"
 

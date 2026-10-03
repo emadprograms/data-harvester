@@ -6,7 +6,21 @@ Provides thread-safe local connections to dedicated DuckDB files:
 """
 import os
 import re
+import threading
 import duckdb
+
+
+_CONNECTION_LOCKS: dict[str, threading.RLock] = {}
+_CONNECTION_LOCKS_GUARD = threading.Lock()
+
+
+def _connection_lock_for_path(db_path: str) -> threading.RLock:
+    """Serialize mode negotiation and close for one in-process DuckDB file."""
+    if db_path == ":memory:":
+        return threading.RLock()
+    key = os.path.realpath(db_path)
+    with _CONNECTION_LOCKS_GUARD:
+        return _CONNECTION_LOCKS.setdefault(key, threading.RLock())
 
 MICRON_DATA_DIR = "/Volumes/Micron-E 0256 A/data-harvester/data"
 _ENV_DATA_DIR = os.environ.get("DATA_DIR")
@@ -116,41 +130,41 @@ class DuckDBClient:
         import time
         self.db_path = db_path or DEFAULT_DB_PATH
         self.read_only = read_only
+        self._connection_lock = _connection_lock_for_path(self.db_path)
         dirname = os.path.dirname(self.db_path)
         if dirname:
             os.makedirs(dirname, exist_ok=True)
 
         conn = None
         last_error = None
-        for attempt in range(max_retries):
-            try:
-                conn = duckdb.connect(self.db_path, read_only=self.read_only)
-                break
-            except Exception as e:
-                err_msg = str(e)
-                last_error = e
-                # 1. Handle in-process configuration conflict: adapt to whichever mode is already open in this process
-                if "different configuration" in err_msg:
-                    try:
-                        self.read_only = not self.read_only
-                        conn = duckdb.connect(self.db_path, read_only=self.read_only)
-                        break
-                    except Exception as inner_e:
-                        last_error = inner_e
-                # 2. Handle cross-process or concurrent file lock contention: retry with backoff
-                if "lock" in err_msg.lower() and attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                # 3. If opening in read-write mode failed due to an existing lock and DuckDB indicates
-                # read-only mode is possible, gracefully fall back to read-only mode
-                if not self.read_only and ("read-only mode" in err_msg.lower() or "conflicting lock" in err_msg.lower()):
-                    try:
-                        self.read_only = True
-                        conn = duckdb.connect(self.db_path, read_only=True)
-                        break
-                    except Exception as inner_e:
-                        last_error = inner_e
-                break
+        with self._connection_lock:
+            for attempt in range(max_retries):
+                try:
+                    conn = duckdb.connect(self.db_path, read_only=self.read_only)
+                    break
+                except Exception as e:
+                    err_msg = str(e)
+                    last_error = e
+                    # Adapt to the mode already open in this process. A close cannot
+                    # change that mode between these two attempts while the lock is held.
+                    if "different configuration" in err_msg:
+                        try:
+                            self.read_only = not self.read_only
+                            conn = duckdb.connect(self.db_path, read_only=self.read_only)
+                            break
+                        except Exception as inner_e:
+                            last_error = inner_e
+                    if "lock" in err_msg.lower() and attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    if not self.read_only and ("read-only mode" in err_msg.lower() or "conflicting lock" in err_msg.lower()):
+                        try:
+                            self.read_only = True
+                            conn = duckdb.connect(self.db_path, read_only=True)
+                            break
+                        except Exception as inner_e:
+                            last_error = inner_e
+                    break
 
         if conn is None:
             raise last_error or RuntimeError(f"Could not connect to DuckDB at {self.db_path}")
@@ -202,10 +216,11 @@ class DuckDBClient:
         self.conn.commit()
 
     def close(self):
-        try:
-            self.conn.close()
-        except Exception:
-            pass
+        with self._connection_lock:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
 
 
 def get_duckdb_connection(db_path=None, read_only=False):

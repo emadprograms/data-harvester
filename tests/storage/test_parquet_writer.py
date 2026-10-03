@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import threading
 import time
 import duckdb
 import pytest
@@ -148,6 +149,43 @@ def test_batch_flush_on_monotonic_age(tmp_path):
     writer.close()
 
 
+def test_async_publication_keeps_event_loop_available_when_storage_blocks(tmp_path, monkeypatch):
+    """A blocked storage worker must not block unrelated event-loop callbacks."""
+    async def _run():
+        writer = TickLakeWriter(root=tmp_path / "lake")
+        entered = threading.Event()
+        release = threading.Event()
+        publish = writer.publisher.publish_batch
+
+        def blocked_publish(*args, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return publish(*args, **kwargs)
+
+        monkeypatch.setattr(writer.publisher, "publish_batch", blocked_publish)
+        tick = QuoteTick(
+            timestamp=datetime(2026, 10, 2, 14, 30, tzinfo=timezone.utc),
+            symbol="NVDA", price=500.0, volume=1.0, ingest_id="off_loop_1",
+        )
+        task = asyncio.create_task(writer.publish_batch_async([tick]))
+        try:
+            assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+            assert not task.done()
+            progressed = asyncio.Event()
+            asyncio.get_running_loop().call_soon(progressed.set)
+            await asyncio.wait_for(progressed.wait(), timeout=1)
+        finally:
+            release.set()
+            try:
+                receipt = await asyncio.wait_for(task, timeout=5)
+                assert receipt.row_count == 1
+            finally:
+                await writer.close_async()
+
+    asyncio.run(_run())
+
+
+@pytest.mark.performance
 def test_off_loop_event_loop_responsiveness(tmp_path):
     """
     Runs a high-frequency 5ms heartbeat task on the asyncio loop while calling
