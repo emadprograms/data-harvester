@@ -1,38 +1,43 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v3.0",
+  "milestone": "v4.1",
   "phases": [
     {
-      "number": "10",
-      "name": "Backend Analytics & High-Performance Data APIs",
-      "status": "complete"
+      "number": "22",
+      "name": "Storage Foundation & Publication Edge Case Tests",
+      "status": "in_progress"
     },
     {
-      "number": "11",
-      "name": "Interactive Financial Charting & Data Explorer UI",
-      "status": "complete"
+      "number": "23",
+      "name": "Streaming Writer & Runner Stress & Lifecycle Tests",
+      "status": "pending"
     },
     {
-      "number": "12",
-      "name": "Live Stream Tape, Telemetry & Market Operations UI",
-      "status": "complete"
+      "number": "24",
+      "name": "Versioned Symbol Registry & Dynamic Reload Stress Tests",
+      "status": "pending"
     },
     {
-      "number": "13",
-      "name": "Enhanced Symbol Data Matrix & Context-Aware Integrity Engine",
-      "status": "complete"
+      "number": "25",
+      "name": "In-Memory DuckDB Lake Reader & Analytics Edge Tests",
+      "status": "pending"
     },
     {
-      "number": "14",
-      "name": "Comprehensive Verification, Testing & Polish",
-      "status": "complete"
+      "number": "26",
+      "name": "Migration Tooling Rehearsal & Fuzz Tests",
+      "status": "pending"
+    },
+    {
+      "number": "27",
+      "name": "Multi-Process Long-Running Soak & Chaos Tests",
+      "status": "pending"
     }
   ],
   "next": {
     "command": "/gsd-progress",
-    "label": "Show progress",
-    "reason": "Unsure of state — showing progress"
+    "label": "Execute Phase 22 Stage 1",
+    "reason": "Phase 22 is active and ready for researcher subagent"
   },
-  "updated_at": "2026-09-26T17:35:40.921Z"
+  "updated_at": "2026-10-03T13:06:00.000Z"
 }

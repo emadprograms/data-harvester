@@ -1,58 +1,50 @@
-# Requirements: Milestone v4.0
+# Requirements: Milestone v4.1
 
-# Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)
+# Partitioned Parquet Lake Deep Testing & Hardening
 
 ## Milestone Goal
 
-Replace the locked live DuckDB tick database with an append-only, partitioned Parquet tick lake. Decouple high-frequency live ingestion (Writer) from analytics, charting, and rewind consumers (Readers), eliminating OS-level database write locks. Ensure zero data loss migration from legacy `streaming.duckdb`, sub-second symbol switching via Hive partitioning, deterministic OHLCV resampling via in-memory DuckDB, and clean multi-process concurrency.
+Harden and stress-test the partitioned Parquet tick lake architecture across extreme edge cases, high concurrency, adverse failure modes, fuzzing, and long-running multi-process chaos. Ensure ironclad data integrity, crash resilience, leak-free in-memory DuckDB scaling, race-free symbol registry mutations, and flawless migration under hostile operational conditions.
 
 ---
 
 ## Requirements
 
-### Phase 15: Safe Test Isolation & Baseline Characterization (P0)
-- [x] **LAKE-P0-01**: Test isolation - route all default test database/data paths to `tmp_path` before imports; block production volume mutations in automated tests.
-- [x] **LAKE-P0-02**: Deterministic quote fixtures - generate synthetic test datasets with repeats, identical timestamps, late arrivals, nulls, and session boundary cases.
-- [x] **LAKE-P0-03**: Baseline characterization - benchmark existing DuckDB write/query CPU seconds, latency percentiles, and event-loop lag to establish pre-migration gates.
+### Phase 22: Storage Foundation & Publication Edge Case Tests
+- [ ] **TEST-P22-01**: Storage layout path traversal, unicode/special symbol encoding, and corrupted metadata handling (`src/storage/config.py`).
+- [ ] **TEST-P22-02**: PyArrow schema type coercion, extreme numeric limits (float min/max, subnormal), null bitmasks (`src/storage/schema.py`).
+- [ ] **TEST-P22-03**: Atomic publication concurrency collisions, crashed intent recovery, and file lock serialization (`src/storage/publication.py`).
 
-### Phase 16: Lake Schema, Configuration, Atomic Files & Recovery (P1)
-- [x] **LAKE-P1-01**: Lake layout & configuration - implement explicit `TICK_LAKE_ROOT` resolution, format versioning (`lake.json`), and safe symbol encoding.
-- [x] **LAKE-P1-02**: Typed Schema v1 - implement 8-column schema with microsecond timestamp and stable unique `ingest_id` preserving duplicates and nulls.
-- [x] **LAKE-P1-03**: Atomic file staging - implement staging to `.tmp` files on the same filesystem followed by atomic rename into partition destination.
-- [x] **LAKE-P1-04**: Publication state machine & receipts - track published batches with idempotent receipts, preventing duplicate visibility or partial footers.
+### Phase 23: Streaming Writer & Runner Stress & Lifecycle Tests
+- [ ] **TEST-P23-01**: High-throughput micro-batching under memory pressure (100k+ ticks) and bounded queue backpressure (`src/storage/parquet_writer.py`).
+- [ ] **TEST-P23-02**: Runner sudden shutdown mid-flush, graceful drain timeouts, and honest queue acknowledgments (`src/stream/runner.py`).
+- [ ] **TEST-P23-03**: Transient disk full / I/O error exponential backoff and quarantine handling (`src/storage/parquet_writer.py`).
 
-### Phase 17: Streaming Parquet Writer & Runner Lifecycle Integration (P2)
-- [x] **LAKE-P2-01**: Micro-batch writer - implement `TickLakeWriter` with configurable flush thresholds (default 5s or 5,000 ticks) and bounded queue limits.
-- [x] **LAKE-P2-02**: Off-loop PyArrow worker - move Parquet encoding and I/O to a dedicated worker thread, keeping asyncio event loop scheduling lag <20ms.
-- [x] **LAKE-P2-03**: Runner lifecycle integration - update `src/stream/runner.py` to use `TickLakeWriter`, with honest counters and cooperative shutdown drain.
+### Phase 24: Versioned Symbol Registry & Dynamic Reload Stress Tests
+- [ ] **TEST-P24-01**: Cross-process concurrent symbol CRUD lock serialization and monotonic versioning integrity (`src/storage/registry.py`).
+- [ ] **TEST-P24-02**: Rapid symbol toggle/delete flapping and `PENDING_PURGE` generation fences (`src/storage/registry.py`).
+- [ ] **TEST-P24-03**: File signal debouncing and dynamic reload latency under heavy polling (`src/dashboard/server.py`).
 
-### Phase 18: Versioned Symbol Registry & Administrative Compatibility (P3)
-- [x] **LAKE-P3-01**: Atomic JSON registry - extract symbol registry out of DuckDB into versioned `registry.json` managed by a single control owner.
-- [x] **LAKE-P3-02**: Cross-process registry polling - wire version checking into runner with signal wakeups, ensuring dynamic reload without DB locks.
-- [x] **LAKE-P3-03**: Pending purge semantics - implement subscription fencing and pending-purge state for symbol removal, preventing corrupted reader globs.
+### Phase 25: In-Memory DuckDB Lake Reader & Analytics Edge Tests
+- [ ] **TEST-P25-01**: Multi-threaded in-memory DuckDB connection scaling (30+ concurrent readers) without memory leaks (`src/storage/reader.py`).
+- [ ] **TEST-P25-02**: Vectorized resampling edge cases: sparse partitions, multi-day roll-overs, DST shifts, leap years (`src/storage/reader.py`, `src/dashboard/analytics.py`).
+- [ ] **TEST-P25-03**: Reverse-chronological tape pagination with high offsets and non-existent symbol pruning (`src/storage/reader.py`).
 
-### Phase 19: In-Memory DuckDB Lake Reader & Dashboard Integration (P4)
-- [x] **LAKE-P4-01**: `TickLakeReader` engine - private in-memory DuckDB connection per request querying Parquet partitions via partition pruning.
-- [x] **LAKE-P4-02**: Deterministic OHLCV resampling - calculate 1m/5m/1d candles using `time_bucket()`, `arg_min(price, (timestamp, ingest_id))`, and `arg_max`.
-- [x] **LAKE-P4-03**: Dashboard analytics integration - migrate `/api/candles`, `/api/stream/tape`, `/api/stream/status`, and integrity checks off legacy DuckDB files.
-- [x] **LAKE-P4-04**: Repo B reader contract - deliver minimal schema documentation, query examples, and in-memory connection patterns for independent consumers.
+### Phase 26: Migration Tooling Rehearsal & Fuzz Tests
+- [ ] **TEST-P26-01**: Migration of corrupt / partial legacy DuckDB tables and schema drift (`tools/migrate_streaming_to_parquet.py`).
+- [ ] **TEST-P26-02**: Simulated crash interruption across all migration modes (`plan`, `export`, `verify`, `publish`) (`tools/migrate_streaming_to_parquet.py`).
+- [ ] **TEST-P26-03**: Two-way `EXCEPT ALL` fuzz testing with synthetic data corruption and precision mismatch detection (`tools/migrate_streaming_to_parquet.py`).
 
-### Phase 20: Zero-Loss Migration Tooling & Rehearsal (P6)
-- [x] **LAKE-P6-01**: Migration CLI tool - implement `tools/migrate_streaming_to_parquet.py` with `plan`, `export`, `verify`, and `publish` modes.
-- [x] **LAKE-P6-02**: Chunked export & checkpointing - export frozen `streaming.duckdb` into partitioned Parquet files with checkpointed progress.
-- [x] **LAKE-P6-03**: Two-way `EXCEPT ALL` reconciliation - verify zero row loss, identical duplicates, and exact precision match between source and Parquet export.
-
-### Phase 21: Production Cutover, Concurrency Validation & Handoff (P8)
-- [x] **LAKE-P8-01**: Coordinated writer cutover - freeze legacy writer, switch runner to live Parquet lake, and publish migrated historical partitions.
-- [x] **LAKE-P8-02**: Multi-process concurrency verification - validate sustained concurrent streaming writes + dashboard queries + Repo B reader without lock errors.
-- [x] **LAKE-P8-03**: Documentation & service updates - update service configs, README, supervisor scripts, and operational runbooks.
+### Phase 27: Multi-Process Long-Running Soak & Chaos Tests
+- [ ] **TEST-P27-01**: Multi-process soak testing under continuous ingestion and continuous analytical reading (`tools/service_supervisor.py`, `tools/validate_concurrency.py`).
+- [ ] **TEST-P27-02**: Chaos monkey process termination (streamer, dashboard, supervisor) and automatic self-healing (`tools/service_supervisor.py`).
 
 ---
 
 ## Non-Functional Requirements & Performance Gates
 
-- **Zero DB Lock Errors**: Independent writer and reader processes run concurrently without file locking exceptions.
-- **CPU Reduction**: At least 50% lower writer CPU seconds per million ticks compared to legacy DuckDB baseline.
-- **Event-Loop Responsiveness**: p99 asyncio event-loop scheduling lag under 20ms during peak tick ingestion.
-- **Fast Resampling**: Sub-100ms p95 query latency for single-symbol single-session 1m/5m candle queries via in-memory DuckDB.
-- **Zero Data Loss**: 100% row, duplicate multiplicity, and precision preservation across historical migration verified by two-way `EXCEPT ALL`.
+- **Zero Memory Leaks**: In-memory DuckDB reader pools and worker threads release all query and buffer memory across 1,000+ sequential and 30+ concurrent calls.
+- **Backpressure Stability**: Streaming runner bounded queues throttle or shed honestly under extreme tick surges without unhandled OOM.
+- **Fail-Safe Crash Recovery**: Any crashed writer, uncommitted `.tmp` staging file, or partial migration batch is automatically quarantined or cleaned up without lake corruption.
+- **Monotonic Registry State**: Symbol registry version strictly increments and rejects concurrent race conditions or torn writes across processes.
+- **Self-Healing Supervisor**: Multi-process supervisor detects killed or crashing sub-processes and restores steady-state streaming within SLA.

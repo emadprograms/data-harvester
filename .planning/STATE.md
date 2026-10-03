@@ -1,48 +1,44 @@
 ---
 gsd_state_version: "1.0"
-milestone: v4.0
-status: completed
-last_updated: "2026-10-03T11:15:00.000Z"
+milestone: v4.1
+status: in_progress
+last_updated: "2026-10-03T13:06:00.000Z"
 last_activity: 2026-10-03
-last_activity_desc: "Completed Phase 21 (P8: Production Cutover, Concurrency Validation & Handoff) — Milestone v4.0 Shipped"
+last_activity_desc: "Initialized Milestone v4.1: Partitioned Parquet Lake Deep Testing & Hardening"
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 7
-  completed_plans: 7
-  percent: 100
-milestone_name: "Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)"
+  total_phases: 6
+  completed_phases: 0
+  total_plans: 6
+  completed_plans: 0
+  percent: 0
+milestone_name: "Partitioned Parquet Lake Deep Testing & Hardening"
 ---
 
 # Project State: Data Harvester
 
 ## Current Position
 
-Phase: Phase 21 - Production Cutover, Concurrency Validation & Handoff (P8)
-Plan: Completed
-Status: completed
-Last activity: 2026-10-03 — Completed Phase 21 (P8: Production Cutover, Concurrency Validation & Handoff)
+Phase: Phase 22 - Storage Foundation & Publication Edge Case Tests
+Plan: In progress
+Status: in_progress
+Last activity: 2026-10-03 — Initialized Milestone v4.1 (Phases 22–27)
 
 ## Milestone Summary
 
-- Milestone: v4.0 (COMPLETED & SHIPPED)
-- Goal: Decouple live streaming tick writes from analytics/chart/replay reads by replacing the locked `streaming.duckdb` with an append-only partitioned Parquet tick lake.
-- Number of phases: 7
-  - Phase 15: Safe Test Isolation & Baseline Characterization (P0) — COMPLETED
-  - Phase 16: Lake Schema, Configuration, Atomic Files & Recovery (P1) — COMPLETED
-  - Phase 17: Streaming Parquet Writer & Runner Lifecycle Integration (P2) — COMPLETED
-  - Phase 18: Versioned Symbol Registry & Administrative Compatibility (P3) — COMPLETED
-  - Phase 19: In-Memory DuckDB Lake Reader & Dashboard Integration (P4) — COMPLETED
-  - Phase 20: Zero-Loss Migration Tooling & Rehearsal (P6) — COMPLETED
-  - Phase 21: Production Cutover, Concurrency Validation & Handoff (P8) — COMPLETED
+- Milestone: v4.1 (IN PROGRESS)
+- Goal: Deep edge-case coverage, stress testing, fuzzing, chaos recovery, and soak testing for the partitioned Parquet lake architecture.
+- Number of phases: 6
+  - Phase 22: Storage Foundation & Publication Edge Case Tests (`src/storage/config.py`, `schema.py`, `publication.py`) — IN PROGRESS
+  - Phase 23: Streaming Writer & Runner Stress & Lifecycle Tests (`src/storage/parquet_writer.py`, `src/stream/runner.py`) — PENDING
+  - Phase 24: Versioned Symbol Registry & Dynamic Reload Stress Tests (`src/storage/registry.py`, `src/dashboard/server.py`) — PENDING
+  - Phase 25: In-Memory DuckDB Lake Reader & Analytics Edge Tests (`src/storage/reader.py`, `src/dashboard/analytics.py`) — PENDING
+  - Phase 26: Migration Tooling Rehearsal & Fuzz Tests (`tools/migrate_streaming_to_parquet.py`) — PENDING
+  - Phase 27: Multi-Process Long-Running Soak & Chaos Tests (`tools/service_supervisor.py`, `tools/validate_concurrency.py`) — PENDING
 
-## Execution Protocol (Strict 4-Stage Subagent Loop)
+## Execution Protocol (Strict 2-Stage Subagent Loop per Phase)
 
-1. Researcher Subagent: Deep codebase inspection, constraints, technical spec.
-2. Test Writer Subagent (TDD): Unit/integration test suites & failure fixtures written before implementation.
-3. Implementer Subagent: Code implementation to satisfy tests.
-4. Verifier Subagent: Runs tests, validates multi-process edge cases & user workflows.
-   *(Inner remediation loop: Verifier feedback -> Implementer fixes -> Verifier re-checks)*
+1. Stage 1: Researcher Subagent — Deep codebase inspection, edge-case analysis, testing matrix & spec.
+2. Stage 2: Implementer Subagent — Test suite authoring, execution, test hardening & verification.
 
 ## Blockers/Concerns
 
@@ -50,4 +46,4 @@ None.
 
 ## Operator Next Steps
 
-- Execute Phase 15 Stage 1: Researcher Subagent
+- Execute Phase 22 Stage 1: Researcher Subagent for Storage Foundation & Publication Edge Case Tests.
