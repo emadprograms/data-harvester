@@ -6,7 +6,7 @@
 - ✅ **v2.0 Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard** — Phases 5–9 (shipped 2026-09-25)
 - ✅ **v3.0 Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard** — Phases 10–14 (shipped 2026-09-26)
 - ✅ **v4.0 Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)** — Phases 15–21 (shipped 2026-10-03)
-- 🟡 **v4.1 Partitioned Parquet Lake Deep Testing & Hardening** — Phases 22–27 (in progress)
+- ✅ **v4.1 Partitioned Parquet Lake Deep Testing & Hardening** — Phases 22–27 (shipped 2026-10-03)
 
 ## Phases
 
@@ -87,6 +87,6 @@ See: [.planning/milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
   - Migration of corrupt / partial legacy DuckDB tables and schema drift.
   - Simulated crash interruption across all migration modes (`plan`, `export`, `verify`, `publish`).
   - Two-way `EXCEPT ALL` fuzz testing with synthetic data corruption and precision mismatch detection.
-- [ ] **Phase 27: Multi-Process Long-Running Soak & Chaos Tests** (`tools/service_supervisor.py`, `tools/validate_concurrency.py`)
+- [x] **Phase 27: Multi-Process Long-Running Soak & Chaos Tests** (`tools/service_supervisor.py`, `tools/validate_concurrency.py`) — completed 2026-10-03 (commit 2a7a4253, 10/10 tests passing)
   - Multi-process soak testing under continuous ingestion and continuous analytical reading.
   - Chaos monkey process termination (streamer, dashboard, supervisor) and automatic self-healing.

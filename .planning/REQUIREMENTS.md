@@ -36,8 +36,8 @@ Harden and stress-test the partitioned Parquet tick lake architecture across ext
 - [x] **TEST-P26-03**: Two-way `EXCEPT ALL` fuzz testing with synthetic data corruption and precision mismatch detection (`tools/migrate_streaming_to_parquet.py`).
 
 ### Phase 27: Multi-Process Long-Running Soak & Chaos Tests
-- [ ] **TEST-P27-01**: Multi-process soak testing under continuous ingestion and continuous analytical reading (`tools/service_supervisor.py`, `tools/validate_concurrency.py`).
-- [ ] **TEST-P27-02**: Chaos monkey process termination (streamer, dashboard, supervisor) and automatic self-healing (`tools/service_supervisor.py`).
+- [x] **TEST-P27-01**: Multi-process soak testing under continuous ingestion and continuous analytical reading (`tools/service_supervisor.py`, `tools/validate_concurrency.py`).
+- [x] **TEST-P27-02**: Chaos monkey process termination (streamer, dashboard, supervisor) and automatic self-healing (`tools/service_supervisor.py`).
 
 ---
 

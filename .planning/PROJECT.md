@@ -6,7 +6,7 @@ A high-performance, 100% local market data harvesting and streaming engine runni
 ## Core Value
 Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
 
-## Current State (Shipped v4.0; Active v4.1)
+## Current State (Shipped v4.1)
 - **Partitioned Parquet Tick Lake (`data/lake/ticks`)**: Fully decoupled append-only storage organized by Hive-partitioned directories (`symbol=.../year=.../month=.../*.parquet`). Completely eliminates database write locks between ingestion and analytical readers.
 - **Micro-Batch Lake Writer (`TickLakeWriter`)**: Asynchronous worker thread writing compressed Snappy Parquet batches (5s or 5,000 ticks) with bounded queue backpressure and graceful drain.
 - **In-Memory DuckDB Lake Reader (`TickLakeReader`)**: Ephemeral private in-memory DuckDB connections per query with Hive partition pruning and deterministic OHLCV resampling via `arg_min(price, (timestamp, ingest_id))`.
@@ -14,7 +14,7 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - **Zero-Loss Migration Tooling (`tools/migrate_streaming_to_parquet.py`)**: Chunked export, idempotent checkpointing, and rigorous two-way `EXCEPT ALL` reconciliation guaranteeing 100% data fidelity.
 - **Historical Storage (`data/historical.duckdb`)**: 7,993,726 deduplicated 1-minute OHLCV bars across 40 symbols covering October 2024 to July 2026 (920 MB on disk). Sub-10ms dynamic candlestick resampling via DuckDB native `time_bucket()`.
 - **Observability Command Center**: Interactive TradingView Lightweight Charts (v4.1.3) with multi-timeframe analytical resampling (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`), raw OHLCV candle inspector, CSV export, live tick tape, and market session clock.
-- **Current Milestone**: `v4.1: Partitioned Parquet Lake Deep Testing & Hardening` (Phases 22–27) — targeting deep edge cases, stress testing, fuzzing, crash recovery, and soak validation.
+- **Milestone v4.1 Shipped (2026-10-03)**: `Partitioned Parquet Lake Deep Testing & Hardening` (Phases 22–27) — 122 new comprehensive edge-case, stress, fuzz, backpressure, and chaos tests across Phases 22–27, bringing the repository test suite to 688 passing tests with 0 failures, 0 errors, and zero memory leaks.
 
 ## Requirements
 
@@ -81,24 +81,26 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - [x] **LAKE-P8-02**: Multi-process concurrency verification under sustained live streaming — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P8-03**: Documentation, service supervisor configs, and operational runbook — v4.0 (shipped 2026-10-03)
 
-### Active (Milestone v4.1: Partitioned Parquet Lake Deep Testing & Hardening)
-- [ ] **TEST-P22-01**: Storage layout path traversal, unicode/special symbol encoding, and corrupted metadata handling (`src/storage/config.py`).
-- [ ] **TEST-P22-02**: PyArrow schema type coercion, extreme numeric limits (float min/max, subnormal), null bitmasks (`src/storage/schema.py`).
-- [ ] **TEST-P22-03**: Atomic publication concurrency collisions, crashed intent recovery, and file lock serialization (`src/storage/publication.py`).
-- [ ] **TEST-P23-01**: High-throughput micro-batching under memory pressure (100k+ ticks) and bounded queue backpressure (`src/storage/parquet_writer.py`).
-- [ ] **TEST-P23-02**: Runner sudden shutdown mid-flush, graceful drain timeouts, and honest queue acknowledgments (`src/stream/runner.py`).
-- [ ] **TEST-P23-03**: Transient disk full / I/O error exponential backoff and quarantine handling (`src/storage/parquet_writer.py`).
-- [ ] **TEST-P24-01**: Cross-process concurrent symbol CRUD lock serialization and monotonic versioning integrity (`src/storage/registry.py`).
-- [ ] **TEST-P24-02**: Rapid symbol toggle/delete flapping and `PENDING_PURGE` generation fences (`src/storage/registry.py`).
-- [ ] **TEST-P24-03**: File signal debouncing and dynamic reload latency under heavy polling (`src/dashboard/server.py`).
-- [ ] **TEST-P25-01**: Multi-threaded in-memory DuckDB connection scaling (30+ concurrent readers) without memory leaks (`src/storage/reader.py`).
-- [ ] **TEST-P25-02**: Vectorized resampling edge cases: sparse partitions, multi-day roll-overs, DST shifts, leap years (`src/storage/reader.py`, `src/dashboard/analytics.py`).
-- [ ] **TEST-P25-03**: Reverse-chronological tape pagination with high offsets and non-existent symbol pruning (`src/storage/reader.py`).
-- [ ] **TEST-P26-01**: Migration of corrupt / partial legacy DuckDB tables and schema drift (`tools/migrate_streaming_to_parquet.py`).
-- [ ] **TEST-P26-02**: Simulated crash interruption across all migration modes (`plan`, `export`, `verify`, `publish`) (`tools/migrate_streaming_to_parquet.py`).
-- [ ] **TEST-P26-03**: Two-way `EXCEPT ALL` fuzz testing with synthetic data corruption and precision mismatch detection (`tools/migrate_streaming_to_parquet.py`).
-- [ ] **TEST-P27-01**: Multi-process soak testing under continuous ingestion and continuous analytical reading (`tools/service_supervisor.py`, `tools/validate_concurrency.py`).
-- [ ] **TEST-P27-02**: Chaos monkey process termination (streamer, dashboard, supervisor) and automatic self-healing (`tools/service_supervisor.py`).
+- [x] **TEST-P22-01**: Storage layout path traversal, unicode/special symbol encoding, and corrupted metadata handling (`src/storage/config.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P22-02**: PyArrow schema type coercion, extreme numeric limits (float min/max, subnormal), null bitmasks (`src/storage/schema.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P22-03**: Atomic publication concurrency collisions, crashed intent recovery, and file lock serialization (`src/storage/publication.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P23-01**: High-throughput micro-batching under memory pressure (100k+ ticks) and bounded queue backpressure (`src/storage/parquet_writer.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P23-02**: Runner sudden shutdown mid-flush, graceful drain timeouts, and honest queue acknowledgments (`src/stream/runner.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P23-03**: Transient disk full / I/O error exponential backoff and quarantine handling (`src/storage/parquet_writer.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P24-01**: Cross-process concurrent symbol CRUD lock serialization and monotonic versioning integrity (`src/storage/registry.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P24-02**: Rapid symbol toggle/delete flapping and `PENDING_PURGE` generation fences (`src/storage/registry.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P24-03**: File signal debouncing and dynamic reload latency under heavy polling (`src/dashboard/server.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P25-01**: Multi-threaded in-memory DuckDB connection scaling (30+ concurrent readers) without memory leaks (`src/storage/reader.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P25-02**: Vectorized resampling edge cases: sparse partitions, multi-day roll-overs, DST shifts, leap years (`src/storage/reader.py`, `src/dashboard/analytics.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P25-03**: Reverse-chronological tape pagination with high offsets and non-existent symbol pruning (`src/storage/reader.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P26-01**: Migration of corrupt / partial legacy DuckDB tables and schema drift (`tools/migrate_streaming_to_parquet.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P26-02**: Simulated crash interruption across all migration modes (`plan`, `export`, `verify`, `publish`) (`tools/migrate_streaming_to_parquet.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P26-03**: Two-way `EXCEPT ALL` fuzz testing with synthetic data corruption and precision mismatch detection (`tools/migrate_streaming_to_parquet.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P27-01**: Multi-process soak testing under continuous ingestion and continuous analytical reading (`tools/service_supervisor.py`, `tools/validate_concurrency.py`) — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P27-02**: Chaos monkey process termination (streamer, dashboard, supervisor) and automatic self-healing (`tools/service_supervisor.py`) — v4.1 (shipped 2026-10-03)
+
+### Active
+*None currently active — Milestone v4.1 shipped on 2026-10-03.*
 
 ### Out of Scope
 - Direct `market-rewind` frontend modifications (deferred per user instruction: focus on data harvesting, storage, and integrity dashboard)
@@ -112,7 +114,7 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - In v2.0, storage was decoupled into separate `.duckdb` files to avoid single-writer lock contention between streaming and dashboard operations.
 - In v3.0, the dashboard transformed into an interactive Observability Command Center with TradingView charts, telemetry tape, market clocks, and background job runners.
 - In v4.0, live tick storage was migrated completely off DuckDB into an append-only, partitioned Parquet lake with atomic staging and in-memory DuckDB querying. This completely resolved OS-level write lock contention and delivered sub-20ms event-loop lag.
-- In v4.1, the engine enters deep hardening and edge-case stress testing: fuzzing migration, verifying crash recovery, ensuring zero memory leaks under multi-threaded load, and validating self-healing supervisor processes under chaos monkey termination.
+- In v4.1, the engine underwent deep hardening and edge-case stress testing: 122 new comprehensive edge-case, stress, fuzz, backpressure, and chaos tests across Phases 22–27, validating crash recovery, zero memory leaks under multi-threaded load (30+ concurrent readers), and self-healing supervisor processes under chaos monkey termination, bringing the repository test suite to 688 passing tests with 0 failures, 0 errors, and zero memory leaks.
 
 ## Constraints
 - **Zero Cloud Limits**: No dependence on cloud database quotas.
@@ -137,4 +139,4 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 | Context-Aware Gap Range Discovery | Dynamic recorded date range targeting prevents false gap alarms on archived historical data | ✓ Good |
 
 ---
-*Last updated: 2026-10-03 after v4.0 milestone completion and v4.1 initialization*
+*Last updated: 2026-10-03 after Milestone v4.1 completion and shipping (688 passing tests)*
