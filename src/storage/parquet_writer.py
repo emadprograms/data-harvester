@@ -104,7 +104,7 @@ class TickLakeWriter:
         self._seq_counter = 0
         self._batch_sequence = 0
         self._buffer: List[QuoteTick] = []
-        self._buffer_lock = threading.Lock()
+        self._buffer_lock = threading.RLock()
         self._publish_lock = threading.RLock()
         self._last_flush_monotonic = time.monotonic()
         self._metrics.last_flush_monotonic = self._last_flush_monotonic
@@ -284,6 +284,8 @@ class TickLakeWriter:
     def _update_status_file(self) -> None:
         """Atomically update _control/writer_status.json."""
         try:
+            with self._buffer_lock:
+                queue_depth = len(self._buffer)
             payload = {
                 "status": self._status,
                 "writer_id": self.writer_id,
@@ -292,6 +294,11 @@ class TickLakeWriter:
                 "batches_published": self.metrics.batches_published,
                 "total_quarantined": self.metrics.total_quarantined,
                 "total_retrying": self.metrics.total_retrying,
+                "total_dropped": self._metrics.total_dropped,
+                "queue_depth": queue_depth,
+                "last_error": self._metrics.last_error,
+                "last_error_time": self._metrics.last_error_time,
+                "heartbeat_monotonic": time.monotonic(),
                 "last_publish_time": self.metrics.last_publish_time,
                 "last_batch_id": self.metrics.last_batch_id,
                 "last_batch_rows": self.metrics.last_batch_rows,
@@ -334,13 +341,30 @@ class TickLakeWriter:
             return
 
         self._metrics.total_received += 1
-        self._metrics.total_accepted += 1
 
+        with self._buffer_lock:
+            need_overflow_flush = len(self._buffer) >= self.max_queue_size
+
+        if need_overflow_flush:
+            try:
+                self.flush(block=False)
+            except Exception as e:
+                logger.warning(f"Error during overflow flush: {e}")
+
+        dropped = False
         should_flush = False
         with self._buffer_lock:
-            self._buffer.append(normalized_tick)
-            if len(self._buffer) >= self.max_batch_rows:
-                should_flush = True
+            if len(self._buffer) >= self.max_queue_size:
+                self._metrics.total_dropped += 1
+                dropped = True
+            else:
+                self._metrics.total_accepted += 1
+                self._buffer.append(normalized_tick)
+                should_flush = len(self._buffer) >= self.max_batch_rows
+
+        if dropped:
+            self._update_status_file()
+            return
 
         if should_flush:
             self.flush()
@@ -421,9 +445,12 @@ class TickLakeWriter:
         tick_list = list(ticks)
         return await loop.run_in_executor(self._executor, self.publish_batch, tick_list)
 
-    def flush(self) -> Optional[PublishReceipt]:
+    def flush(self, block: bool = True) -> Optional[PublishReceipt]:
         """Flushes the current internal buffer."""
-        with self._publish_lock:
+        acquired = self._publish_lock.acquire(blocking=block)
+        if not acquired:
+            return None
+        try:
             with self._buffer_lock:
                 if not self._buffer:
                     return None
@@ -432,12 +459,25 @@ class TickLakeWriter:
                 self._last_flush_monotonic = time.monotonic()
                 self._metrics.last_flush_monotonic = self._last_flush_monotonic
 
-            return self._publish_batch_core(batch)
+            try:
+                return self._publish_batch_core(batch)
+            except Exception:
+                with self._buffer_lock:
+                    self._buffer = batch + self._buffer
+                raise
+        finally:
+            self._publish_lock.release()
 
     async def flush_async(self) -> Optional[PublishReceipt]:
         """Asynchronously flushes the current internal buffer on the worker thread."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, self.flush)
+
+    # Compatibility method aliases
+    enqueue_tick = write_tick
+    enqueue_ticks = write_ticks
+    flush_batch = publish_batch
+    flush_all = flush
 
     def close(self) -> None:
         """Stops background workers, flushes remaining buffer, and releases publisher lock."""

@@ -58,6 +58,9 @@ class StreamingEngine:
         self.db_conn = None
         self.total_ticks_saved = 0
         self.total_ticks_persisted = 0
+        self.ticks_received = 0
+        self.ticks_enqueued = 0
+        self.ticks_dropped = 0
         self.writer = None
         self.lake_writer = None
         self.registry = None
@@ -105,13 +108,24 @@ class StreamingEngine:
         self.epic_to_display = {}
         self._subscriptions_initialized = False
 
+    @property
+    def ticks_committed(self) -> int:
+        return self.total_ticks_persisted
+
     def _enqueue_tick(self, tick_tuple):
         """Pushes an individual tick into the async write queue."""
-        self.write_queue.put_nowait(tick_tuple)
+        self.ticks_received += 1
+        try:
+            self.write_queue.put_nowait(tick_tuple)
+            self.ticks_enqueued += 1
+        except asyncio.QueueFull:
+            self.ticks_dropped += 1
+            sym = tick_tuple[1] if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1 else str(tick_tuple)
+            logger.warning("write_queue full (%d), dropping tick: %s", self.write_queue.maxsize, sym)
 
     def _enqueue_bar(self, bar_tuple):
         """Backward-compatible bar enqueueing."""
-        self.write_queue.put_nowait(bar_tuple)
+        self._enqueue_tick(bar_tuple)
 
     async def _handle_binance_tick(self, tick_tuple):
         """Feeds a raw trade tick from Binance directly into the write queue with fencing."""
@@ -204,8 +218,9 @@ class StreamingEngine:
         """Worker that drains the write queue and batches raw tick writes into TickLakeWriter."""
         buffer = []
         last_flush = time.monotonic()
+        cancelled = False
 
-        while self.running or not self.write_queue.empty():
+        while (self.running or not self.write_queue.empty()) and not cancelled:
             try:
                 wait_time = min(0.05, self.flush_interval) if buffer else (0.05 if not self.running else min(0.2, self.flush_interval))
                 try:
@@ -235,15 +250,30 @@ class StreamingEngine:
                 if should_flush:
                     batch = list(buffer)
                     buffer.clear()
-                    await self.writer.publish_batch_async(batch)
                     batch_len = len(batch)
-                    self.total_ticks_persisted += batch_len
-                    self.total_ticks_saved += batch_len
-                    for _ in range(batch_len):
-                        self.write_queue.task_done()
-                    last_flush = time.monotonic()
+                    try:
+                        publish_task = asyncio.create_task(self.writer.publish_batch_async(batch))
+                        try:
+                            await asyncio.shield(publish_task)
+                        except asyncio.CancelledError:
+                            cancelled = True
+                            await publish_task
+                        self.total_ticks_persisted += batch_len
+                        self.total_ticks_saved += batch_len
+                        for _ in range(batch_len):
+                            self.write_queue.task_done()
+                        last_flush = time.monotonic()
+                    except asyncio.CancelledError:
+                        cancelled = True
+                        raise
+                    except Exception as exc:
+                        logger.error(f"Lake writer worker error: {exc}")
+                        self.ticks_dropped += batch_len
+                        for _ in range(batch_len):
+                            self.write_queue.task_done()
 
             except asyncio.CancelledError:
+                cancelled = True
                 break
             except Exception as e:
                 logger.error(f"Lake writer worker error: {e}")
@@ -251,17 +281,31 @@ class StreamingEngine:
 
         # Final flush on worker exit if buffer still has items
         if buffer:
+            batch = list(buffer)
+            buffer.clear()
+            batch_len = len(batch)
             try:
-                batch = list(buffer)
-                buffer.clear()
-                await self.writer.publish_batch_async(batch)
-                batch_len = len(batch)
+                publish_task = asyncio.create_task(self.writer.publish_batch_async(batch))
+                try:
+                    await asyncio.shield(publish_task)
+                except asyncio.CancelledError:
+                    cancelled = True
+                    await publish_task
                 self.total_ticks_persisted += batch_len
                 self.total_ticks_saved += batch_len
                 for _ in range(batch_len):
                     self.write_queue.task_done()
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
             except Exception as e:
                 logger.error(f"Error during final lake flush: {e}")
+                self.ticks_dropped += batch_len
+                for _ in range(batch_len):
+                    self.write_queue.task_done()
+
+        if cancelled:
+            raise asyncio.CancelledError()
 
     def trigger_reload(self):
         """Signals the background watcher to reload symbol subscriptions immediately."""
@@ -487,7 +531,7 @@ class StreamingEngine:
         if self.binance_streamer:
             self.binance_streamer.stop()
 
-    async def shutdown(self):
+    async def shutdown(self, drain_timeout: float = 10.0):
         """Gracefully drains remaining queued ticks and closes TickLakeWriter."""
         self.running = False
         if self.capital_streamer:
@@ -498,9 +542,14 @@ class StreamingEngine:
         # Await write queue drain
         if hasattr(self, "write_queue"):
             try:
-                await asyncio.wait_for(self.write_queue.join(), timeout=10.0)
+                await asyncio.wait_for(self.write_queue.join(), timeout=drain_timeout)
             except asyncio.TimeoutError:
-                logger.warning("Timed out waiting for write queue to drain during shutdown")
+                unfinished = getattr(self.write_queue, "unfinished_tasks", 0)
+                self.ticks_dropped += unfinished
+                logger.warning(
+                    "Timed out waiting for write queue to drain during shutdown (%d unfinished tasks dropped)",
+                    unfinished,
+                )
 
         if self.writer is not None:
             try:
