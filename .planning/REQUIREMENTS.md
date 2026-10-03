@@ -27,9 +27,9 @@ Replace the locked live DuckDB tick database with an append-only, partitioned Pa
 - [x] **LAKE-P2-03**: Runner lifecycle integration - update `src/stream/runner.py` to use `TickLakeWriter`, with honest counters and cooperative shutdown drain.
 
 ### Phase 18: Versioned Symbol Registry & Administrative Compatibility (P3)
-- [ ] **LAKE-P3-01**: Atomic JSON registry - extract symbol registry out of DuckDB into versioned `registry.json` managed by a single control owner.
-- [ ] **LAKE-P3-02**: Cross-process registry polling - wire version checking into runner with signal wakeups, ensuring dynamic reload without DB locks.
-- [ ] **LAKE-P3-03**: Pending purge semantics - implement subscription fencing and pending-purge state for symbol removal, preventing corrupted reader globs.
+- [x] **LAKE-P3-01**: Atomic JSON registry - extract symbol registry out of DuckDB into versioned `registry.json` managed by a single control owner.
+- [x] **LAKE-P3-02**: Cross-process registry polling - wire version checking into runner with signal wakeups, ensuring dynamic reload without DB locks.
+- [x] **LAKE-P3-03**: Pending purge semantics - implement subscription fencing and pending-purge state for symbol removal, preventing corrupted reader globs.
 
 ### Phase 19: In-Memory DuckDB Lake Reader & Dashboard Integration (P4)
 - [ ] **LAKE-P4-01**: `TickLakeReader` engine - private in-memory DuckDB connection per request querying Parquet partitions via partition pruning.

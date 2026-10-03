@@ -62,7 +62,7 @@ See: [.planning/milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
   - Implement `TickLakeWriter` with 5s / 5,000 tick thresholds and bounded queue.
   - Dedicated off-loop PyArrow worker thread preserving <20ms event loop lag.
   - Wire into `src/stream/runner.py` with graceful shutdown drain.
-- [ ] **Phase 18: Versioned Symbol Registry & Administrative Compatibility (P3)**
+- [x] **Phase 18: Versioned Symbol Registry & Administrative Compatibility (P3)** (completed 2026-10-03)
   - Implement `src/storage/registry.py` (atomic JSON registry, version polling).
   - Dynamic reload without DuckDB file locks; pending-purge state handling.
 - [ ] **Phase 19: In-Memory DuckDB Lake Reader & Dashboard Integration (P4)**
