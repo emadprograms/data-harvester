@@ -1,6 +1,10 @@
 # Tick lake remediation: tests first, production fixes later
 
-Status: test implementation plan only. No tests or application changes are implemented by this document.
+> **📌 STATUS: EXECUTED — the test-first remediation described here was completed across Milestones v4.0 (Phases 15–21) and v4.1 (Phases 22–27).**
+> This document is retained as the historical strategy record and is **not** a pending work item. The 122 tests added in v4.1 completed the adversarial coverage this plan called for; see [.planning/MILESTONES.md](../../.planning/MILESTONES.md) and [.planning/milestones/v4.1-ROADMAP.md](../../.planning/milestones/v4.1-ROADMAP.md).
+> The reference-machine qualification for timing gates and the 24-hour endurance run noted below remain operational follow-ups (see [.planning/ROADMAP.md](../../.planning/ROADMAP.md) backlog).
+
+Status: ~~test implementation plan only. No tests or application changes are implemented by this document.~~ **Executed** (see banner above).
 Reviewed baseline: commit `624b90d3`, 2026-10-03.
 Companion architecture: `docs/plans/partitioned-parquet-tick-lake.md`.
 

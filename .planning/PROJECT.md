@@ -1,20 +1,21 @@
 # Data Harvester — Local DuckDB & Live Streaming Engine
 
 ## What This Is
-A high-performance, 100% local market data harvesting and streaming engine running on macOS (Mac Mini) and Windows. It captures live market quotes from Capital.com via persistent WebSockets, storing real-time tick-by-tick quotes in an append-only partitioned Parquet tick lake (`data/lake/ticks`) and canonical 1-minute historical bars in `data/historical.duckdb` with sub-millisecond dynamic OHLCV candlestick resampling, deep data integrity validation, and an interactive local web dashboard (`http://localhost:8420`).
+A high-performance, 100% local market data harvesting and streaming engine running on macOS (Mac Mini) and Windows. It captures live market quotes from Capital.com via persistent WebSockets, storing real-time tick-by-tick quotes in an append-only partitioned Parquet tick lake (`data/tick_lake/ticks`) and canonical 1-minute historical bars in `data/historical.duckdb` with sub-millisecond dynamic OHLCV candlestick resampling, deep data integrity validation, and an interactive local web dashboard (`http://localhost:8420`).
 
 ## Core Value
 Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
 
 ## Current State (Shipped v4.1)
-- **Partitioned Parquet Tick Lake (`data/lake/ticks`)**: Fully decoupled append-only storage organized by Hive-partitioned directories (`symbol=.../year=.../month=.../*.parquet`). Completely eliminates database write locks between ingestion and analytical readers.
-- **Micro-Batch Lake Writer (`TickLakeWriter`)**: Asynchronous worker thread writing compressed Snappy Parquet batches (5s or 5,000 ticks) with bounded queue backpressure and graceful drain.
-- **In-Memory DuckDB Lake Reader (`TickLakeReader`)**: Ephemeral private in-memory DuckDB connections per query with Hive partition pruning and deterministic OHLCV resampling via `arg_min(price, (timestamp, ingest_id))`.
-- **Versioned Symbol Registry (`data/lake/registry.json`)**: Atomic JSON registry with monotonic version tracking and cross-process file signal notifications for dynamic symbol additions/removals without daemon restarts.
-- **Zero-Loss Migration Tooling (`tools/migrate_streaming_to_parquet.py`)**: Chunked export, idempotent checkpointing, and rigorous two-way `EXCEPT ALL` reconciliation guaranteeing 100% data fidelity.
-- **Historical Storage (`data/historical.duckdb`)**: 7,993,726 deduplicated 1-minute OHLCV bars across 40 symbols covering October 2024 to July 2026 (920 MB on disk). Sub-10ms dynamic candlestick resampling via DuckDB native `time_bucket()`.
-- **Observability Command Center**: Interactive TradingView Lightweight Charts (v4.1.3) with multi-timeframe analytical resampling (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`), raw OHLCV candle inspector, CSV export, live tick tape, and market session clock.
-- **Milestone v4.1 Shipped (2026-10-03)**: `Partitioned Parquet Lake Deep Testing & Hardening` (Phases 22–27) — 122 new comprehensive edge-case, stress, fuzz, backpressure, and chaos tests across Phases 22–27, bringing the repository test suite to 688 passing tests with 0 failures, 0 errors, and zero memory leaks.
+- **Partitioned Parquet Tick Lake (`data/tick_lake/ticks`)**: Fully decoupled append-only storage organized by Hive two-level partitioning (`symbol=<ENCODED_SYMBOL>/date=<YYYY-MM-DD>/*.parquet`). Live ticks never touch a disk-backed DuckDB database, completely eliminating write locks between ingestion and analytical readers.
+- **Micro-Batch Lake Writer (`TickLakeWriter`)**: Asynchronous worker thread writing Snappy Parquet batches (class defaults: flush every 5.0s or 5,000 rows; the streaming runner constructs it with a 2.0s flush interval and a 10,000-tick bounded queue) with backpressure, retries with exponential backoff, malformed-tick quarantine, and graceful drain.
+- **In-Memory DuckDB Lake Reader (`TickLakeReader`)**: Ephemeral private in-memory DuckDB connections per query (default `threads = 4`, `max_memory = '2GB'`) with Hive partition pruning and deterministic OHLCV resampling via `arg_min(price, (timestamp, ingest_id))` / `arg_max`.
+- **Versioned Symbol Registry (`_control/registry.json`)**: Atomic JSON registry with monotonic version tracking and cross-process file signal notifications (`.stream_reload.signal`) for dynamic symbol additions/removals without daemon restarts.
+- **Zero-Loss Migration Tooling (`tools/migrate_streaming_to_parquet.py`)**: Chunked export (default 100,000 rows/chunk), idempotent checkpointing, and rigorous two-way `EXCEPT ALL` reconciliation guaranteeing 100% data fidelity.
+- **Historical Storage (`data/historical.duckdb`)**: ~8.9M deduplicated 1-minute OHLCV bars across 40 symbols covering October 2024 to September 2026. Sub-10ms dynamic candlestick resampling via DuckDB native `time_bucket()`.
+- **Observability Command Center**: Interactive TradingView Lightweight Charts (v4.1.3) with multi-timeframe analytical resampling (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`), raw OHLCV candle inspector, CSV export, live tick tape, market session clock, and integrity auditing.
+- **Milestone v4.1 Shipped (2026-10-03)**: `Partitioned Parquet Lake Deep Testing & Hardening` (Phases 22–27) — 122 new comprehensive edge-case, stress, fuzz, backpressure, and chaos tests bringing the offline suite to **688 passing tests** (0 failures, 0 errors) with zero memory leaks observed. All 17 requirements have green tests; the independent milestone audit ([.planning/v4.1-MILESTONE-AUDIT.md](v4.1-MILESTONE-AUDIT.md)) records `gaps_found` for missing per-phase `VERIFICATION.md` artifacts plus 2 partial-coverage and 3 integration findings — no data-corrupting defects. Follow-ups live in [.planning/ROADMAP.md](ROADMAP.md).
+- **Documentation**: `README.md`, `docs/operations/tick_lake_operations_guide.md`, `docs/contracts/repo_b_tick_lake_contract.md`, `docs/windows_service_setup.md`, and `docs/plans/*` are aligned with the shipped v4.1 architecture and paths.
 
 ## Requirements
 
@@ -38,7 +39,7 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - [x] **INTG-02**: Stream continuity and quiet interval detector for streaming ticks — v2.0
 - [x] **INTG-03**: OHLCV sanity and anomaly detection (negative/zero prices, `high < low`, price spikes, nulls) — v2.0
 - [x] **INTG-04**: Cross-database drift analyzer comparing historical REST candle closes against streaming tick prices — v2.0
-- [x] **DASH-01**: Lightweight local Python backend server running on `http://localhost:8000` exposing REST endpoints — v2.0
+- [x] **DASH-01**: Lightweight local Python backend server running on `http://localhost:8420` exposing REST endpoints — v2.0 (originally port 8000)
 - [x] **DASH-02**: Responsive single-page JavaScript/Tailwind web dashboard displaying live streamer status, tick rates, and storage — v2.0
 - [x] **DASH-03**: Interactive Data Integrity visual audit view with one-click test execution and pass/warn/fail matrix — v2.0
 - [x] **DASH-04**: Symbol Management interface in the web dashboard allowing users to add/remove symbols with dynamic live reload — v2.0
@@ -61,13 +62,13 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - [x] **LAKE-P0-02**: Deterministic quote fixtures (repeats, identical timestamps, late arrivals, nulls) — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P0-03**: Baseline characterization of legacy DuckDB write/query CPU seconds & latency — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P1-01**: Lake layout & explicit `TICK_LAKE_ROOT` configuration — v4.0 (shipped 2026-10-03)
-- [x] **LAKE-P1-02**: Typed Schema v1 with microsecond UTC timestamp and stable unique `ingest_id` — v4.0 (shipped 2026-10-03)
+- [x] **LAKE-P1-02**: Typed Schema v1 with microsecond UTC timestamp and stable unique `ingest_id` (string) — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P1-03**: Atomic file staging (`.tmp` -> atomic rename) — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P1-04**: Publication state machine & receipts — v4.0 (shipped 2026-10-03)
-- [x] **LAKE-P2-01**: Micro-batch writer `TickLakeWriter` with 5s / 5,000 tick thresholds — v4.0 (shipped 2026-10-03)
+- [x] **LAKE-P2-01**: Micro-batch writer `TickLakeWriter` with configurable time/count thresholds — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P2-02**: Off-loop PyArrow worker thread preserving <20ms event loop lag — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P2-03**: Runner lifecycle integration with cooperative shutdown drain — v4.0 (shipped 2026-10-03)
-- [x] **LAKE-P3-01**: Atomic JSON symbol registry (`registry.json`) — v4.0 (shipped 2026-10-03)
+- [x] **LAKE-P3-01**: Atomic JSON symbol registry (`_control/registry.json`) — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P3-02**: Cross-process registry version polling & dynamic reload — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P3-03**: Pending purge semantics & subscription fencing — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P4-01**: In-memory DuckDB `TickLakeReader` engine with Hive partition pruning — v4.0 (shipped 2026-10-03)
@@ -80,45 +81,35 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - [x] **LAKE-P8-01**: Coordinated writer cutover from legacy DB to Parquet lake — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P8-02**: Multi-process concurrency verification under sustained live streaming — v4.0 (shipped 2026-10-03)
 - [x] **LAKE-P8-03**: Documentation, service supervisor configs, and operational runbook — v4.0 (shipped 2026-10-03)
+- [x] **TEST-P22-01 … TEST-P22-03**: Storage layout path traversal, unicode/special symbol encoding, corrupted metadata; PyArrow schema coercion, float extremes, null bitmasks; publication collisions, crashed intent recovery, lock serialization — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P23-01 … TEST-P23-03**: 100k+ tick micro-batching under memory pressure and bounded-queue backpressure; sudden shutdown mid-flush, drain timeouts, honest acknowledgments; disk-full / I/O-error backoff and quarantine — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P24-01 … TEST-P24-03**: Cross-process symbol CRUD lock serialization and monotonic versioning; toggle/delete flapping with `PENDING_PURGE` fences; signal debouncing and reload latency under heavy polling — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P25-01 … TEST-P25-03**: 30+ concurrent in-memory readers without leaks; sparse partitions, DST/leap-year resampling edges; reverse-chronological tape pagination and symbol pruning — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P26-01 … TEST-P26-03**: Corrupt/partial legacy sources and schema drift; crash interruption across all migration modes; two-way `EXCEPT ALL` fuzzing with precision-mismatch detection — v4.1 (shipped 2026-10-03)
+- [x] **TEST-P27-01 … TEST-P27-02**: Multi-process soak under continuous ingestion and reads; chaos-monkey termination with supervisor self-healing — v4.1 (shipped 2026-10-03)
 
-- [x] **TEST-P22-01**: Storage layout path traversal, unicode/special symbol encoding, and corrupted metadata handling (`src/storage/config.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P22-02**: PyArrow schema type coercion, extreme numeric limits (float min/max, subnormal), null bitmasks (`src/storage/schema.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P22-03**: Atomic publication concurrency collisions, crashed intent recovery, and file lock serialization (`src/storage/publication.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P23-01**: High-throughput micro-batching under memory pressure (100k+ ticks) and bounded queue backpressure (`src/storage/parquet_writer.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P23-02**: Runner sudden shutdown mid-flush, graceful drain timeouts, and honest queue acknowledgments (`src/stream/runner.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P23-03**: Transient disk full / I/O error exponential backoff and quarantine handling (`src/storage/parquet_writer.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P24-01**: Cross-process concurrent symbol CRUD lock serialization and monotonic versioning integrity (`src/storage/registry.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P24-02**: Rapid symbol toggle/delete flapping and `PENDING_PURGE` generation fences (`src/storage/registry.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P24-03**: File signal debouncing and dynamic reload latency under heavy polling (`src/dashboard/server.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P25-01**: Multi-threaded in-memory DuckDB connection scaling (30+ concurrent readers) without memory leaks (`src/storage/reader.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P25-02**: Vectorized resampling edge cases: sparse partitions, multi-day roll-overs, DST shifts, leap years (`src/storage/reader.py`, `src/dashboard/analytics.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P25-03**: Reverse-chronological tape pagination with high offsets and non-existent symbol pruning (`src/storage/reader.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P26-01**: Migration of corrupt / partial legacy DuckDB tables and schema drift (`tools/migrate_streaming_to_parquet.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P26-02**: Simulated crash interruption across all migration modes (`plan`, `export`, `verify`, `publish`) (`tools/migrate_streaming_to_parquet.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P26-03**: Two-way `EXCEPT ALL` fuzz testing with synthetic data corruption and precision mismatch detection (`tools/migrate_streaming_to_parquet.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P27-01**: Multi-process soak testing under continuous ingestion and continuous analytical reading (`tools/service_supervisor.py`, `tools/validate_concurrency.py`) — v4.1 (shipped 2026-10-03)
-- [x] **TEST-P27-02**: Chaos monkey process termination (streamer, dashboard, supervisor) and automatic self-healing (`tools/service_supervisor.py`) — v4.1 (shipped 2026-10-03)
+_Phase-level requirement detail for v4.1 is archived at [.planning/milestones/v4.1-REQUIREMENTS.md](milestones/v4.1-REQUIREMENTS.md)._
 
 ### Active
-*None currently active — Milestone v4.1 shipped on 2026-10-03.*
+*None currently active — Milestone v4.1 shipped on 2026-10-03. Candidate follow-ups are listed in [.planning/ROADMAP.md](ROADMAP.md).*
 
 ### Out of Scope
 - Direct `market-rewind` frontend modifications (deferred per user instruction: focus on data harvesting, storage, and integrity dashboard)
 - Cloudflare R2 / S3 remote object storage (preserving 100% local, zero-cloud architecture)
 - Turso dual-replica synchronization and mirror database (deprecated and purged)
 - GitHub Actions scheduled runs (deprecated in favor of persistent local daemon)
-- Binance live streaming writes (streaming table is dedicated exclusively to Capital.com)
+- Binance live streaming writes (streaming is dedicated exclusively to Capital.com)
 
 ## Context
 - The previous implementation relied on Turso cloud SQLite with complex dual-replica mirror synchronization, which suffered from severe read/write quota exhaustion.
 - In v2.0, storage was decoupled into separate `.duckdb` files to avoid single-writer lock contention between streaming and dashboard operations.
 - In v3.0, the dashboard transformed into an interactive Observability Command Center with TradingView charts, telemetry tape, market clocks, and background job runners.
-- In v4.0, live tick storage was migrated completely off DuckDB into an append-only, partitioned Parquet lake with atomic staging and in-memory DuckDB querying. This completely resolved OS-level write lock contention and delivered sub-20ms event-loop lag.
-- In v4.1, the engine underwent deep hardening and edge-case stress testing: 122 new comprehensive edge-case, stress, fuzz, backpressure, and chaos tests across Phases 22–27, validating crash recovery, zero memory leaks under multi-threaded load (30+ concurrent readers), and self-healing supervisor processes under chaos monkey termination, bringing the repository test suite to 688 passing tests with 0 failures, 0 errors, and zero memory leaks.
+- In v4.0, live tick storage was migrated completely off DuckDB into an append-only, partitioned Parquet lake with atomic staging and in-memory DuckDB querying. This resolved OS-level write lock contention while the canonical 1-minute history remained in `historical.duckdb`.
+- In v4.1, the engine underwent deep hardening and edge-case stress testing: 122 new edge-case, stress, fuzz, backpressure, and chaos tests across Phases 22–27, validating crash recovery, leak-free multi-threaded readers (30+ concurrent), migration fuzzing, and self-healing supervisor processes under chaos-monkey termination. The application code required no functional changes, confirming the v4.0 lake design.
 
 ## Constraints
 - **Zero Cloud Limits**: No dependence on cloud database quotas.
-- **100% Local**: All data stored locally on SSD in Parquet lake (`data/lake/`) and DuckDB historical archive (`data/historical.duckdb`).
+- **100% Local**: All data stored locally on SSD in the Parquet lake (`data/tick_lake/`) and the DuckDB historical archive (`data/historical.duckdb`).
 - **Persistent Streams**: Real-time tick capture via Capital.com exclusively.
 - **Mac Mini & Windows Portability**: Standard Python 3.12+ cross-platform execution with zero complex build chains.
 
@@ -129,14 +120,15 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 | Switch from 6x daily REST batch to 24/7 WebSockets | Captures real-time ticks, eliminates Capital.com 16-hour lookback clipping, avoids REST rate limit spikes | ✓ Good |
 | Pure local storage on SSD | Zero egress costs, no network latency, works on Mac Mini and Windows | ✓ Good |
 | 100% Separate Dedicated DuckDB Files | Decouples streaming writes from historical harvesting | ✓ Good |
-| Partitioned Parquet Lake for Ticks | Completely eliminates DuckDB file write-lock contention; off-loads disk I/O from asyncio loop | ✓ Good |
+| Partitioned Parquet Lake for Ticks | Completely eliminates DuckDB file write-lock contention; off-loads disk I/O from the asyncio loop | ✓ Good |
 | Atomic Staging & Publication Protocol | Staging into hidden `.tmp` files with atomic filesystem rename prevents partial file visibility | ✓ Good |
-| In-Memory DuckDB Connection per Request | Private in-memory DuckDB connections query Parquet lake directly with zero file locks | ✓ Good |
+| In-Memory DuckDB Connection per Request | Private in-memory DuckDB connections query the Parquet lake directly with zero file locks | ✓ Good |
 | Versioned JSON Symbol Registry | Monotonic versioning and file-based signal notifications enable lock-free dynamic reload | ✓ Good |
 | Vectorized Release Data Consolidation | Uses DuckDB's native SQLite scanner to merge, deduplicate, and tier 9.4M rows in 11.64s | ✓ Good |
 | TradingView Lightweight Charts (v4.1.3) | Sub-25ms canvas rendering for 8M rows with zero frontend build dependencies | ✓ Good |
 | DuckDB `time_bucket()` Server-Side Resampling | Native analytical grouping across multiple timeframes (`1m` to `1D`) without Python loop overhead | ✓ Good |
 | Context-Aware Gap Range Discovery | Dynamic recorded date range targeting prevents false gap alarms on archived historical data | ✓ Good |
+| Tests-only hardening milestone (v4.1) | Freezing application code while adding 122 adversarial tests proves the lake design rather than hiding defects behind concurrent refactors | ✓ Good |
 
 ---
-*Last updated: 2026-10-03 after Milestone v4.1 completion and shipping (688 passing tests)*
+*Last updated: 2026-10-03 after Milestone v4.1 completion, shipping, the independent v4.1 milestone audit, and a repository-wide documentation refresh (688-test offline suite).*

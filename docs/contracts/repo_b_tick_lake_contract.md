@@ -1,9 +1,12 @@
 # Repo B Tick Lake Read Contract
 
-**Document Version:** 1.0.0  
-**Phase / Milestone:** Phase 19 (P4) / Milestone v4.0  
-**Target Audience:** Repo B engineers, quantitative research teams, backtesting & simulation consumers.  
+**Document Version:** 1.1.0
+**Phase / Milestone:** Originally Phase 19 (P4) / Milestone v4.0 — reviewed and hardened in Milestone v4.1 (Phases 22–27)
+**Last reviewed:** 2026-10-03
+**Target Audience:** Repo B engineers, quantitative research teams, backtesting & simulation consumers.
 **Dependencies on `data-harvester`:** **NONE** (zero library imports required; uses standard `duckdb` and `pyarrow`).
+
+**Changes in 1.1.0:** corrected the control-plane filenames (`_control/registry.json`, plus intents and the reload signal), corrected migrated-chunk filenames, documented lake-root resolution and `lake.json` metadata, and added §7 (v4.1 hardening guarantees for readers).
 
 ---
 
@@ -27,24 +30,30 @@ Under the Partitioned Parquet Tick Lake architecture:
 The tick lake root directory (configured via `TICK_LAKE_ROOT` environment variable or volume mount) conforms to the following layout:
 
 ```text
-<TICK_LAKE_ROOT>/
-├── lake.json                         # Lake metadata & format version
+<TICK_LAKE_ROOT>/                     # Default: <DATA_DIR>/tick_lake, i.e. data/tick_lake
+├── lake.json                         # Lake metadata, schema_version (1) & compatible_versions
 ├── ticks/                            # ACTIVE QUERY ROOT (Only query here)
 │   ├── symbol=AAPL/
 │   │   ├── date=2026-10-02/
-│   │   │   ├── batch_w1_000001.parquet
-│   │   │   └── batch_w1_000002.parquet
+│   │   │   ├── batch_writer_1_000001.parquet   # Live writer micro-batch
+│   │   │   └── chunk_000001.parquet            # Migrated historical chunk
 │   │   └── date=2026-10-03/
-│   │       └── batch_w1_000003.parquet
+│   │       └── batch_writer_1_000003.parquet
 │   └── symbol=NVDA/
 │       └── date=2026-10-02/
-│           └── batch_w1_000001.parquet
+│           └── batch_writer_1_000001.parquet
 ├── _staging/                         # IN-FLIGHT WRITES (DO NOT QUERY)
 ├── _maintenance/                     # MAINTENANCE OPERATIONS
 │   └── in_progress.json              # Maintenance guard file (when present)
+├── _migration/                       # MIGRATION ARTIFACTS (DO NOT QUERY)
+│   ├── plan.json / state.json / verification.json
+│   └── staging/ticks/symbol=…/date=…/chunk_NNNNNN.parquet
 └── _control/                         # CONTROL PLANE
-    ├── symbol_registry.json          # Active & inactive symbols
+    ├── registry.json                 # Active & inactive symbols (versioned)
     ├── writer_status.json            # Streamer heartbeat & statistics
+    ├── publisher.lock                # Single-writer advisory lock
+    ├── intent/                       # In-flight publication intents (crash recovery)
+    ├── .stream_reload.signal         # Registry mutation signal
     └── receipts/                     # Publication audit receipts
 ```
 
@@ -344,3 +353,36 @@ def is_lake_maintenance_in_progress(lake_root: Path) -> bool:
 2. **Never Query `_staging/`:** The `_staging/` directory contains active `.tmp` Parquet files being constructed by writer threads. Accessing files in `_staging/` will encounter unfinished Parquet footers or `FileNotFoundError` upon atomic rename.
 3. **Partition Immutability:** Parquet batch files in `ticks/` are append-only and immutable. A file name will never be overwritten in-place.
 4. **Memory & Thread Limits:** Always configure `SET max_memory` and `SET threads` on DuckDB `:memory:` sessions to avoid starvation on shared analytical hosts.
+
+---
+
+## 7. Version 1.1 Addendum — v4.1 Hardening Guarantees for Readers
+
+Milestone v4.1 (Phases 22–27) added 122 adversarial tests over the v4.0 lake implementation without changing the read contract. The following guarantees are now backed by executables in the `data-harvester` repository; downstream consumers can rely on them:
+
+1. **Publication atomicity under collisions:** Concurrent publication attempts, crashed publication intents, and single-writer lock contention are exercised; readers never observe partial files, and previously published data remains readable throughout (`tests/storage/test_storage_edge_cases.py`, `tests/storage/test_crash_recovery.py`).
+2. **Zero-loss historical migration under fuzzing:** Two-way `EXCEPT ALL` reconciliation preserves row counts, duplicate multiplicity, and float precision even when the legacy source is corrupt, partially written, or schema-drifted (`tests/storage/test_migration_stress.py`).
+3. **Reader scaling:** 30+ concurrent in-memory DuckDB readers and 1,000+ sequential queries complete without memory leaks or file-lock errors (`tests/storage/test_lake_reader_stress.py`).
+4. **Deterministic resampling edges:** Sparse partitions, multi-day roll-overs, DST transitions, and leap-year boundaries produce deterministic, gap-consistent bars (`tests/storage/test_lake_reader_stress.py`, `tests/dashboard/test_analytics.py`).
+5. **Tape pagination correctness:** Reverse-chronological tape reads remain stable at high offsets and return empty results (rather than errors) for non-existent symbols or partitions (`tests/storage/test_lake_reader_stress.py`).
+6. **No hidden writer coupling:** Readers continue to operate while the live writer ingests and while the supervisor restarts children under chaos conditions (`tests/integration/test_supervisor_chaos_soak.py`).
+
+### 7.1 Lake Metadata Contract
+
+`lake.json` declares `format = "tick_lake"`, `schema_version = 1`, and `compatible_versions = [1]`. Readers that wish to fail fast on unknown formats can inspect this file first; the shipped reader (`src/storage/reader.py`) raises `IncompatibleSchemaError`/`LakeNotFoundError` accordingly and refuses to operate while `_maintenance/in_progress.json` exists.
+
+### 7.2 Verification Commands
+
+```bash
+pytest tests/storage/test_lake_reader_stress.py -v     # concurrent readers, resampling edges, tape pagination
+pytest tests/storage/test_migration_stress.py -v       # zero-loss + fuzz reconciliation
+pytest tests/storage/test_storage_edge_cases.py -v     # publication/collision/recovery edges
+pytest tests/integration/ -v                           # multi-process concurrency, soak, chaos
+```
+
+### 7.3 Document History
+
+| Version | Date | Milestone | Summary |
+|---|---|---|---|
+| 1.0.0 | 2026-10-03 | v4.0 (P4) | Initial read contract for downstream consumers. |
+| 1.1.0 | 2026-10-03 | v4.1 | Corrected control-plane filenames and chunk naming; documented lake root resolution and `lake.json`; added hardening guarantees (§7). |

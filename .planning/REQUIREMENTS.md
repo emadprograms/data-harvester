@@ -1,50 +1,28 @@
-# Requirements: Milestone v4.1
+# Requirements: Data Harvester
 
-# Partitioned Parquet Lake Deep Testing & Hardening
+**Active milestone:** None — Milestone **v4.1 (Partitioned Parquet Lake Deep Testing & Hardening)** shipped on 2026-10-03.
+**Status:** All requirements for every shipped milestone have passing tests. Milestone v4.1 carries a documented verification gap (no per-phase `VERIFICATION.md` artifacts), so its audit verdict is `gaps_found` — see the note below.
 
-## Milestone Goal
+- Milestone v4.1 requirements (Phases 22–27, 17/17 with passing tests): archived at [.planning/milestones/v4.1-REQUIREMENTS.md](milestones/v4.1-REQUIREMENTS.md)
+- Milestone v4.1 audit (verdict `gaps_found`): [.planning/v4.1-MILESTONE-AUDIT.md](v4.1-MILESTONE-AUDIT.md)
+- Milestone v4.0 requirements (Phases 15–21, 19/19 verified): archived at [.planning/milestones/v4.0-REQUIREMENTS.md](milestones/v4.0-REQUIREMENTS.md)
+- Earlier milestones: archived under [.planning/milestones/](milestones/)
 
-Harden and stress-test the partitioned Parquet tick lake architecture across extreme edge cases, high concurrency, adverse failure modes, fuzzing, and long-running multi-process chaos. Ensure ironclad data integrity, crash resilience, leak-free in-memory DuckDB scaling, race-free symbol registry mutations, and flawless migration under hostile operational conditions.
+## Verification Summary — Milestone v4.1
 
----
+| Requirement | Phase | Result | Evidence |
+|---|---|---|---|
+| TEST-P22-01 … TEST-P22-03 | 22 | ✅ Tests green · ⚠️ no VERIFICATION.md | `tests/storage/test_storage_edge_cases.py` — 36 tests |
+| TEST-P23-01 … TEST-P23-03 | 23 | ✅ Tests green · ⚠️ no VERIFICATION.md (P23-02 partial: real signal path undriven) | `tests/stream/test_lake_runner_stress.py` — 14 tests |
+| TEST-P24-01 … TEST-P24-03 | 24 | ✅ Tests green · ⚠️ no VERIFICATION.md (INT-1 export collision) | `tests/storage/test_registry_stress.py` — 13 tests |
+| TEST-P25-01 … TEST-P25-03 | 25 | ✅ Tests green · ⚠️ no VERIFICATION.md (INT-2 test hook in prod code) | `tests/storage/test_lake_reader_stress.py` — 17 tests |
+| TEST-P26-01 … TEST-P26-03 | 26 | ✅ Tests green · ⚠️ no VERIFICATION.md | `tests/storage/test_migration_stress.py` — 32 tests |
+| TEST-P27-01 … TEST-P27-02 | 27 | ✅ Tests green · ⚠️ no VERIFICATION.md (P27-02 partial: chaos streamer is a stand-in) | `tests/integration/test_supervisor_chaos_soak.py` — 10 tests |
 
-## Requirements
+**Suite at closeout:** `pytest tests/ -m "not live and not performance"` → **688 passed** (696 collected; 8 `live`/`performance` tests deselected). Verified by the auditor on 2026-10-03 (86.5s) and reproduced in this repository.
 
-### Phase 22: Storage Foundation & Publication Edge Case Tests
-- [x] **TEST-P22-01**: Storage layout path traversal, unicode/special symbol encoding, and corrupted metadata handling (`src/storage/config.py`).
-- [x] **TEST-P22-02**: PyArrow schema type coercion, extreme numeric limits (float min/max, subnormal), null bitmasks (`src/storage/schema.py`).
-- [x] **TEST-P22-03**: Atomic publication concurrency collisions, crashed intent recovery, and file lock serialization (`src/storage/publication.py`).
+**Why `gaps_found`:** the audit's FAIL gate triggers because the milestone produced no `VERIFICATION.md` per phase (the 2-stage researcher→implementer cycle used for v4.1 did not emit verification artifacts). All 17 requirements do have passing tests, and the audit found **no failing tests and no data-corrupting defects**. The remaining partial-coverage and integration items are recorded as backlog in [.planning/ROADMAP.md](ROADMAP.md).
 
-### Phase 23: Streaming Writer & Runner Stress & Lifecycle Tests
-- [x] **TEST-P23-01**: High-throughput micro-batching under memory pressure (100k+ ticks) and bounded queue backpressure (`src/storage/parquet_writer.py`).
-- [x] **TEST-P23-02**: Runner sudden shutdown mid-flush, graceful drain timeouts, and honest queue acknowledgments (`src/stream/runner.py`).
-- [x] **TEST-P23-03**: Transient disk full / I/O error exponential backoff and quarantine handling (`src/storage/parquet_writer.py`).
+## Next Milestone
 
-### Phase 24: Versioned Symbol Registry & Dynamic Reload Stress Tests
-- [x] **TEST-P24-01**: Cross-process concurrent symbol CRUD lock serialization and monotonic versioning integrity (`src/storage/registry.py`).
-- [x] **TEST-P24-02**: Rapid symbol toggle/delete flapping and `PENDING_PURGE` generation fences (`src/storage/registry.py`).
-- [x] **TEST-P24-03**: File signal debouncing and dynamic reload latency under heavy polling (`src/dashboard/server.py`).
-
-### Phase 25: In-Memory DuckDB Lake Reader & Analytics Edge Tests
-- [x] **TEST-P25-01**: Multi-threaded in-memory DuckDB connection scaling (30+ concurrent readers) without memory leaks (`src/storage/reader.py`).
-- [x] **TEST-P25-02**: Vectorized resampling edge cases: sparse partitions, multi-day roll-overs, DST shifts, leap years (`src/storage/reader.py`, `src/dashboard/analytics.py`).
-- [x] **TEST-P25-03**: Reverse-chronological tape pagination with high offsets and non-existent symbol pruning (`src/storage/reader.py`).
-
-### Phase 26: Migration Tooling Rehearsal & Fuzz Tests
-- [x] **TEST-P26-01**: Migration of corrupt / partial legacy DuckDB tables and schema drift (`tools/migrate_streaming_to_parquet.py`).
-- [x] **TEST-P26-02**: Simulated crash interruption across all migration modes (`plan`, `export`, `verify`, `publish`) (`tools/migrate_streaming_to_parquet.py`).
-- [x] **TEST-P26-03**: Two-way `EXCEPT ALL` fuzz testing with synthetic data corruption and precision mismatch detection (`tools/migrate_streaming_to_parquet.py`).
-
-### Phase 27: Multi-Process Long-Running Soak & Chaos Tests
-- [x] **TEST-P27-01**: Multi-process soak testing under continuous ingestion and continuous analytical reading (`tools/service_supervisor.py`, `tools/validate_concurrency.py`).
-- [x] **TEST-P27-02**: Chaos monkey process termination (streamer, dashboard, supervisor) and automatic self-healing (`tools/service_supervisor.py`).
-
----
-
-## Non-Functional Requirements & Performance Gates
-
-- **Zero Memory Leaks**: In-memory DuckDB reader pools and worker threads release all query and buffer memory across 1,000+ sequential and 30+ concurrent calls.
-- **Backpressure Stability**: Streaming runner bounded queues throttle or shed honestly under extreme tick surges without unhandled OOM.
-- **Fail-Safe Crash Recovery**: Any crashed writer, uncommitted `.tmp` staging file, or partial migration batch is automatically quarantined or cleaned up without lake corruption.
-- **Monotonic Registry State**: Symbol registry version strictly increments and rejects concurrent race conditions or torn writes across processes.
-- **Self-Healing Supervisor**: Multi-process supervisor detects killed or crashing sub-processes and restores steady-state streaming within SLA.
+No scope committed. Candidate follow-ups — including the five audit-recommended fixes — are listed in [.planning/ROADMAP.md](ROADMAP.md) under "Milestone Backlog (candidates, unplanned)".
