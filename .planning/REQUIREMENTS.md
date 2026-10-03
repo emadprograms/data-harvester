@@ -43,9 +43,9 @@ Replace the locked live DuckDB tick database with an append-only, partitioned Pa
 - [x] **LAKE-P6-03**: Two-way `EXCEPT ALL` reconciliation - verify zero row loss, identical duplicates, and exact precision match between source and Parquet export.
 
 ### Phase 21: Production Cutover, Concurrency Validation & Handoff (P8)
-- [ ] **LAKE-P8-01**: Coordinated writer cutover - freeze legacy writer, switch runner to live Parquet lake, and publish migrated historical partitions.
-- [ ] **LAKE-P8-02**: Multi-process concurrency verification - validate sustained concurrent streaming writes + dashboard queries + Repo B reader without lock errors.
-- [ ] **LAKE-P8-03**: Documentation & service updates - update service configs, README, supervisor scripts, and operational runbooks.
+- [x] **LAKE-P8-01**: Coordinated writer cutover - freeze legacy writer, switch runner to live Parquet lake, and publish migrated historical partitions.
+- [x] **LAKE-P8-02**: Multi-process concurrency verification - validate sustained concurrent streaming writes + dashboard queries + Repo B reader without lock errors.
+- [x] **LAKE-P8-03**: Documentation & service updates - update service configs, README, supervisor scripts, and operational runbooks.
 
 ---
 

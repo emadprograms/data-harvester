@@ -5,7 +5,7 @@
 - ✅ **v1.0 Local DuckDB & 24/7 Live Streaming Engine** — Phases 1–4 (shipped 2026-09-25)
 - ✅ **v2.0 Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard** — Phases 5–9 (shipped 2026-09-25)
 - ✅ **v3.0 Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard** — Phases 10–14 (shipped 2026-09-26)
-- 🟡 **v4.0 Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)** — Phases 15–21 (in progress)
+- ✅ **v4.0 Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)** — Phases 15–21 (shipped 2026-10-03)
 
 ## Phases
 
@@ -72,7 +72,7 @@ See: [.planning/milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
 - [x] **Phase 20: Zero-Loss Migration Tooling & Rehearsal (P6)** (completed 2026-10-03)
   - Implement `tools/migrate_streaming_to_parquet.py`.
   - Chunked export and two-way `EXCEPT ALL` verification against frozen legacy DB.
-- [ ] **Phase 21: Production Cutover, Concurrency Validation & Handoff (P8)**
+- [x] **Phase 21: Production Cutover, Concurrency Validation & Handoff (P8)** (completed 2026-10-03)
   - Freeze legacy writer, switch runner to live Parquet lake, publish historical partitions.
   - Multi-process concurrency validation (Writer + Dashboard + Repo B simulation).
 
