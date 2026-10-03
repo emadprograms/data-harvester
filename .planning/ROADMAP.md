@@ -79,7 +79,7 @@ See: [.planning/milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
   - Cross-process concurrent symbol CRUD lock serialization and monotonic versioning integrity.
   - Rapid symbol toggle/delete flapping and `PENDING_PURGE` generation fences.
   - File signal debouncing and dynamic reload latency under heavy polling.
-- [ ] **Phase 25: In-Memory DuckDB Lake Reader & Analytics Edge Tests** (`src/storage/reader.py`, `src/dashboard/analytics.py`)
+- [x] **Phase 25: In-Memory DuckDB Lake Reader & Analytics Edge Tests** (`src/storage/reader.py`, `src/dashboard/analytics.py`) — completed 2026-10-03 (commit 54c87ecd, 17/17 tests passing)
   - Multi-threaded in-memory DuckDB connection scaling (30+ concurrent readers) without memory leaks.
   - Vectorized resampling edge cases: sparse partitions, multi-day roll-overs, DST shifts, leap years.
   - Reverse-chronological tape pagination with high offsets and non-existent symbol pruning.
