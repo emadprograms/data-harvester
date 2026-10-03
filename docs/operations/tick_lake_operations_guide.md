@@ -460,6 +460,8 @@ curl -s "http://localhost:8420/api/streaming/continuity?symbol=AAPL&days=1" | jq
 
 Milestone v4.1 added 122 adversarial tests over the v4.0 architecture. Operators should know what is now guaranteed by executable tests and how to re-run the relevant suites.
 
+> ⚠️ **Audit context.** The independent v4.1 milestone audit ([.planning/v4.1-MILESTONE-AUDIT.md](../../.planning/v4.1-MILESTONE-AUDIT.md)) confirms all 688 offline tests pass with **no data-corrupting defects**, but records `gaps_found` because no per-phase `VERIFICATION.md` artifacts were produced and because two suites cover production paths only partially: TEST-P23-02 never drives a real SIGINT/SIGTERM through `src/stream/runner.py`'s signal handlers, and TEST-P27-02's streamer chaos runs against `tools/synthetic_streamer.py` rather than the real `StreamingEngine`. Treat streamer crash-recovery behaviour as *inferred, not observed* until those gaps close (tracked in `.planning/ROADMAP.md`).
+
 ### 7.1 Coverage Map
 
 | Area | Test file | Focus |

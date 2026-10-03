@@ -2,7 +2,7 @@
 
 A high-performance market data harvesting, 24/7 live tick streaming, and telemetry observability engine powered by a **Partitioned Parquet Tick Lake**, zero-lock multi-process concurrency, sub-100ms in-memory **DuckDB** analytical resampling, and interactive financial charting.
 
-**Current milestone:** v4.1 *Partitioned Parquet Lake Deep Testing & Hardening* (shipped 2026-10-03) — 122 new adversarial tests (edge cases, stress, fuzzing, backpressure, chaos, multi-process soak) bringing the offline suite to **688 passing tests** with the v4.0 lake architecture unchanged.
+**Current milestone:** v4.1 *Partitioned Parquet Lake Deep Testing & Hardening* (shipped 2026-10-03) — 122 new adversarial tests (edge cases, stress, fuzzing, backpressure, chaos, multi-process soak) bringing the offline suite to **688 passing tests** with the v4.0 lake architecture unchanged. All 17 v4.1 requirements have passing tests; the milestone audit records `gaps_found` for missing per-phase verification artifacts plus a small set of tracked follow-ups ([audit](.planning/v4.1-MILESTONE-AUDIT.md)).
 
 ---
 
@@ -38,6 +38,7 @@ A high-performance market data harvesting, 24/7 live tick streaming, and telemet
 - 6 phase-specific stress suites covering storage/publication edges, writer/runner lifecycles, registry concurrency, in-memory reader scaling, migration fuzzing, and multi-process soak/chaos.
 - 30+ concurrent in-memory DuckDB readers with no memory leaks across 1,000+ sequential queries.
 - Crash-intent recovery, malformed-tick quarantine, disk-full backoff, and supervisor self-healing under chaos-monkey termination are all covered by executable tests.
+- **Audit status:** the independent v4.1 audit ([report](.planning/v4.1-MILESTONE-AUDIT.md)) confirms 688/688 passing and **no data-corrupting defects**, but records `gaps_found` because no per-phase `VERIFICATION.md` artifacts were produced (process gap) and because two tests only partially exercise the production paths (real SIGTERM handling; chaos against the real streamer). Remaining items are tracked in the [roadmap backlog](.planning/ROADMAP.md).
 
 ---
 
@@ -256,11 +257,12 @@ pytest tests/integration/ -v   # Multi-process concurrency, soak, and chaos test
 | [docs/windows_service_setup.md](docs/windows_service_setup.md) | Windows Task Scheduler setup, auto-reload, and troubleshooting |
 | [docs/plans/partitioned-parquet-tick-lake.md](docs/plans/partitioned-parquet-tick-lake.md) | Historical design plan that produced the v4.0 lake (implemented) |
 | [docs/plans/tick-lake-test-first-remediation.md](docs/plans/tick-lake-test-first-remediation.md) | Historical test-first remediation plan (executed across v4.0/v4.1) |
+| [.planning/v4.1-MILESTONE-AUDIT.md](.planning/v4.1-MILESTONE-AUDIT.md) | Independent v4.1 audit: verdict, requirement cross-reference, integration findings, tech debt |
 | [.planning/MILESTONES.md](.planning/MILESTONES.md) | Shipped milestone history (v1.0 → v4.1) |
-| [.planning/ROADMAP.md](.planning/ROADMAP.md) | Milestone roadmap and unplanned backlog |
+| [.planning/ROADMAP.md](.planning/ROADMAP.md) | Milestone roadmap and unplanned backlog (incl. audit follow-ups) |
 | [.planning/PROJECT.md](.planning/PROJECT.md) | Project overview, validated requirements, and key decisions |
 
 ---
 
 ## 📜 Milestones & Roadmap
-Full details on shipped milestones (v1.0, v2.0, v3.0, v4.0, v4.1) are tracked in [.planning/MILESTONES.md](.planning/MILESTONES.md). The current state is v4.1 shipped on 2026-10-03; no milestone is active, and candidate follow-ups are listed in [.planning/ROADMAP.md](.planning/ROADMAP.md).
+Full details on shipped milestones (v1.0, v2.0, v3.0, v4.0, v4.1) are tracked in [.planning/MILESTONES.md](.planning/MILESTONES.md). The current state is v4.1 shipped on 2026-10-03, with its audit verdict (`gaps_found`) and follow-ups recorded in [.planning/v4.1-MILESTONE-AUDIT.md](.planning/v4.1-MILESTONE-AUDIT.md) and [.planning/ROADMAP.md](.planning/ROADMAP.md). No milestone is active.

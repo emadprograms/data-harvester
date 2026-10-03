@@ -14,7 +14,7 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - **Zero-Loss Migration Tooling (`tools/migrate_streaming_to_parquet.py`)**: Chunked export (default 100,000 rows/chunk), idempotent checkpointing, and rigorous two-way `EXCEPT ALL` reconciliation guaranteeing 100% data fidelity.
 - **Historical Storage (`data/historical.duckdb`)**: ~8.9M deduplicated 1-minute OHLCV bars across 40 symbols covering October 2024 to September 2026. Sub-10ms dynamic candlestick resampling via DuckDB native `time_bucket()`.
 - **Observability Command Center**: Interactive TradingView Lightweight Charts (v4.1.3) with multi-timeframe analytical resampling (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`), raw OHLCV candle inspector, CSV export, live tick tape, market session clock, and integrity auditing.
-- **Milestone v4.1 Shipped (2026-10-03)**: `Partitioned Parquet Lake Deep Testing & Hardening` (Phases 22–27) — 122 new comprehensive edge-case, stress, fuzz, backpressure, and chaos tests bringing the offline suite to **688 passing tests** (0 failures, 0 errors) with zero memory leaks observed.
+- **Milestone v4.1 Shipped (2026-10-03)**: `Partitioned Parquet Lake Deep Testing & Hardening` (Phases 22–27) — 122 new comprehensive edge-case, stress, fuzz, backpressure, and chaos tests bringing the offline suite to **688 passing tests** (0 failures, 0 errors) with zero memory leaks observed. All 17 requirements have green tests; the independent milestone audit ([.planning/v4.1-MILESTONE-AUDIT.md](v4.1-MILESTONE-AUDIT.md)) records `gaps_found` for missing per-phase `VERIFICATION.md` artifacts plus 2 partial-coverage and 3 integration findings — no data-corrupting defects. Follow-ups live in [.planning/ROADMAP.md](ROADMAP.md).
 - **Documentation**: `README.md`, `docs/operations/tick_lake_operations_guide.md`, `docs/contracts/repo_b_tick_lake_contract.md`, `docs/windows_service_setup.md`, and `docs/plans/*` are aligned with the shipped v4.1 architecture and paths.
 
 ## Requirements
@@ -131,4 +131,4 @@ _Phase-level requirement detail for v4.1 is archived at [.planning/milestones/v4
 | Tests-only hardening milestone (v4.1) | Freezing application code while adding 122 adversarial tests proves the lake design rather than hiding defects behind concurrent refactors | ✓ Good |
 
 ---
-*Last updated: 2026-10-03 after Milestone v4.1 completion, shipping, and repository-wide documentation refresh (688-test offline suite).*
+*Last updated: 2026-10-03 after Milestone v4.1 completion, shipping, the independent v4.1 milestone audit, and a repository-wide documentation refresh (688-test offline suite).*

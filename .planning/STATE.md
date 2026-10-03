@@ -27,7 +27,7 @@ Last activity: 2026-10-03 — Completed Phase 27; shipped Milestone v4.1; refres
 
 - Milestone: v4.1 (COMPLETED and SHIPPED 2026-10-03)
 - Goal: Deep edge-case coverage, stress testing, fuzzing, chaos recovery, and soak testing for the partitioned Parquet lake architecture.
-- Result: 6/6 phases, 6/6 plans, 20/20 requirements verified, 122 new tests, offline suite at 688 passing tests (696 collected).
+- Result: 6/6 phases, 6/6 plans, **17/17 requirements with passing tests**, 122 new tests, offline suite at 688 passing tests (696 collected).
   - Phase 22: Storage Foundation & Publication Edge Case Tests (`src/storage/config.py`, `schema.py`, `publication.py`) — COMPLETED (36/36 tests, commit 04544d56)
   - Phase 23: Streaming Writer & Runner Stress & Lifecycle Tests (`src/storage/parquet_writer.py`, `src/stream/runner.py`) — COMPLETED (14/14 tests, commit e856c035)
   - Phase 24: Versioned Symbol Registry & Dynamic Reload Stress Tests (`src/storage/registry.py`, `src/dashboard/server.py`) — COMPLETED (13/13 tests, commit d596bde7)
@@ -42,7 +42,8 @@ Last activity: 2026-10-03 — Completed Phase 27; shipped Milestone v4.1; refres
 
 ## Blockers/Concerns
 
-None. Note that timing-sensitive performance gates (supervisor soak p95 latency, registry signal-storm debounce coalescing) can fail on slow or heavily loaded hosts; run them on the named reference machine described in `docs/plans/tick-lake-test-first-remediation.md` before drawing conclusions.
+- **v4.1 audit verdict is `gaps_found`** ([.planning/v4.1-MILESTONE-AUDIT.md](v4.1-MILESTONE-AUDIT.md)): all 17 requirements have green tests, but no per-phase `VERIFICATION.md` artifacts exist (process gap chosen deliberately by the researcher→implementer cycle), plus 2 partial-coverage findings (TEST-P23-02 real SIGINT/SIGTERM path, TEST-P27-02 streamer chaos uses `tools/synthetic_streamer.py`) and 3 integration findings (INT-1 duplicate `cleanup_orphaned_staging_files` export, INT-2 `_is_mocked_db_connection` test hook in production analytics, INT-3 drop counters not surfaced to operators). None are data-corrupting defects.
+- Timing-sensitive performance gates (supervisor soak p95 latency, registry signal-storm debounce coalescing, RSS thresholds) can fail on slow or heavily loaded hosts; run them on the named reference machine described in `docs/plans/tick-lake-test-first-remediation.md` before drawing conclusions. Two such gates failed on a low-spec sandbox on 2026-10-03 while passing on the reference machine.
 
 ## Operator Next Steps
 

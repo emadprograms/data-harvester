@@ -24,6 +24,7 @@
 ### What Was Inefficient
 - The v4.0-era `docs/plans/tick-lake-test-first-remediation.md` remained the only place that documented the test-first strategy; nothing rolled the executed phases back into the operations/contract docs until this closeout, leaving docs lagging a full milestone behind the code.
 - Historical milestone entries drifted (paths such as `data/lake/...` and `symbol_registry.json`, and an integer `ingest_id` claim) because docs were written from plan intent rather than post-ship reality.
+- **No verification artifacts were emitted per phase.** The researcher→implementer cycle produced excellent tests but no `VERIFICATION.md`, so the independent audit returned `gaps_found` despite 17/17 requirements having green tests. The next test-heavy milestone should require a verification artifact as a phase exit criterion, not a closeout afterthought — and the researcher/implementer reports should be checked against the delivered files (the Phase 25 report misdescribed its own test file).
 
 ### Patterns Established
 - Requirement-ID → test-file → test-count traceability tables in the milestone requirements archive.
@@ -34,6 +35,7 @@
 1. An append-only, atomically-published lake is verifiable by construction — fuzzing and crash injection around `_staging/` and publication intents found no data-loss path, confirming the v4.0 design.
 2. Concurrency correctness (registry versioning, writer ownership, reader scaling) is best proven with real multi-process tests and signal storms, not same-process mocks.
 3. Timing-sensitive performance gates (p95 latency, debounce coalescing) are environment-dependent; they must be run on a named reference machine with recorded packages/hardware, never silently re-tuned to pass.
+4. Green tests are not a verified milestone: without per-phase verification artifacts, an independent audit correctly returns `gaps_found`. Test *substitutes* also need scrutiny — chaos-testing a stand-in (`synthetic_streamer.py`) proves the supervisor, not the real streamer's recovery.
 
 ---
 
