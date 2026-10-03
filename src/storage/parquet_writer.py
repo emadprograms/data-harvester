@@ -108,6 +108,8 @@ class TickLakeWriter:
         self._publish_lock = threading.RLock()
         self._last_flush_monotonic = time.monotonic()
         self._metrics.last_flush_monotonic = self._last_flush_monotonic
+        self._last_drop_status_write_monotonic = 0.0
+        self._drop_status_write_interval_seconds = 1.0
 
         self._control_dir = self.root / "_control"
         self._staging_dir = self.root / "_staging"
@@ -363,7 +365,10 @@ class TickLakeWriter:
                 should_flush = len(self._buffer) >= self.max_batch_rows
 
         if dropped:
-            self._update_status_file()
+            now_m = time.monotonic()
+            if (now_m - self._last_drop_status_write_monotonic) >= self._drop_status_write_interval_seconds:
+                self._last_drop_status_write_monotonic = now_m
+                self._update_status_file()
             return
 
         if should_flush:
@@ -453,6 +458,7 @@ class TickLakeWriter:
         try:
             with self._buffer_lock:
                 if not self._buffer:
+                    self._update_status_file()
                     return None
                 batch = list(self._buffer)
                 self._buffer.clear()

@@ -264,15 +264,6 @@ def _get_lake_reader():
     return None
 
 
-def _is_mocked_db_connection() -> bool:
-    """True if a test has explicitly patched get_streaming_db_connection with a mock."""
-    try:
-        from unittest.mock import Mock
-        return isinstance(get_streaming_db_connection, Mock) and not os.environ.get("TICK_LAKE_ROOT")
-    except Exception:
-        return False
-
-
 def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, client=None, date: str = None, hours: str = "extended") -> dict:
     """
     Fetches OHLCV candles resampled on-the-fly exclusively from raw ticks in data/streaming.duckdb.
@@ -286,7 +277,7 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
     if not symbol:
         return {"error": "symbol parameter is required", "candles": [], "count": 0, "database": "streaming"}
 
-    if client is None and not _is_mocked_db_connection():
+    if client is None:
         lake_reader = _get_lake_reader()
         if lake_reader is not None:
             return lake_reader.get_candles(
@@ -748,18 +739,21 @@ def get_symbols_coverage() -> dict:
         client.close()
 
 
-def get_stream_tape(symbol: str = None, limit: int = 50, offset: int = 0) -> dict:
+def get_stream_tape(symbol: str = None, limit: int = 50, offset: int = 0, client=None) -> dict:
     """
     Returns latest raw ticks from streaming tick lake or streaming.duckdb, calculating spread and throughput.
     """
-    if not _is_mocked_db_connection():
+    if client is None:
         lake_reader = _get_lake_reader()
         if lake_reader is not None:
             return lake_reader.get_tape(symbol=symbol, limit=limit, offset=offset)
 
     limit = min(max(1, int(limit or 50)), 200)
     offset = max(0, int(offset or 0))
-    client = get_streaming_db_connection(read_only=True)
+    own_client = False
+    if client is None:
+        client = get_streaming_db_connection(read_only=True)
+        own_client = True
     if not client:
         return {"ticks": [], "count": 0, "error": "Streaming DB unavailable"}
 
@@ -808,14 +802,15 @@ def get_stream_tape(symbol: str = None, limit: int = 50, offset: int = 0) -> dic
     except Exception as e:
         return {"ticks": [], "count": 0, "error": str(e)}
     finally:
-        client.close()
+        if own_client and client:
+            client.close()
 
 
-def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int = 10000, offset: int = 0, direction: str = "asc") -> dict:
+def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int = 10000, offset: int = 0, direction: str = "asc", client=None) -> dict:
     """
     Queries raw ticks from tick lake or streaming.duckdb with filtering by symbol, date/time range, limit, offset, and direction.
     """
-    if not _is_mocked_db_connection():
+    if client is None:
         lake_reader = _get_lake_reader()
         if lake_reader is not None:
             ticks = lake_reader.query_ticks(
@@ -832,7 +827,10 @@ def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int
     offset = max(0, int(offset or 0))
     direction = "DESC" if str(direction).lower() == "desc" else "ASC"
     
-    client = get_streaming_db_connection(read_only=True)
+    own_client = False
+    if client is None:
+        client = get_streaming_db_connection(read_only=True)
+        own_client = True
     if not client:
         return {"ticks": [], "count": 0, "error": "Streaming DB unavailable"}
 
@@ -891,14 +889,15 @@ def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int
     except Exception as e:
         return {"ticks": [], "count": 0, "error": str(e)}
     finally:
-        client.close()
+        if own_client and client:
+            client.close()
 
 
-def get_stream_status() -> dict:
+def get_stream_status(client=None) -> dict:
     """
     Inspects writer status file or process table for src.stream.runner and checks recent tick throughput.
     """
-    if not _is_mocked_db_connection():
+    if client is None:
         lake_reader = _get_lake_reader()
         if lake_reader is not None:
             return lake_reader.get_stream_status()
@@ -923,7 +922,10 @@ def get_stream_status() -> dict:
     active_pid = running_pids[0] if is_alive else None
 
     # Database tick activity
-    client = get_streaming_db_connection(read_only=True)
+    own_client = False
+    if client is None:
+        client = get_streaming_db_connection(read_only=True)
+        own_client = True
     ticks_total = 0
     latest_ts = None
     seconds_ago = None
@@ -953,7 +955,8 @@ def get_stream_status() -> dict:
         except Exception:
             pass
         finally:
-            client.close()
+            if own_client:
+                client.close()
 
     return {
         "is_alive": is_alive,
@@ -963,7 +966,9 @@ def get_stream_status() -> dict:
         "latest_tick_timestamp": latest_ts,
         "seconds_since_last_tick": seconds_ago,
         "ticks_last_minute": ticks_last_min,
-        "status_label": "LIVE" if is_alive else "STOPPED"
+        "status_label": "LIVE" if is_alive else "STOPPED",
+        "total_dropped": 0,
+        "queue_depth": 0,
     }
 
 
@@ -1059,7 +1064,7 @@ def discover_available_weeks(client=None) -> list[dict]:
     sorted descending by week_start.
     """
     now = time.time()
-    if client is None and not _is_mocked_db_connection():
+    if client is None:
         lake_reader = _get_lake_reader()
         if lake_reader is not None:
             return lake_reader.discover_available_weeks()
@@ -1183,7 +1188,7 @@ def get_streaming_continuity_analysis(
     view_mode = "all" if is_all else symbol
     include_extended = bool(include_extended)
 
-    if client is None and not _is_mocked_db_connection():
+    if client is None:
         lake_reader = _get_lake_reader()
         if lake_reader is not None:
             return lake_reader.get_streaming_continuity_analysis(

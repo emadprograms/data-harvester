@@ -626,6 +626,8 @@ def get_database_health_report(historical_path=None, streaming_path=None, lake_r
                         "status": w_status.get("status"),
                         "total_rows_written": w_status.get("total_rows_written", 0),
                         "batches_published": w_status.get("batches_published", 0),
+                        "total_dropped": w_status.get("total_dropped", 0),
+                        "queue_depth": w_status.get("queue_depth", 0),
                         "pid": w_status.get("pid"),
                     }
                 except Exception:

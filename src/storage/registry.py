@@ -647,7 +647,7 @@ def get_symbol_registry(
     return SymbolRegistry(root=root, registry_path=registry_path, lock_timeout=lock_timeout)
 
 
-def cleanup_orphaned_staging_files(
+def cleanup_orphaned_registry_staging_files(
     root: Union[str, Path],
     max_age_seconds: float = 60.0,
 ) -> int:
@@ -679,3 +679,8 @@ def cleanup_orphaned_staging_files(
             except OSError:
                 pass
     return deleted_count
+
+
+# Backward-compatibility alias
+cleanup_orphaned_staging_files = cleanup_orphaned_registry_staging_files
+

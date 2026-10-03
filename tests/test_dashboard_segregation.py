@@ -179,7 +179,8 @@ class TestBackendQueryTableSupport:
             """)
 
             mem_client.close = MagicMock()
-            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client):
+            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client), \
+                 patch("src.dashboard.analytics._get_lake_reader", return_value=None):
                 res = get_streaming_candles("AAPL", timeframe="1m", limit=10)
 
                 assert res.get("database") == "streaming", "Database label must be 'streaming'"
@@ -221,7 +222,8 @@ class TestBackendQueryTableSupport:
             """)
 
             mem_client.close = MagicMock()
-            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client):
+            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client), \
+                 patch("src.dashboard.analytics._get_lake_reader", return_value=None):
                 res = get_stream_tape("AAPL", limit=10)
                 ticks = res.get("ticks", [])
                 assert len(ticks) == 2

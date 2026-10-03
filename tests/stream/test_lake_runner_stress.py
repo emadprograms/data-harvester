@@ -14,6 +14,9 @@ import json
 import math
 import os
 from pathlib import Path
+import signal
+import subprocess
+import sys
 import time
 from typing import Any, List
 
@@ -122,6 +125,9 @@ def test_tick_lake_writer_bounded_buffer_backpressure(tmp_path):
 
     # Backpressure caused drops
     assert writer.metrics.total_dropped > 0
+
+    # Flush to ensure rate-limited status file reflects drop count
+    writer.flush()
 
     # Status file reflects drop count
     status_file = lake_root / "_control" / "writer_status.json"
@@ -404,34 +410,73 @@ def test_honest_task_done_accounting_under_partial_flushes(tmp_path):
 
 def test_runner_sigint_sigterm_lifecycle(tmp_path):
     """
-    Simulates SIGINT/SIGTERM execution path, streamer stopped first, queue drained, status transitions to STOPPED.
+    Spawns real OS subprocess running python -m src.stream.runner --mock ...,
+    tests real SIGINT and SIGTERM, verifies _handle_signal catches the signal,
+    drains queued ticks to Parquet lake, updates status to STOPPED, and exits with returncode 0.
     """
-    async def _run():
-        lake_root = tmp_path / "lake"
-        engine = StreamingEngine(lake_root=lake_root, flush_interval=0.05)
-        engine.running = True
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        lake_root = tmp_path / f"lake_signal_{sig.name}"
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m", "src.stream.runner",
+                "--lake-root", str(lake_root),
+                "--writer-id", f"writer_{sig.name.lower()}",
+                "--flush-interval", "0.1",
+                "--mock",
+                "--ticks-per-sec", "100.0",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
 
-        worker_task = asyncio.create_task(engine._lake_writer_worker())
-        tick = ("2026-10-02 12:00:00", "AAPL", 150.0, 1.0, 149.9, 150.1, "CAPITAL", "REG")
-        engine._enqueue_tick(tick)
-
-        # Signal triggered: engine.stop() called first
-        engine.stop()
-        assert engine.running is False
-
-        # Graceful shutdown drains queue and closes writer
-        await engine.shutdown()
-        assert engine.writer.status == "STOPPED"
-        assert engine.ticks_committed == 1
-        assert engine.write_queue.unfinished_tasks == 0
-
-        worker_task.cancel()
         try:
-            await worker_task
-        except asyncio.CancelledError:
-            pass
+            # Wait for runner to start and write at least one batch
+            status_file = lake_root / "_control" / "writer_status.json"
+            started = False
+            for _ in range(50):
+                time.sleep(0.1)
+                if status_file.exists():
+                    try:
+                        data = json.loads(status_file.read_text(encoding="utf-8"))
+                        if data.get("status") == "RUNNING" and data.get("total_rows_written", 0) > 0:
+                            started = True
+                            break
+                    except Exception:
+                        pass
+            assert started, f"Runner failed to start and write ticks under {sig.name}"
 
-    asyncio.run(_run())
+            # Deliver real signal
+            proc.send_signal(sig)
+
+            # Wait for graceful drain and clean termination
+            stdout, stderr = proc.communicate(timeout=6.0)
+            assert proc.returncode == 0, (
+                f"Expected returncode 0 on {sig.name}, got {proc.returncode}. "
+                f"Stderr: {stderr.decode()}"
+            )
+
+            # Assert status file reflects STOPPED
+            assert status_file.exists()
+            final_status = json.loads(status_file.read_text(encoding="utf-8"))
+            assert final_status.get("status") == "STOPPED"
+            assert final_status.get("total_rows_written", 0) > 0
+
+            # Verify Parquet row count > 0 via DuckDB
+            parquet_files = [str(p) for p in lake_root.glob("ticks/symbol=*/date=*/*.parquet")]
+            assert len(parquet_files) > 0, f"No Parquet files found after {sig.name} shutdown"
+            con = duckdb.connect(":memory:")
+            try:
+                cnt = con.execute("SELECT count(*) FROM read_parquet(?, hive_partitioning=false)", [parquet_files]).fetchone()[0]
+                assert cnt == final_status["total_rows_written"]
+                assert cnt > 0
+            finally:
+                con.close()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
 
 def test_lake_writer_worker_cancellation_shielding(tmp_path):

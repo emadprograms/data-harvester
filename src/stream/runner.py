@@ -11,8 +11,10 @@ from pathlib import Path
 import signal
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import os
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
 from src.database.connection import get_streaming_db_connection, DEFAULT_STREAMING_DB_PATH
 from src.database.schema import init_streaming_db
 from src.database.operations import (
@@ -20,6 +22,7 @@ from src.database.operations import (
     get_streaming_database_symbols_from_db,
     get_streaming_symbol_map_from_db,
 )
+from src.storage.registry import RegistryError
 from src.stream.binance_stream import BinanceStreamer
 from src.stream.capital_stream import CapitalStreamer
 
@@ -28,6 +31,54 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 )
 logger = logging.getLogger("stream_runner")
+
+
+class MockStreamer:
+    """Mock streamer generating synthetic ticks for offline/test execution without real network/credentials."""
+    def __init__(self, epics: List[str], on_tick_callback, ticks_per_sec: float = 50.0):
+        self.epics = list(epics) if epics else ["AAPL", "NVDA", "MSFT"]
+        self.on_tick_callback = on_tick_callback
+        self.ticks_per_sec = float(ticks_per_sec)
+        self.running = False
+        self._task: Optional[asyncio.Task] = None
+
+    async def start(self):
+        self.running = True
+        self._task = asyncio.create_task(self._run_loop())
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+
+    async def _run_loop(self):
+        idx = 0
+        interval = 1.0 / self.ticks_per_sec if self.ticks_per_sec > 0 else 0.02
+        while self.running:
+            if self.epics:
+                epic = self.epics[idx % len(self.epics)]
+                now = datetime.now(timezone.utc)
+                tick = {
+                    "epic": epic,
+                    "price": 100.0 + (idx % 100) * 0.1,
+                    "timestamp": now,
+                    "bid": 99.95,
+                    "ask": 100.05,
+                    "volume": 1.0,
+                }
+                res = self.on_tick_callback(tick)
+                if asyncio.iscoroutine(res):
+                    await res
+                idx += 1
+            await asyncio.sleep(interval)
+
+    def stop(self):
+        self.running = False
+        if self._task and not self._task.done():
+            self._task.cancel()
+
+    async def update_subscriptions(self, epics: List[str]) -> bool:
+        self.epics = list(epics)
+        return True
 
 
 class BoundedWriteQueue(asyncio.Queue):
@@ -49,11 +100,17 @@ class StreamingEngine:
         writer_id="writer_1",
         registry_poll_interval=1.0,
         registry_debounce_interval=0.05,
+        mock_mode: bool = False,
+        drain_delay: float = 0.0,
+        mock_ticks_per_sec: float = 50.0,
     ):
         self.lake_root = lake_root
         self.max_queue_size = max_queue_size
         self.flush_interval = flush_interval
         self.enable_binance = enable_binance
+        self.mock_mode = mock_mode
+        self.drain_delay = float(drain_delay)
+        self.mock_ticks_per_sec = float(mock_ticks_per_sec)
         self.running = False
         self.write_queue = BoundedWriteQueue(maxsize=max_queue_size)
         self.reload_event = asyncio.Event()
@@ -111,6 +168,12 @@ class StreamingEngine:
         self.epic_to_display = {}
         self._subscriptions_initialized = False
 
+    def _record_drop(self, count: int = 1) -> None:
+        """Increments drop counter and synchronizes drop count to writer metrics immediately."""
+        self.ticks_dropped += count
+        if self.writer is not None and hasattr(self.writer, "_metrics"):
+            self.writer._metrics.total_dropped = self.ticks_dropped
+
     @property
     def ticks_committed(self) -> int:
         return self.total_ticks_persisted
@@ -122,7 +185,7 @@ class StreamingEngine:
             self.write_queue.put_nowait(tick_tuple)
             self.ticks_enqueued += 1
         except asyncio.QueueFull:
-            self.ticks_dropped += 1
+            self._record_drop(1)
             sym = tick_tuple[1] if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1 else str(tick_tuple)
             logger.warning("write_queue full (%d), dropping tick: %s", self.write_queue.maxsize, sym)
 
@@ -271,7 +334,7 @@ class StreamingEngine:
                         raise
                     except Exception as exc:
                         logger.error(f"Lake writer worker error: {exc}")
-                        self.ticks_dropped += batch_len
+                        self._record_drop(batch_len)
                         for _ in range(batch_len):
                             self.write_queue.task_done()
 
@@ -303,7 +366,7 @@ class StreamingEngine:
                 raise
             except Exception as e:
                 logger.error(f"Error during final lake flush: {e}")
-                self.ticks_dropped += batch_len
+                self._record_drop(batch_len)
                 for _ in range(batch_len):
                     self.write_queue.task_done()
 
@@ -322,7 +385,11 @@ class StreamingEngine:
             self.active_streaming_symbols = set(capital_symbols)
             self.epic_to_display = {s: s for s in capital_symbols}
         elif self.registry is not None:
-            active_entries = self.registry.get_active_symbols()
+            try:
+                active_entries = self.registry.get_active_symbols()
+            except RegistryError as e:
+                logger.warning(f"Failed to load active symbols from registry: {e}")
+                return False
             capital_symbols = []
             self.active_streaming_symbols = set()
             self.epic_to_display = {}
@@ -454,7 +521,11 @@ class StreamingEngine:
         s_map = None
 
         if self.registry is not None:
-            active_entries = self.registry.get_active_symbols()
+            try:
+                active_entries = self.registry.get_active_symbols()
+            except RegistryError as e:
+                logger.warning(f"Failed to load active symbols from registry: {e}")
+                active_entries = []
             for entry in active_entries:
                 sym = entry.symbol
                 self.active_streaming_symbols.add(sym)
@@ -478,14 +549,24 @@ class StreamingEngine:
 
         if not capital_symbols:
             capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
+            for s in capital_symbols:
+                self.active_streaming_symbols.add(s)
+                self.epic_to_display[s] = s
 
         logger.info(f"🎯 Target Capital.com symbols for live quotes ({len(capital_symbols)}): {capital_symbols[:6]}...")
 
-        # Initialize Capital.com streamer exclusively
-        self.capital_streamer = CapitalStreamer(
-            epics=capital_symbols,
-            on_tick_callback=self._handle_capital_tick
-        )
+        # Initialize Capital.com streamer (or MockStreamer in mock_mode)
+        if self.mock_mode:
+            self.capital_streamer = MockStreamer(
+                epics=capital_symbols,
+                on_tick_callback=self._handle_capital_tick,
+                ticks_per_sec=self.mock_ticks_per_sec,
+            )
+        else:
+            self.capital_streamer = CapitalStreamer(
+                epics=capital_symbols,
+                on_tick_callback=self._handle_capital_tick
+            )
 
         if self.writer is not None:
             writer_worker_task = asyncio.create_task(self._lake_writer_worker())
@@ -538,6 +619,9 @@ class StreamingEngine:
     async def shutdown(self, drain_timeout: float = 10.0):
         """Gracefully drains remaining queued ticks and closes TickLakeWriter."""
         self.running = False
+        if self.drain_delay > 0:
+            await asyncio.sleep(self.drain_delay)
+
         if self.capital_streamer:
             self.capital_streamer.stop()
         if self.binance_streamer:
@@ -549,7 +633,7 @@ class StreamingEngine:
                 await asyncio.wait_for(self.write_queue.join(), timeout=drain_timeout)
             except asyncio.TimeoutError:
                 unfinished = getattr(self.write_queue, "unfinished_tasks", 0)
-                self.ticks_dropped += unfinished
+                self._record_drop(unfinished)
                 logger.warning(
                     "Timed out waiting for write queue to drain during shutdown (%d unfinished tasks dropped)",
                     unfinished,
@@ -571,7 +655,34 @@ class StreamingEngine:
 
 
 def main():
-    engine = StreamingEngine()
+    import argparse
+    parser = argparse.ArgumentParser(description="24/7 Capital.com Tick Streaming Engine")
+    parser.add_argument("--lake-root", type=str, default=None, help="Path to tick lake root")
+    parser.add_argument("--writer-id", type=str, default="writer_1", help="Writer ID for LakePublisher")
+    parser.add_argument("--flush-interval", type=float, default=2.0, help="Batch flush interval in seconds")
+    parser.add_argument("--max-queue-size", type=int, default=10000, help="Max bounded queue size")
+    parser.add_argument("--mock", action="store_true", help="Run with MockStreamer generating synthetic ticks")
+    parser.add_argument("--fail-immediately", action="store_true", help="Exit immediately with returncode 1 (for supervisor flapping chaos)")
+    parser.add_argument("--drain-delay", type=float, default=0.0, help="Artificial delay during shutdown drain in seconds")
+    parser.add_argument("--ticks-per-sec", type=float, default=50.0, help="Tick production rate in mock mode")
+    parser.add_argument("--enable-binance", action="store_true", help="Enable optional Binance streamer")
+
+    args, _ = parser.parse_known_args()
+
+    if args.fail_immediately:
+        sys.exit(1)
+
+    lake_root = Path(args.lake_root).resolve() if args.lake_root else None
+    engine = StreamingEngine(
+        lake_root=lake_root,
+        writer_id=args.writer_id,
+        flush_interval=args.flush_interval,
+        max_queue_size=args.max_queue_size,
+        enable_binance=args.enable_binance,
+        mock_mode=args.mock,
+        drain_delay=args.drain_delay,
+        mock_ticks_per_sec=args.ticks_per_sec,
+    )
 
     async def _async_main():
         stop_event = asyncio.Event()

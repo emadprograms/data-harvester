@@ -41,7 +41,7 @@ from src.storage.registry import (
     SymbolNotFoundError,
     SymbolPendingPurgeError,
     SymbolRegistry,
-    cleanup_orphaned_staging_files,
+    cleanup_orphaned_registry_staging_files,
     init_registry,
     touch_stream_reload_signal,
 )
@@ -426,7 +426,7 @@ def test_crashed_staging_temp_file_cleanup(tmp_path):
     # fresh_tmp has current mtime
 
     # 1. Cleanup with max_age_seconds=60.0 -> deletes only stale_tmp1 and stale_tmp2
-    deleted = cleanup_orphaned_staging_files(lake_root, max_age_seconds=60.0)
+    deleted = cleanup_orphaned_registry_staging_files(lake_root, max_age_seconds=60.0)
     assert deleted == 2
     assert not stale_tmp1.exists()
     assert not stale_tmp2.exists()
@@ -434,7 +434,7 @@ def test_crashed_staging_temp_file_cleanup(tmp_path):
     assert reg_file.exists()
 
     # 2. Cleanup with max_age_seconds=0.0 -> deletes remaining fresh_tmp
-    deleted_remaining = cleanup_orphaned_staging_files(lake_root, max_age_seconds=0.0)
+    deleted_remaining = cleanup_orphaned_registry_staging_files(lake_root, max_age_seconds=0.0)
     assert deleted_remaining == 1
     assert not fresh_tmp.exists()
 

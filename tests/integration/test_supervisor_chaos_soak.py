@@ -428,12 +428,13 @@ def test_chaos_streamer_kill9_during_active_flush_auto_healing(tmp_path):
 
     supervisor = ProcessSupervisor(
         name="streamer_chaos",
-        module="tools.synthetic_streamer",
+        module="src.stream.runner",
         module_args=[
             "--lake-root", str(lake_root),
             "--writer-id", "streamer_chaos_1",
-            "--batch-size", "25",
-            "--rate", "200",
+            "--flush-interval", "0.2",
+            "--mock",
+            "--ticks-per-sec", "200",
         ],
         poll_interval=0.2,
         backoff_factor=0.3,
@@ -571,7 +572,7 @@ def test_chaos_dashboard_kill9_port_recovery_and_restoration(tmp_path):
 
 
 @pytest.mark.integration
-def test_chaos_rapid_flapping_and_exponential_backoff(tmp_path):
+def test_chaos_supervisor_flapping_backoff_and_exit_cleanly(tmp_path):
     """
     Supervises a crashing child (fails immediately with code 1).
     Verifies consecutive_crashes increments, backoff escalates,
@@ -582,7 +583,7 @@ def test_chaos_rapid_flapping_and_exponential_backoff(tmp_path):
 
     supervisor = ProcessSupervisor(
         name="flapping_test",
-        module="tools.synthetic_streamer",
+        module="src.stream.runner",
         module_args=["--lake-root", str(lake_root), "--fail-immediately"],
         poll_interval=0.1,
         backoff_factor=0.2,
@@ -602,6 +603,10 @@ def test_chaos_rapid_flapping_and_exponential_backoff(tmp_path):
     assert supervisor.consecutive_crashes == 3, f"Expected 3 crashes, got {supervisor.consecutive_crashes}"
     assert supervisor.running is False
     assert elapsed >= 0.5, f"Supervisor exited too quickly ({elapsed:.2f}s), backoff bypassed"
+
+
+# Backward-compatible alias
+test_chaos_rapid_flapping_and_exponential_backoff = test_chaos_supervisor_flapping_backoff_and_exit_cleanly
 
 
 @pytest.mark.integration
@@ -713,10 +718,10 @@ def test_chaos_supervisor_sigterm_graceful_drain_deadline(tmp_path):
             sys.executable,
             str(REPO_ROOT / "tools" / "service_supervisor.py"),
             "--name", "drain_test",
-            "--module", "tools.synthetic_streamer",
+            "--module", "src.stream.runner",
             "--poll-interval", "0.2",
             "--log-dir", str(tmp_path / "logs"),
-            "--args", "--lake-root", str(lake_root), "--writer-id", "writer_drain", "--drain-delay", "1.0",
+            "--args", "--lake-root", str(lake_root), "--writer-id", "writer_drain", "--mock", "--drain-delay", "1.0",
         ],
         cwd=str(REPO_ROOT),
         stdout=subprocess.PIPE,

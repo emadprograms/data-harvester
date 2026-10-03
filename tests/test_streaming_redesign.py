@@ -499,7 +499,8 @@ class TestBackendAnalyticsRedesign:
 
             # Patch get_streaming_db_connection to return mem_client without closing it
             mem_client.close = MagicMock()
-            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client):
+            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client), \
+                 patch("src.dashboard.analytics._get_lake_reader", return_value=None):
                 res = get_streaming_candles(symbol="NVDA", timeframe="1m", limit=10000)
 
                 assert res.get("error") is None, f"get_streaming_candles returned error: {res.get('error')}"

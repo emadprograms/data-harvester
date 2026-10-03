@@ -53,6 +53,7 @@ from src.storage.publication import (
     LakePublisherLock,
     LakePublisher,
     recover_pending_publications,
+    cleanup_orphaned_staging_files,
     cleanup_orphaned_staging_files as cleanup_orphaned_parquet_staging_files,
 )
 
@@ -84,7 +85,7 @@ from src.storage.registry import (
     get_registry_path,
     touch_stream_reload_signal,
     get_symbol_registry,
-    cleanup_orphaned_staging_files,
+    cleanup_orphaned_registry_staging_files,
 )
 
 from src.storage.reader import (
@@ -165,6 +166,7 @@ __all__ = [
     "get_registry_path",
     "touch_stream_reload_signal",
     "get_symbol_registry",
+    "cleanup_orphaned_registry_staging_files",
     # Lake Reader (Phase 19)
     "TickLakeReader",
     "get_tick_lake_reader",

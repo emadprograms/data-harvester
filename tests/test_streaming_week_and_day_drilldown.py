@@ -506,7 +506,8 @@ class TestBackendWeekAndDayAnalytics:
             populate_ticks_for_day(mem_client, date(2026, 9, 30), "NVDA", minutes_list=[(10, 0)])
 
             mem_client.close = MagicMock()
-            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client):
+            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client), \
+                 patch("src.dashboard.analytics._get_lake_reader", return_value=None):
                 res = get_streaming_candles(symbol="NVDA", date="2026-09-29", hours="extended", limit=2000)
 
                 assert res.get("error") is None, f"get_streaming_candles error: {res.get('error')}"
@@ -593,7 +594,8 @@ class TestBackendWeekAndDayAnalytics:
             # Populate sparse ticks with an intentional gap between 05:00 and 10:00 ET
             populate_ticks_for_day(mem_client, date(2026, 9, 29), "NVDA", minutes_list=[(4, 30), (5, 0), (10, 0), (19, 30)])
             mem_client.close = MagicMock()
-            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client):
+            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client), \
+                 patch("src.dashboard.analytics._get_lake_reader", return_value=None):
                 res = get_streaming_candles(symbol="NVDA", date="2026-09-29", hours="extended", limit=2000)
 
                 assert res.get("error") is None, f"get_streaming_candles error: {res.get('error')}"
