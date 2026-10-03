@@ -907,7 +907,7 @@ function openSymbolDetail(symbol) {
 
   const titleEl = document.getElementById('streaming-detail-symbol-title');
   if (titleEl) {
-    titleEl.innerText = `${currentStreamingSymbol} - Extended Session Continuity & Candlestick Chart`;
+    titleEl.innerText = `${currentStreamingSymbol}`;
   }
 
   const isExtended = (typeof window !== 'undefined' && typeof window.currentContinuityExtended === 'boolean')
@@ -966,7 +966,7 @@ function openSymbolDayDetail(symbol, date) {
 
   const titleEl = document.getElementById('streaming-detail-symbol-title');
   if (titleEl) {
-    titleEl.innerText = `${currentStreamingSymbol} • ${date || 'Session'} - Daily Continuity & Candlestick Chart`;
+    titleEl.innerText = `${currentStreamingSymbol} • ${date || 'Session'}`;
   }
 
   const isExtended = (typeof window !== 'undefined' && typeof window.currentContinuityExtended === 'boolean')

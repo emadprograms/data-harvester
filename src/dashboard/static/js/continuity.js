@@ -93,6 +93,7 @@ function toggleExtendedHours(checked) {
   }
   const badgeEl = document.getElementById('detail-session-hours-badge');
   if (badgeEl) {
+    badgeEl.classList.add('hidden');
     badgeEl.innerText = currentContinuityExtended
       ? 'Extended Hours (04:00–20:00 ET)'
       : 'Regular Hours (09:30–16:00 ET)';
@@ -317,7 +318,6 @@ function renderMasterPulseView(data, container) {
           <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-amber-500 inline-block"></span>Partial Degradation</span>
           <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block"></span>Outage / Blackout</span>
         </span>
-        <span class="text-indigo-400 font-bold text-[10px]">${isExtended ? 'Extended Hours (04:00–20:00 ET)' : 'Regular Market Hours (09:30–16:00 ET)'}</span>
       </div>
   `;
 
