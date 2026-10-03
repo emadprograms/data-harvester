@@ -67,6 +67,58 @@ from src.database.schema import init_historical_db, init_streaming_db
 init_historical_db()
 init_streaming_db()
 
+STANDARD_HISTORICAL_SYMBOLS = [
+    "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "SPY", "QQQ", "AMD",
+    "INTC", "NFLX", "BABA", "DIS", "JNJ", "JPM", "V", "PG", "UNH", "HD",
+    "MA", "BAC", "XOM", "PFE", "KO", "PEP", "CSCO", "COST", "ABT", "MRK",
+    "TMO", "ACN", "AVGO", "NKE", "LLY", "ORCL", "CRM", "WMT", "CVX", "ADBE"
+]
+
+
+def _seed_isolated_session_historical_db():
+    from src.database.connection import get_historical_db_connection
+    client = get_historical_db_connection()
+    if not client:
+        return
+    try:
+        # Category 3: Seed 40 standard symbols into historical_database_symbols
+        for sym in STANDARD_HISTORICAL_SYMBOLS:
+            client.execute(
+                """INSERT OR REPLACE INTO historical_database_symbols 
+                   (display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker) 
+                   VALUES (?, ?, ?, ?, ?)""",
+                [sym, sym, sym, None, sym]
+            )
+
+        # Category 2: Seed synthetic 1-minute candlestick bars for all symbols into minute_data
+        # Reference date: 2026-07-10 (regular NYSE trading session, 09:30 to 11:00 EDT -> 13:30 to 15:00 UTC)
+        base_dt = datetime(2026, 7, 10, 13, 30, 0)
+        bar_rows = []
+        for sym in STANDARD_HISTORICAL_SYMBOLS:
+            bar_count = 90 if sym in ("NVDA", "AAPL", "SPY") else 5
+            base_price = 125.0 if sym == "NVDA" else (220.0 if sym == "AAPL" else (550.0 if sym == "SPY" else 100.0))
+            for i in range(bar_count):
+                ts = base_dt + timedelta(minutes=i)
+                open_p = round(base_price + i * 0.05, 4)
+                high_p = round(open_p + 0.5, 4)
+                low_p = round(open_p - 0.5, 4)
+                close_p = round(open_p + 0.2, 4)
+                volume = round(1000.0 + i * 10.0, 2)
+                bar_rows.append((ts, sym, open_p, high_p, low_p, close_p, volume, "REG", "MASSIVE"))
+
+        client.executemany(
+            """INSERT OR IGNORE INTO minute_data 
+               (timestamp, symbol, open, high, low, close, volume, session, source) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            bar_rows
+        )
+    finally:
+        client.close()
+
+
+_seed_isolated_session_historical_db()
+
+
 
 # ============================================================================
 # PRODUCTION PATH GUARD

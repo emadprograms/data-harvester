@@ -15,6 +15,7 @@ HISTORICAL_DB_PATH = "data/market_data.duckdb"
 historical_db_exists = os.path.exists(HISTORICAL_DB_PATH)
 
 
+@pytest.mark.performance
 @pytest.mark.skipif(not historical_db_exists, reason="Historical database data/market_data.duckdb not found.")
 class TestHistoricalDatasetAndResampling:
     """Tests against the 3.95M+ row historical dataset."""

@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from src.database.connection import DuckDBClient
+from src.database.connection import DuckDBClient, DEFAULT_STREAMING_DB_PATH
 from src.database.schema import init_streaming_db
 from src.dashboard.analytics import (
     get_streaming_candles,
@@ -33,7 +33,7 @@ from src.dashboard.analytics import (
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
-STREAMING_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "streaming.duckdb"
+STREAMING_DB_PATH = Path(DEFAULT_STREAMING_DB_PATH)
 HAS_REAL_STREAMING_DB = STREAMING_DB_PATH.exists() and STREAMING_DB_PATH.stat().st_size > 1000000
 
 
