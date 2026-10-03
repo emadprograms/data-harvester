@@ -16,9 +16,9 @@ Harden and stress-test the partitioned Parquet tick lake architecture across ext
 - [x] **TEST-P22-03**: Atomic publication concurrency collisions, crashed intent recovery, and file lock serialization (`src/storage/publication.py`).
 
 ### Phase 23: Streaming Writer & Runner Stress & Lifecycle Tests
-- [ ] **TEST-P23-01**: High-throughput micro-batching under memory pressure (100k+ ticks) and bounded queue backpressure (`src/storage/parquet_writer.py`).
-- [ ] **TEST-P23-02**: Runner sudden shutdown mid-flush, graceful drain timeouts, and honest queue acknowledgments (`src/stream/runner.py`).
-- [ ] **TEST-P23-03**: Transient disk full / I/O error exponential backoff and quarantine handling (`src/storage/parquet_writer.py`).
+- [x] **TEST-P23-01**: High-throughput micro-batching under memory pressure (100k+ ticks) and bounded queue backpressure (`src/storage/parquet_writer.py`).
+- [x] **TEST-P23-02**: Runner sudden shutdown mid-flush, graceful drain timeouts, and honest queue acknowledgments (`src/stream/runner.py`).
+- [x] **TEST-P23-03**: Transient disk full / I/O error exponential backoff and quarantine handling (`src/storage/parquet_writer.py`).
 
 ### Phase 24: Versioned Symbol Registry & Dynamic Reload Stress Tests
 - [ ] **TEST-P24-01**: Cross-process concurrent symbol CRUD lock serialization and monotonic versioning integrity (`src/storage/registry.py`).

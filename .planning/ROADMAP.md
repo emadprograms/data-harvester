@@ -71,7 +71,7 @@ See: [.planning/milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
   - Storage layout path traversal, unicode/special symbol encoding, and corrupted metadata handling.
   - PyArrow schema type coercion, extreme numeric limits (float min/max, subnormal), null bitmasks.
   - Atomic publication concurrency collisions, crashed intent recovery, and file lock serialization.
-- [ ] **Phase 23: Streaming Writer & Runner Stress & Lifecycle Tests** (`src/storage/parquet_writer.py`, `src/stream/runner.py`)
+- [x] **Phase 23: Streaming Writer & Runner Stress & Lifecycle Tests** (`src/storage/parquet_writer.py`, `src/stream/runner.py`) — completed 2026-10-03 (commit e856c035, 14/14 tests passing)
   - High-throughput micro-batching under memory pressure (100k+ ticks) and bounded queue backpressure.
   - Runner sudden shutdown mid-flush, graceful drain timeouts, and honest queue acknowledgments.
   - Transient disk full / I/O error exponential backoff and quarantine handling.
