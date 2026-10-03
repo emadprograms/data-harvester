@@ -19,7 +19,34 @@ from src.database.operations import (
     get_streaming_symbol_inventory_list,
     add_streaming_symbol_to_db,
     remove_streaming_symbol_from_db,
+    toggle_streaming_symbol,
 )
+from src.storage.registry import (
+    SymbolRegistry,
+    STATUS_ACTIVE,
+    STATUS_INACTIVE,
+    STATUS_PENDING_PURGE,
+    SymbolPendingPurgeError,
+    SymbolAlreadyExistsError,
+    SymbolNotFoundError,
+    InvalidSymbolError,
+    touch_stream_reload_signal,
+)
+
+
+def _get_lake_registry():
+    try:
+        from src.storage.config import resolve_tick_lake_root
+        lake_root = resolve_tick_lake_root()
+        return SymbolRegistry(root=lake_root)
+    except Exception:
+        env_root = os.environ.get("TICK_LAKE_ROOT") or os.environ.get("DATA_DIR")
+        if env_root:
+            try:
+                return SymbolRegistry(root=env_root)
+            except Exception:
+                pass
+        return None
 from src.utils.integrity import (
     get_database_health_report,
     detect_1m_gaps,
@@ -64,7 +91,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, PATCH, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
@@ -180,6 +207,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/streaming/symbols":
+            reg = _get_lake_registry()
+            if reg and reg.path.exists():
+                symbols = [s.to_dict() for s in reg.get_symbols()]
+                self._send_json({"symbols": symbols, "total": len(symbols), "database": "streaming"})
+                return
             symbols = get_streaming_symbol_inventory_list()
             self._send_json({"symbols": symbols, "total": len(symbols), "database": "streaming"})
             return
@@ -196,6 +228,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 symbols = get_symbol_inventory_list()
                 self._send_json({"symbols": symbols, "total": len(symbols), "database": "historical"})
             else:
+                reg = _get_lake_registry()
+                if reg and reg.path.exists():
+                    symbols = [s.to_dict() for s in reg.get_symbols()]
+                    self._send_json({"symbols": symbols, "total": len(symbols), "database": "streaming"})
+                    return
                 symbols = get_streaming_symbol_inventory_list()
                 self._send_json({"symbols": symbols, "total": len(symbols), "database": "streaming"})
             return
@@ -473,6 +510,58 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     self._send_json({"success": False, "error": "Database write error"}, status=500)
                 return
             else:
+                reg = _get_lake_registry()
+                if reg and reg.path.exists():
+                    symbol = payload.get("symbol") or disp
+                    display_name = payload.get("display_name") or payload.get("name") or symbol
+                    capital_ticker = payload.get("capital_ticker") or payload.get("epic")
+                    databento_ticker = payload.get("databento_ticker")
+                    binance_ticker = payload.get("binance_ticker")
+                    asset_class = payload.get("asset_class")
+                    metadata = payload.get("metadata") or {}
+                    if asset_class and "asset_class" not in metadata:
+                        metadata["asset_class"] = asset_class
+
+                    try:
+                        entry = reg.add_symbol(
+                            symbol=symbol,
+                            display_name=display_name,
+                            capital_ticker=capital_ticker,
+                            databento_ticker=databento_ticker,
+                            binance_ticker=binance_ticker,
+                            metadata=metadata,
+                        )
+                        touch_stream_reload_signal(root=reg.root)
+                        self._trigger_reload_signal()
+                        self._send_json({
+                            "status": "success",
+                            "success": True,
+                            "symbol": entry.to_dict(),
+                            "message": f"Streaming symbol {entry.symbol} added and streamer signaled",
+                            "database": "streaming",
+                        }, status=201)
+                        return
+                    except SymbolPendingPurgeError as e:
+                        self._send_json({
+                            "status": "conflict",
+                            "error": f"Symbol {symbol} is currently pending purge: {str(e)}",
+                            "message": str(e),
+                        }, status=409)
+                        return
+                    except SymbolAlreadyExistsError as e:
+                        self._send_json({
+                            "status": "conflict",
+                            "error": f"Symbol {symbol} already exists: {str(e)}",
+                            "message": str(e),
+                        }, status=409)
+                        return
+                    except InvalidSymbolError as e:
+                        self._send_json({"status": "error", "error": str(e)}, status=400)
+                        return
+                    except Exception as e:
+                        self._send_json({"status": "error", "error": str(e)}, status=500)
+                        return
+
                 c_ticker = payload.get("capital_ticker") or disp
                 dbn_ticker = payload.get("databento_ticker") or disp
                 b_ticker = payload.get("binance_ticker")
@@ -523,6 +612,26 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"success": False, "error": "Symbol display name is required"}, status=400)
                 return
 
+            reg = _get_lake_registry()
+            if reg and reg.path.exists():
+                try:
+                    entry = reg.remove_symbol(display_name)
+                    touch_stream_reload_signal(root=reg.root)
+                    self._trigger_reload_signal()
+                    self._send_json({
+                        "status": STATUS_PENDING_PURGE,
+                        "symbol": entry.symbol,
+                        "message": f"Symbol {entry.symbol} marked for purge and subscription fenced.",
+                        "success": True,
+                    }, status=200)
+                    return
+                except SymbolNotFoundError as e:
+                    self._send_json({"status": "not_found", "error": str(e)}, status=404)
+                    return
+                except Exception as e:
+                    self._send_json({"status": "error", "error": str(e)}, status=500)
+                    return
+
             success = remove_streaming_symbol_from_db(display_name)
             if success:
                 self._trigger_reload_signal()
@@ -556,6 +665,26 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
             source = query.get("source", query.get("db", [None]))[0]
             if source and source.lower() in ["streaming", "live"]:
+                reg = _get_lake_registry()
+                if reg and reg.path.exists():
+                    try:
+                        entry = reg.remove_symbol(display_name)
+                        touch_stream_reload_signal(root=reg.root)
+                        self._trigger_reload_signal()
+                        self._send_json({
+                            "status": STATUS_PENDING_PURGE,
+                            "symbol": entry.symbol,
+                            "message": f"Symbol {entry.symbol} marked for purge and subscription fenced.",
+                            "success": True,
+                        }, status=200)
+                        return
+                    except SymbolNotFoundError as e:
+                        self._send_json({"status": "not_found", "error": str(e)}, status=404)
+                        return
+                    except Exception as e:
+                        self._send_json({"status": "error", "error": str(e)}, status=500)
+                        return
+
                 success = remove_streaming_symbol_from_db(display_name)
                 if success:
                     self._trigger_reload_signal()
@@ -573,8 +702,67 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
         self._send_json({"error": "Not Found", "path": path}, status=404)
 
+    def do_PATCH(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+        try:
+            payload = json.loads(body)
+        except Exception:
+            payload = {}
+
+        if path.startswith("/api/streaming/symbols/"):
+            raw_symbol = path.replace("/api/streaming/symbols/", "").strip()
+            display_name = unquote(raw_symbol).upper()
+
+            if not display_name:
+                self._send_json({"success": False, "error": "Symbol display name is required"}, status=400)
+                return
+
+            active = payload.get("active")
+            reg = _get_lake_registry()
+            if reg and reg.path.exists():
+                try:
+                    entry = reg.toggle_symbol(display_name, active=active)
+                    touch_stream_reload_signal(root=reg.root)
+                    self._trigger_reload_signal()
+                    self._send_json({
+                        "status": "success",
+                        "symbol": entry.to_dict(),
+                        "message": f"Symbol {entry.symbol} toggled to active={entry.active}",
+                    }, status=200)
+                    return
+                except SymbolPendingPurgeError as e:
+                    self._send_json({"status": "conflict", "error": str(e)}, status=409)
+                    return
+                except SymbolNotFoundError as e:
+                    self._send_json({"status": "not_found", "error": str(e)}, status=404)
+                    return
+                except Exception as e:
+                    self._send_json({"status": "error", "error": str(e)}, status=500)
+                    return
+
+            success = toggle_streaming_symbol(display_name, is_active=active)
+            if success:
+                self._trigger_reload_signal()
+                self._send_json({"status": "success", "message": f"Streaming symbol {display_name} toggled"})
+            else:
+                self._send_json({"status": "error", "error": "Failed to toggle symbol"}, status=500)
+            return
+
+        self._send_json({"error": "Not Found", "path": path}, status=404)
+
     def _trigger_reload_signal(self):
         """Creates or touches signal file for running streamer to pick up."""
+        try:
+            reg = _get_lake_registry()
+            if reg and reg.root:
+                touch_stream_reload_signal(root=reg.root)
+        except Exception:
+            pass
         try:
             os.makedirs(os.path.dirname(RELOAD_SIGNAL_FILE), exist_ok=True)
             with open(RELOAD_SIGNAL_FILE, "w") as f:

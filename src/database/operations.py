@@ -178,6 +178,25 @@ def remove_symbol_from_db(display_name: str, client=None) -> bool:
 
 def get_streaming_database_symbols_from_db(client=None) -> dict:
     """Fetches the dedicated streaming symbol inventory from streaming_database_symbols in streaming.duckdb."""
+    if client is None:
+        try:
+            from src.storage.config import resolve_tick_lake_root
+            root = resolve_tick_lake_root()
+            from src.storage.registry import SymbolRegistry
+            reg = SymbolRegistry(root=root)
+            if reg.path.exists():
+                inv = {}
+                for s in reg.get_symbols():
+                    inv[s.symbol] = {
+                        'capital_ticker': s.capital_ticker,
+                        'databento_ticker': s.databento_ticker,
+                        'binance_ticker': s.binance_ticker,
+                        'is_active': s.active and s.status == "ACTIVE"
+                    }
+                return inv
+        except Exception:
+            pass
+
     own_client = False
     if not client:
         client = get_streaming_db_connection(read_only=True)
@@ -223,6 +242,17 @@ def get_streaming_symbol_map_from_db(client=None) -> dict:
 
 def get_streaming_symbol_inventory_list(client=None) -> list[dict]:
     """Fetches streaming symbol inventory as a list of dictionaries."""
+    if client is None:
+        try:
+            from src.storage.config import resolve_tick_lake_root
+            root = resolve_tick_lake_root()
+            from src.storage.registry import SymbolRegistry
+            reg = SymbolRegistry(root=root)
+            if reg.path.exists():
+                return [s.to_dict() for s in reg.get_symbols()]
+        except Exception:
+            pass
+
     own_client = False
     if not client:
         client = get_streaming_db_connection(read_only=True)
@@ -263,7 +293,22 @@ def get_streaming_symbol_inventory_list(client=None) -> list[dict]:
 
 
 def add_streaming_symbol_to_db(display_name: str, capital_ticker=None, databento_ticker=None, binance_ticker=None, is_active=True, client=None) -> bool:
-    """Adds or updates a symbol in streaming_database_symbols in streaming.duckdb."""
+    """Adds or updates a symbol in streaming_database_symbols in streaming.duckdb or lake registry."""
+    if client is None:
+        try:
+            from src.storage.config import resolve_tick_lake_root
+            root = resolve_tick_lake_root()
+            from src.storage.registry import SymbolRegistry, touch_stream_reload_signal
+            reg = SymbolRegistry(root=root)
+            if reg.path.exists():
+                reg.add_symbol(display_name, capital_ticker=capital_ticker, databento_ticker=databento_ticker, binance_ticker=binance_ticker)
+                if not is_active:
+                    reg.toggle_symbol(display_name, active=False)
+                touch_stream_reload_signal(root=reg.root)
+                return True
+        except Exception:
+            pass
+
     own_client = False
     if not client:
         client = get_streaming_db_connection(read_only=False)
@@ -293,7 +338,20 @@ def add_streaming_symbol_to_db(display_name: str, capital_ticker=None, databento
 
 
 def remove_streaming_symbol_from_db(display_name: str, client=None) -> bool:
-    """Deletes a symbol from streaming_database_symbols in streaming.duckdb."""
+    """Deletes a symbol from streaming_database_symbols in streaming.duckdb or marks PENDING_PURGE in lake registry."""
+    if client is None:
+        try:
+            from src.storage.config import resolve_tick_lake_root
+            root = resolve_tick_lake_root()
+            from src.storage.registry import SymbolRegistry, touch_stream_reload_signal
+            reg = SymbolRegistry(root=root)
+            if reg.path.exists():
+                reg.remove_symbol(display_name)
+                touch_stream_reload_signal(root=reg.root)
+                return True
+        except Exception:
+            pass
+
     own_client = False
     if not client:
         client = get_streaming_db_connection(read_only=False)
@@ -328,6 +386,68 @@ def remove_streaming_symbol_from_db(display_name: str, client=None) -> bool:
         return True
     except Exception as e:
         print(f"❌ Error removing streaming symbol {display_name}: {e}")
+        return False
+    finally:
+        if own_client and client:
+            client.close()
+
+
+def get_streaming_tracked_symbols(client=None) -> list[dict]:
+    """Fetches streaming symbol inventory delegating to SymbolRegistry in lake mode."""
+    return get_streaming_symbol_inventory_list(client=client)
+
+
+def add_streaming_symbol(display_name: str, capital_ticker=None, databento_ticker=None, binance_ticker=None, is_active=True, client=None) -> bool:
+    """Adds a streaming symbol delegating to SymbolRegistry in lake mode."""
+    return add_streaming_symbol_to_db(
+        display_name,
+        capital_ticker=capital_ticker,
+        databento_ticker=databento_ticker,
+        binance_ticker=binance_ticker,
+        is_active=is_active,
+        client=client
+    )
+
+
+def remove_streaming_symbol(display_name: str, client=None) -> bool:
+    """Removes a streaming symbol delegating to SymbolRegistry in lake mode."""
+    return remove_streaming_symbol_from_db(display_name, client=client)
+
+
+def toggle_streaming_symbol(display_name: str, is_active=None, client=None) -> bool:
+    """Toggles active state of a streaming symbol delegating to SymbolRegistry in lake mode."""
+    if client is None:
+        try:
+            from src.storage.config import resolve_tick_lake_root
+            root = resolve_tick_lake_root()
+            from src.storage.registry import SymbolRegistry, touch_stream_reload_signal
+            reg = SymbolRegistry(root=root)
+            if reg.path.exists():
+                reg.toggle_symbol(display_name, active=is_active)
+                touch_stream_reload_signal(root=reg.root)
+                return True
+        except Exception:
+            pass
+
+    own_client = False
+    if not client:
+        client = get_streaming_db_connection(read_only=False)
+        own_client = True
+
+    if not client:
+        return False
+
+    try:
+        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
+        table_name = "streaming_database_symbols"
+        if "streaming_database_symbols" not in tables and "streaming_symbol_map" in tables:
+            table_name = "streaming_symbol_map"
+        if is_active is None:
+            client.execute(f"UPDATE {table_name} SET is_active = NOT is_active WHERE display_name = ?", [display_name])
+        else:
+            client.execute(f"UPDATE {table_name} SET is_active = ? WHERE display_name = ?", [bool(is_active), display_name])
+        return True
+    except Exception:
         return False
     finally:
         if own_client and client:

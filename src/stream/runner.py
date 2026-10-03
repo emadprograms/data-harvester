@@ -60,6 +60,8 @@ class StreamingEngine:
         self.total_ticks_persisted = 0
         self.writer = None
         self.lake_writer = None
+        self.registry = None
+        self.registry_poll_interval = 1.0
 
         if self.lake_root is not None:
             from src.storage.parquet_writer import TickLakeWriter
@@ -71,6 +73,11 @@ class StreamingEngine:
             )
             self.lake_writer = self.writer
             self.db_path = None
+            try:
+                from src.storage.registry import SymbolRegistry
+                self.registry = SymbolRegistry(root=self.lake_root)
+            except Exception:
+                pass
         elif db_path is None and (os.environ.get("TICK_LAKE_ROOT") or os.environ.get("DATA_DIR")):
             try:
                 from src.storage.config import resolve_tick_lake_root
@@ -85,6 +92,8 @@ class StreamingEngine:
                 )
                 self.lake_writer = self.writer
                 self.db_path = None
+                from src.storage.registry import SymbolRegistry
+                self.registry = SymbolRegistry(root=self.lake_root)
             except Exception:
                 self.db_path = DEFAULT_STREAMING_DB_PATH
         else:
@@ -94,6 +103,7 @@ class StreamingEngine:
         self.capital_streamer = None
         self.active_streaming_symbols = set()
         self.epic_to_display = {}
+        self._subscriptions_initialized = False
 
     def _enqueue_tick(self, tick_tuple):
         """Pushes an individual tick into the async write queue."""
@@ -104,7 +114,12 @@ class StreamingEngine:
         self.write_queue.put_nowait(bar_tuple)
 
     async def _handle_binance_tick(self, tick_tuple):
-        """Feeds a raw trade tick from Binance directly into the write queue (for backward compatibility)."""
+        """Feeds a raw trade tick from Binance directly into the write queue with fencing."""
+        if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1:
+            sym = tick_tuple[1]
+            if self._subscriptions_initialized or self.active_streaming_symbols:
+                if sym not in self.active_streaming_symbols:
+                    return
         self._enqueue_tick(tick_tuple)
 
     async def _handle_binance_bar(self, bar_tuple, is_closed=True):
@@ -113,12 +128,13 @@ class StreamingEngine:
             self._enqueue_tick(bar_tuple)
 
     async def _handle_capital_tick(self, tick):
-        """Feeds a tick from Capital.com directly into the write queue, filtering out excluded assets."""
+        """Feeds a tick from Capital.com directly into the write queue, filtering out excluded/purged assets."""
         if isinstance(tick, dict):
             raw_epic = tick.get("epic", "")
-            # Excluded asset filter: ignore any tick not in streaming_symbol_map
-            if self.active_streaming_symbols and raw_epic not in self.active_streaming_symbols:
-                return
+            # Subscription fencing: drop if symbol is not active
+            if self._subscriptions_initialized or self.active_streaming_symbols:
+                if raw_epic not in self.active_streaming_symbols:
+                    return
 
             symbol = self.epic_to_display.get(raw_epic, raw_epic)
             price = float(tick.get("price", 0.0))
@@ -129,6 +145,11 @@ class StreamingEngine:
             tick_tuple = (ts_str, symbol, price, 1.0, bid, ask, "CAPITAL", "REG")
         else:
             tick_tuple = tick
+            if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1:
+                sym = tick_tuple[1]
+                if self._subscriptions_initialized or self.active_streaming_symbols:
+                    if sym not in self.active_streaming_symbols:
+                        return
         self._enqueue_tick(tick_tuple)
 
     async def _duckdb_writer_worker(self):
@@ -248,10 +269,23 @@ class StreamingEngine:
 
     async def reload_symbols(self, symbols_override=None):
         """Re-reads streaming_symbol_map and updates live Capital.com subscriptions on the fly."""
+        self._subscriptions_initialized = True
         if symbols_override is not None:
             capital_symbols = list(symbols_override)
             self.active_streaming_symbols = set(capital_symbols)
             self.epic_to_display = {s: s for s in capital_symbols}
+        elif self.registry is not None:
+            active_entries = self.registry.get_active_symbols()
+            capital_symbols = []
+            self.active_streaming_symbols = set()
+            self.epic_to_display = {}
+            for entry in active_entries:
+                sym = entry.symbol
+                self.active_streaming_symbols.add(sym)
+                c_ticker = entry.capital_ticker or sym
+                self.active_streaming_symbols.add(c_ticker)
+                capital_symbols.append(c_ticker)
+                self.epic_to_display[c_ticker] = sym
         else:
             s_map = get_streaming_database_symbols_from_db()
             capital_symbols = []
@@ -269,8 +303,10 @@ class StreamingEngine:
                         else:
                             self.epic_to_display[display_name] = display_name
 
-        if not capital_symbols:
-            capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
+                if not capital_symbols:
+                    capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
+            else:
+                capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
 
         logger.info(f"🔄 Reloading active Capital.com streaming symbols ({len(capital_symbols)}): {capital_symbols}")
         if self.capital_streamer:
@@ -278,22 +314,80 @@ class StreamingEngine:
             return success
         return False
 
-    async def _symbol_watcher_worker(self):
-        """Background worker that waits for reload events or checks periodically for changes."""
+    async def _symbol_watcher_worker(self, poll_interval=None):
+        """Background worker that polls registry version and watches for reload signals."""
+        last_version = None
+        if self.registry:
+            try:
+                last_version = self.registry.version
+            except Exception:
+                pass
+
+        signal_paths = []
+        if self.lake_root:
+            p = Path(self.lake_root)
+            signal_paths.append(p / ".stream_reload.signal")
+            signal_paths.append(p / "_control" / ".stream_reload.signal")
+
         while self.running:
             try:
-                # Wait for explicit reload event or 60s timeout
-                try:
-                    await asyncio.wait_for(self.reload_event.wait(), timeout=60.0)
-                    self.reload_event.clear()
-                    logger.info("⚡ Live reload triggered via signal.")
-                    await self.reload_symbols()
-                except asyncio.TimeoutError:
-                    # Periodic sanity check
-                    pass
+                interval = poll_interval or getattr(self, "registry_poll_interval", 1.0)
+                slice_time = min(0.01, interval)
+                elapsed = 0.0
+
+                while elapsed < interval and self.running:
+                    # 1. Check explicit asyncio reload_event
+                    if self.reload_event.is_set():
+                        self.reload_event.clear()
+                        logger.info("⚡ Live reload triggered via asyncio reload_event.")
+                        await self.reload_symbols()
+                        if self.registry:
+                            try:
+                                last_version = self.registry.version
+                            except Exception:
+                                pass
+                        break
+
+                    # 2. Check signal file hint
+                    found_signal = False
+                    for sp in signal_paths:
+                        if sp.exists():
+                            found_signal = True
+                            try:
+                                sp.unlink()
+                            except Exception:
+                                pass
+                    if found_signal:
+                        logger.info("⚡ Live reload triggered via .stream_reload.signal hint.")
+                        await self.reload_symbols()
+                        if self.registry:
+                            try:
+                                last_version = self.registry.version
+                            except Exception:
+                                pass
+                        break
+
+                    await asyncio.sleep(slice_time)
+                    elapsed += slice_time
+
+                # 3. Periodic registry version polling
+                if self.running and self.registry:
+                    try:
+                        curr_version = self.registry.version
+                        if last_version is not None and curr_version != last_version:
+                            logger.info(f"🔄 Detected registry version bump ({last_version} -> {curr_version}). Reloading...")
+                            last_version = curr_version
+                            await self.reload_symbols()
+                        else:
+                            last_version = curr_version
+                    except Exception as e:
+                        logger.debug(f"Error checking registry version: {e}")
+
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.error(f"Symbol watcher error: {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(0.1)
 
     async def start(self):
         self.running = True
