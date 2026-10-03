@@ -75,7 +75,7 @@ See: [.planning/milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
   - High-throughput micro-batching under memory pressure (100k+ ticks) and bounded queue backpressure.
   - Runner sudden shutdown mid-flush, graceful drain timeouts, and honest queue acknowledgments.
   - Transient disk full / I/O error exponential backoff and quarantine handling.
-- [ ] **Phase 24: Versioned Symbol Registry & Dynamic Reload Stress Tests** (`src/storage/registry.py`, `src/dashboard/server.py`)
+- [x] **Phase 24: Versioned Symbol Registry & Dynamic Reload Stress Tests** (`src/storage/registry.py`, `src/dashboard/server.py`) — completed 2026-10-03 (commit d596bde7, 13/13 tests passing)
   - Cross-process concurrent symbol CRUD lock serialization and monotonic versioning integrity.
   - Rapid symbol toggle/delete flapping and `PENDING_PURGE` generation fences.
   - File signal debouncing and dynamic reload latency under heavy polling.

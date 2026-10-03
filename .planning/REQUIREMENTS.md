@@ -21,9 +21,9 @@ Harden and stress-test the partitioned Parquet tick lake architecture across ext
 - [x] **TEST-P23-03**: Transient disk full / I/O error exponential backoff and quarantine handling (`src/storage/parquet_writer.py`).
 
 ### Phase 24: Versioned Symbol Registry & Dynamic Reload Stress Tests
-- [ ] **TEST-P24-01**: Cross-process concurrent symbol CRUD lock serialization and monotonic versioning integrity (`src/storage/registry.py`).
-- [ ] **TEST-P24-02**: Rapid symbol toggle/delete flapping and `PENDING_PURGE` generation fences (`src/storage/registry.py`).
-- [ ] **TEST-P24-03**: File signal debouncing and dynamic reload latency under heavy polling (`src/dashboard/server.py`).
+- [x] **TEST-P24-01**: Cross-process concurrent symbol CRUD lock serialization and monotonic versioning integrity (`src/storage/registry.py`).
+- [x] **TEST-P24-02**: Rapid symbol toggle/delete flapping and `PENDING_PURGE` generation fences (`src/storage/registry.py`).
+- [x] **TEST-P24-03**: File signal debouncing and dynamic reload latency under heavy polling (`src/dashboard/server.py`).
 
 ### Phase 25: In-Memory DuckDB Lake Reader & Analytics Edge Tests
 - [ ] **TEST-P25-01**: Multi-threaded in-memory DuckDB connection scaling (30+ concurrent readers) without memory leaks (`src/storage/reader.py`).
