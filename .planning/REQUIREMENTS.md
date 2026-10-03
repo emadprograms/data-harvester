@@ -32,10 +32,10 @@ Replace the locked live DuckDB tick database with an append-only, partitioned Pa
 - [x] **LAKE-P3-03**: Pending purge semantics - implement subscription fencing and pending-purge state for symbol removal, preventing corrupted reader globs.
 
 ### Phase 19: In-Memory DuckDB Lake Reader & Dashboard Integration (P4)
-- [ ] **LAKE-P4-01**: `TickLakeReader` engine - private in-memory DuckDB connection per request querying Parquet partitions via partition pruning.
-- [ ] **LAKE-P4-02**: Deterministic OHLCV resampling - calculate 1m/5m/1d candles using `time_bucket()`, `arg_min(price, (timestamp, ingest_id))`, and `arg_max`.
-- [ ] **LAKE-P4-03**: Dashboard analytics integration - migrate `/api/candles`, `/api/stream/tape`, `/api/stream/status`, and integrity checks off legacy DuckDB files.
-- [ ] **LAKE-P4-04**: Repo B reader contract - deliver minimal schema documentation, query examples, and in-memory connection patterns for independent consumers.
+- [x] **LAKE-P4-01**: `TickLakeReader` engine - private in-memory DuckDB connection per request querying Parquet partitions via partition pruning.
+- [x] **LAKE-P4-02**: Deterministic OHLCV resampling - calculate 1m/5m/1d candles using `time_bucket()`, `arg_min(price, (timestamp, ingest_id))`, and `arg_max`.
+- [x] **LAKE-P4-03**: Dashboard analytics integration - migrate `/api/candles`, `/api/stream/tape`, `/api/stream/status`, and integrity checks off legacy DuckDB files.
+- [x] **LAKE-P4-04**: Repo B reader contract - deliver minimal schema documentation, query examples, and in-memory connection patterns for independent consumers.
 
 ### Phase 20: Zero-Loss Migration Tooling & Rehearsal (P6)
 - [ ] **LAKE-P6-01**: Migration CLI tool - implement `tools/migrate_streaming_to_parquet.py` with `plan`, `export`, `verify`, and `publish` modes.

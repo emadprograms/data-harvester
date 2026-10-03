@@ -65,7 +65,7 @@ See: [.planning/milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
 - [x] **Phase 18: Versioned Symbol Registry & Administrative Compatibility (P3)** (completed 2026-10-03)
   - Implement `src/storage/registry.py` (atomic JSON registry, version polling).
   - Dynamic reload without DuckDB file locks; pending-purge state handling.
-- [ ] **Phase 19: In-Memory DuckDB Lake Reader & Dashboard Integration (P4)**
+- [x] **Phase 19: In-Memory DuckDB Lake Reader & Dashboard Integration (P4)** (completed 2026-10-03)
   - Implement `src/storage/reader.py` (`TickLakeReader` with in-memory DuckDB).
   - Deterministic OHLCV resampling via `arg_min(price, (timestamp, ingest_id))`.
   - Update dashboard queries; deliver minimal read contract for Repo B.
