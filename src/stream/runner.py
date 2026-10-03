@@ -1,11 +1,13 @@
 """
 24/7 Capital.com Exclusive Streaming Runner.
 Connects to Capital.com WebSocket, receives real-time tick quotes,
-and flushes them into dedicated streaming.duckdb in batched transactions.
+and flushes them into dedicated streaming.duckdb in batched transactions
+or partitioned Parquet Tick Lake.
 Supports dynamic subscription reload without dropping the WebSocket connection.
 """
 import asyncio
 import logging
+from pathlib import Path
 import signal
 import sys
 import time
@@ -28,6 +30,13 @@ logging.basicConfig(
 logger = logging.getLogger("stream_runner")
 
 
+class BoundedWriteQueue(asyncio.Queue):
+    """Asyncio Queue with an unfinished_tasks property for honest task_done tracking."""
+    @property
+    def unfinished_tasks(self) -> int:
+        return self._unfinished_tasks
+
+
 class StreamingEngine:
     """Master streaming orchestrator saving pure tick-by-tick data into partitioned Parquet tick lake or streaming.duckdb."""
     def __init__(
@@ -44,11 +53,13 @@ class StreamingEngine:
         self.flush_interval = flush_interval
         self.enable_binance = enable_binance
         self.running = False
-        self.write_queue = asyncio.Queue(maxsize=max_queue_size)
+        self.write_queue = BoundedWriteQueue(maxsize=max_queue_size)
         self.reload_event = asyncio.Event()
         self.db_conn = None
         self.total_ticks_saved = 0
+        self.total_ticks_persisted = 0
         self.writer = None
+        self.lake_writer = None
 
         if self.lake_root is not None:
             from src.storage.parquet_writer import TickLakeWriter
@@ -58,7 +69,24 @@ class StreamingEngine:
                 flush_interval_seconds=flush_interval,
                 max_queue_size=max_queue_size,
             )
+            self.lake_writer = self.writer
             self.db_path = None
+        elif db_path is None and (os.environ.get("TICK_LAKE_ROOT") or os.environ.get("DATA_DIR")):
+            try:
+                from src.storage.config import resolve_tick_lake_root
+                resolved_root = resolve_tick_lake_root()
+                self.lake_root = resolved_root
+                from src.storage.parquet_writer import TickLakeWriter
+                self.writer = TickLakeWriter(
+                    root=self.lake_root,
+                    writer_id=writer_id,
+                    flush_interval_seconds=flush_interval,
+                    max_queue_size=max_queue_size,
+                )
+                self.lake_writer = self.writer
+                self.db_path = None
+            except Exception:
+                self.db_path = DEFAULT_STREAMING_DB_PATH
         else:
             self.db_path = db_path or DEFAULT_STREAMING_DB_PATH
 
@@ -153,7 +181,66 @@ class StreamingEngine:
 
     async def _lake_writer_worker(self):
         """Worker that drains the write queue and batches raw tick writes into TickLakeWriter."""
-        raise NotImplementedError("StreamingEngine._lake_writer_worker is not implemented yet.")
+        buffer = []
+        last_flush = time.monotonic()
+
+        while self.running or not self.write_queue.empty():
+            try:
+                wait_time = min(0.05, self.flush_interval) if buffer else (0.05 if not self.running else min(0.2, self.flush_interval))
+                try:
+                    tick = await asyncio.wait_for(self.write_queue.get(), timeout=wait_time)
+                    # Normalize if 9-element bar tuple from legacy callers: (ts, sym, o, h, l, c, v, sess, src)
+                    if len(tick) == 9:
+                        tick = (tick[0], tick[1], tick[5], tick[6], None, None, tick[8], tick[7])
+                    buffer.append(tick)
+                    while len(buffer) < 1000:
+                        try:
+                            t = self.write_queue.get_nowait()
+                            if len(t) == 9:
+                                t = (t[0], t[1], t[5], t[6], None, None, t[8], t[7])
+                            buffer.append(t)
+                        except asyncio.QueueEmpty:
+                            break
+                except asyncio.TimeoutError:
+                    pass
+
+                now = time.monotonic()
+                should_flush = (
+                    len(buffer) >= 1000 or
+                    (buffer and (now - last_flush) >= self.flush_interval) or
+                    (not self.running and buffer)
+                )
+
+                if should_flush:
+                    batch = list(buffer)
+                    buffer.clear()
+                    await self.writer.publish_batch_async(batch)
+                    batch_len = len(batch)
+                    self.total_ticks_persisted += batch_len
+                    self.total_ticks_saved += batch_len
+                    for _ in range(batch_len):
+                        self.write_queue.task_done()
+                    last_flush = time.monotonic()
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Lake writer worker error: {e}")
+                await asyncio.sleep(0.1)
+
+        # Final flush on worker exit if buffer still has items
+        if buffer:
+            try:
+                batch = list(buffer)
+                buffer.clear()
+                await self.writer.publish_batch_async(batch)
+                batch_len = len(batch)
+                self.total_ticks_persisted += batch_len
+                self.total_ticks_saved += batch_len
+                for _ in range(batch_len):
+                    self.write_queue.task_done()
+            except Exception as e:
+                logger.error(f"Error during final lake flush: {e}")
 
     def trigger_reload(self):
         """Signals the background watcher to reload symbol subscriptions immediately."""
@@ -210,11 +297,12 @@ class StreamingEngine:
 
     async def start(self):
         self.running = True
-        logger.info(f"Initializing streaming database schema ({self.db_path})...")
-        init_conn = get_streaming_db_connection(self.db_path)
-        init_streaming_db(init_conn)
-        if init_conn:
-            init_conn.close()
+        if self.writer is None:
+            logger.info(f"Initializing streaming database schema ({self.db_path})...")
+            init_conn = get_streaming_db_connection(self.db_path)
+            init_streaming_db(init_conn)
+            if init_conn:
+                init_conn.close()
 
         # Discover symbols from streaming_database_symbols
         s_map = get_streaming_database_symbols_from_db()
@@ -246,8 +334,13 @@ class StreamingEngine:
             on_tick_callback=self._handle_capital_tick
         )
 
+        if self.writer is not None:
+            writer_worker_task = asyncio.create_task(self._lake_writer_worker())
+        else:
+            writer_worker_task = asyncio.create_task(self._duckdb_writer_worker())
+
         tasks = [
-            asyncio.create_task(self._duckdb_writer_worker()),
+            writer_worker_task,
             asyncio.create_task(self.capital_streamer.start()),
             asyncio.create_task(self._symbol_watcher_worker()),
         ]
@@ -271,8 +364,7 @@ class StreamingEngine:
         except asyncio.CancelledError:
             logger.info("Streaming Engine stopping...")
         finally:
-            if self.db_conn:
-                self.db_conn.close()
+            await self.shutdown()
 
     def stop(self):
         logger.info("Stopping Streaming Engine...")
@@ -284,21 +376,74 @@ class StreamingEngine:
 
     async def shutdown(self):
         """Gracefully drains remaining queued ticks and closes TickLakeWriter."""
-        raise NotImplementedError("StreamingEngine.shutdown is not implemented yet.")
+        self.running = False
+        if self.capital_streamer:
+            self.capital_streamer.stop()
+        if self.binance_streamer:
+            self.binance_streamer.stop()
+
+        # Await write queue drain
+        if hasattr(self, "write_queue"):
+            try:
+                await asyncio.wait_for(self.write_queue.join(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning("Timed out waiting for write queue to drain during shutdown")
+
+        if self.writer is not None:
+            try:
+                await self.writer.flush_async()
+            except Exception as e:
+                logger.warning(f"Error during writer flush_async: {e}")
+            try:
+                await self.writer.close_async()
+            except Exception as e:
+                logger.warning(f"Error during writer close_async: {e}")
+
+        if self.db_conn:
+            self.db_conn.close()
+            self.db_conn = None
 
 
 def main():
     engine = StreamingEngine()
 
-    def handle_signal(sig, frame):
-        logger.info(f"Received exit signal ({sig}), shutting down...")
-        engine.stop()
-        sys.exit(0)
+    async def _async_main():
+        stop_event = asyncio.Event()
 
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
+        def _handle_signal():
+            logger.info("Received exit signal, initiating graceful shutdown...")
+            stop_event.set()
 
-    asyncio.run(engine.start())
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _handle_signal)
+            except NotImplementedError:
+                signal.signal(sig, lambda s, f: stop_event.set())
+
+        engine_task = asyncio.create_task(engine.start())
+        stop_task = asyncio.create_task(stop_event.wait())
+
+        done, pending = await asyncio.wait(
+            [engine_task, stop_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if stop_event.is_set():
+            engine.stop()
+            await engine.shutdown()
+
+        for t in pending:
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+
+    try:
+        asyncio.run(_async_main())
+    except KeyboardInterrupt:
+        logger.info("Streaming Engine process stopped.")
 
 
 if __name__ == "__main__":
