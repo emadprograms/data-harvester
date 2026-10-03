@@ -243,6 +243,21 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
         client.close()
 
 
+def _get_lake_reader():
+    """Helper to obtain TickLakeReader when lake root or partitions exist."""
+    try:
+        from src.storage.reader import get_tick_lake_reader
+        reader = get_tick_lake_reader()
+        if reader and reader.root:
+            ticks_dir = reader.root / "ticks"
+            status_file = reader.root / "_control" / "writer_status.json"
+            if ticks_dir.is_dir() or status_file.is_file() or os.environ.get("TICK_LAKE_ROOT"):
+                return reader
+    except Exception:
+        pass
+    return None
+
+
 def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, client=None, date: str = None, hours: str = "extended") -> dict:
     """
     Fetches OHLCV candles resampled on-the-fly exclusively from raw ticks in data/streaming.duckdb.
@@ -255,6 +270,21 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
     symbol = (symbol or "").strip().upper()
     if not symbol:
         return {"error": "symbol parameter is required", "candles": [], "count": 0, "database": "streaming"}
+
+    if client is None:
+        lake_reader = _get_lake_reader()
+        if lake_reader is not None:
+            files = lake_reader.resolve_partition_files(symbol=symbol)
+            if files or os.environ.get("TICK_LAKE_ROOT"):
+                return lake_reader.get_candles(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start=start,
+                    end=end,
+                    limit=limit,
+                    date=date,
+                    hours=hours,
+                )
 
     timeframe = (timeframe or "1m").lower()
     interval_map = {
@@ -707,8 +737,14 @@ def get_symbols_coverage() -> dict:
 
 def get_stream_tape(symbol: str = None, limit: int = 50) -> dict:
     """
-    Returns latest raw ticks from streaming.duckdb, calculating spread and throughput.
+    Returns latest raw ticks from streaming tick lake or streaming.duckdb, calculating spread and throughput.
     """
+    lake_reader = _get_lake_reader()
+    if lake_reader is not None:
+        files = lake_reader.resolve_partition_files(symbol=symbol)
+        if files or os.environ.get("TICK_LAKE_ROOT"):
+            return lake_reader.get_tape(symbol=symbol, limit=limit)
+
     limit = min(max(1, int(limit or 50)), 200)
     client = get_streaming_db_connection(read_only=True)
     if not client:
@@ -764,8 +800,22 @@ def get_stream_tape(symbol: str = None, limit: int = 50) -> dict:
 
 def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int = 10000, offset: int = 0, direction: str = "asc") -> dict:
     """
-    Queries raw ticks from streaming.duckdb with filtering by symbol, date/time range, limit, offset, and direction.
+    Queries raw ticks from tick lake or streaming.duckdb with filtering by symbol, date/time range, limit, offset, and direction.
     """
+    lake_reader = _get_lake_reader()
+    if lake_reader is not None:
+        files = lake_reader.resolve_partition_files(symbol=symbol)
+        if files or os.environ.get("TICK_LAKE_ROOT"):
+            ticks = lake_reader.query_ticks(
+                symbol=symbol,
+                start=start,
+                end=end,
+                limit=limit,
+                offset=offset,
+                direction=direction,
+            )
+            return {"ticks": ticks, "count": len(ticks), "symbol": symbol or "ALL"}
+
     limit = min(max(1, int(limit or 10000)), 100000)
     offset = max(0, int(offset or 0))
     direction = "DESC" if str(direction).lower() == "desc" else "ASC"
@@ -834,8 +884,14 @@ def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int
 
 def get_stream_status() -> dict:
     """
-    Inspects process table for src.stream.runner and checks recent tick throughput.
+    Inspects writer status file or process table for src.stream.runner and checks recent tick throughput.
     """
+    lake_reader = _get_lake_reader()
+    if lake_reader is not None:
+        status_file = lake_reader.root / "_control" / "writer_status.json"
+        if status_file.is_file() or os.environ.get("TICK_LAKE_ROOT"):
+            return lake_reader.get_stream_status()
+
     current_pid = os.getpid()
     running_pids = []
     
@@ -992,8 +1048,15 @@ def discover_available_weeks(client=None) -> list[dict]:
     sorted descending by week_start.
     """
     now = time.time()
-    if client is None and (_AVAILABLE_WEEKS_CACHE["weeks"] and (now - _AVAILABLE_WEEKS_CACHE["timestamp"] < 300)):
-        return _AVAILABLE_WEEKS_CACHE["weeks"]
+    if client is None:
+        lake_reader = _get_lake_reader()
+        if lake_reader is not None:
+            lake_weeks = lake_reader.discover_available_weeks()
+            if lake_weeks or os.environ.get("TICK_LAKE_ROOT"):
+                return lake_weeks
+
+        if _AVAILABLE_WEEKS_CACHE["weeks"] and (now - _AVAILABLE_WEEKS_CACHE["timestamp"] < 300):
+            return _AVAILABLE_WEEKS_CACHE["weeks"]
 
     own_client = False
     if client is None:
@@ -1111,6 +1174,22 @@ def get_streaming_continuity_analysis(
     view_mode = "all" if is_all else symbol
     include_extended = bool(include_extended)
 
+    if client is None:
+        lake_reader = _get_lake_reader()
+        if lake_reader is not None:
+            ticks_dir = lake_reader.root / "ticks"
+            if ticks_dir.is_dir() or os.environ.get("TICK_LAKE_ROOT"):
+                return lake_reader.get_streaming_continuity_analysis(
+                    days=days,
+                    symbol=symbol,
+                    include_extended=include_extended,
+                    week_start=week_start,
+                    target_date=target_date,
+                    week_offset=week_offset,
+                    target_week=target_week,
+                    end_date=end_date,
+                )
+
     own_client = False
     if client is None:
         client = get_streaming_db_connection(read_only=True)
@@ -1133,6 +1212,7 @@ def get_streaming_continuity_analysis(
 
         if not client:
             return {
+                "status": "healthy",
                 "database": "streaming",
                 "view_mode": view_mode,
                 "symbol": symbol,
@@ -1174,6 +1254,7 @@ def get_streaming_continuity_analysis(
         table_name = "tick_data" if "tick_data" in tables else ("ticks" if "ticks" in tables else None)
         if not table_name:
             return {
+                "status": "healthy",
                 "database": "streaming",
                 "view_mode": view_mode,
                 "symbol": symbol,
@@ -1194,6 +1275,7 @@ def get_streaming_continuity_analysis(
         if not count_row or count_row[0] == 0:
             empty_spec = {s: {"symbol": s, "coverage_pct": 100.0, "status": "healthy", "total_gaps": 0, "total_outage_minutes": 0, "gaps": []} for s in eval_symbols}
             return {
+                "status": "healthy",
                 "database": "streaming",
                 "view_mode": view_mode,
                 "symbol": symbol,
@@ -1635,7 +1717,12 @@ def get_streaming_continuity_analysis(
             "gaps": all_gaps,
         }
 
+        overall_status = "healthy"
+        if total_outage_mins > 0:
+            overall_status = "outage" if any(g.get("status") == "outage" for g in all_gaps) else "partial"
+
         return {
+            "status": overall_status,
             "database": "streaming",
             "view_mode": view_mode,
             "symbol": symbol,

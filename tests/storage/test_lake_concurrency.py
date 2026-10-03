@@ -46,6 +46,10 @@ def test_lake_with_data(tmp_path):
     return lake_root
 
 
+import subprocess
+import sys
+import time
+
 def test_lake_reader_never_acquires_disk_lock(test_lake_with_data, tmp_path):
     """
     Simulate another process holding an exclusive write lock on a legacy streaming.duckdb file.
@@ -57,13 +61,15 @@ def test_lake_reader_never_acquires_disk_lock(test_lake_with_data, tmp_path):
     dummy_db_dir.mkdir(parents=True, exist_ok=True)
     streaming_db_path = dummy_db_dir / "streaming.duckdb"
 
-    # Open exclusive write connection to streaming.duckdb
-    exclusive_disk_conn = duckdb.connect(str(streaming_db_path), read_only=False)
-    exclusive_disk_conn.execute("CREATE TABLE locks (id INT PRIMARY KEY, locked_at TIMESTAMP);")
-    exclusive_disk_conn.execute("INSERT INTO locks VALUES (1, now());")
+    # Start external process holding exclusive write connection to streaming.duckdb
+    proc = subprocess.Popen([
+        sys.executable, "-c",
+        f"import duckdb, time; c = duckdb.connect(r'{streaming_db_path}', read_only=False); c.execute('CREATE TABLE locks (id INT PRIMARY KEY, locked_at TIMESTAMP);'); c.execute('INSERT INTO locks VALUES (1, now());'); time.sleep(30)"
+    ])
+    time.sleep(0.6)
 
     try:
-        # A second read-write connection to the same file would fail with duckdb.IOException
+        # A second read-write connection to the same file from this process fails with duckdb.IOException
         with pytest.raises(duckdb.IOException):
             _ = duckdb.connect(str(streaming_db_path), read_only=False)
 
@@ -88,7 +94,11 @@ def test_lake_reader_never_acquires_disk_lock(test_lake_with_data, tmp_path):
         assert latest.get("symbol") == "AAPL"
 
     finally:
-        exclusive_disk_conn.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except Exception:
+            proc.kill()
 
 
 def test_concurrent_reader_threads(test_lake_with_data):
