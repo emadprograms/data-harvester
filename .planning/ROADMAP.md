@@ -67,7 +67,7 @@ See: [.planning/milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 
 ### Active Milestone: v4.1 Partitioned Parquet Lake Deep Testing & Hardening
 
-- [ ] **Phase 22: Storage Foundation & Publication Edge Case Tests** (`src/storage/config.py`, `schema.py`, `publication.py`)
+- [x] **Phase 22: Storage Foundation & Publication Edge Case Tests** (`src/storage/config.py`, `schema.py`, `publication.py`) — completed 2026-10-03 (commit 04544d56, 36/36 tests passing)
   - Storage layout path traversal, unicode/special symbol encoding, and corrupted metadata handling.
   - PyArrow schema type coercion, extreme numeric limits (float min/max, subnormal), null bitmasks.
   - Atomic publication concurrency collisions, crashed intent recovery, and file lock serialization.

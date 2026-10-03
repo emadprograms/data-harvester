@@ -11,9 +11,9 @@ Harden and stress-test the partitioned Parquet tick lake architecture across ext
 ## Requirements
 
 ### Phase 22: Storage Foundation & Publication Edge Case Tests
-- [ ] **TEST-P22-01**: Storage layout path traversal, unicode/special symbol encoding, and corrupted metadata handling (`src/storage/config.py`).
-- [ ] **TEST-P22-02**: PyArrow schema type coercion, extreme numeric limits (float min/max, subnormal), null bitmasks (`src/storage/schema.py`).
-- [ ] **TEST-P22-03**: Atomic publication concurrency collisions, crashed intent recovery, and file lock serialization (`src/storage/publication.py`).
+- [x] **TEST-P22-01**: Storage layout path traversal, unicode/special symbol encoding, and corrupted metadata handling (`src/storage/config.py`).
+- [x] **TEST-P22-02**: PyArrow schema type coercion, extreme numeric limits (float min/max, subnormal), null bitmasks (`src/storage/schema.py`).
+- [x] **TEST-P22-03**: Atomic publication concurrency collisions, crashed intent recovery, and file lock serialization (`src/storage/publication.py`).
 
 ### Phase 23: Streaming Writer & Runner Stress & Lifecycle Tests
 - [ ] **TEST-P23-01**: High-throughput micro-batching under memory pressure (100k+ ticks) and bounded queue backpressure (`src/storage/parquet_writer.py`).
