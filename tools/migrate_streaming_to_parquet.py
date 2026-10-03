@@ -10,6 +10,7 @@ Provides zero-loss streaming-to-parquet historical migration with:
 - Fail-fast publication guard with atomic staging promotion and immutable receipts
 """
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
@@ -17,8 +18,11 @@ import json
 import logging
 import os
 from pathlib import Path
+import stat
 import sys
-from typing import Any, Dict, List, Optional, Sequence, Union
+import tempfile
+import time
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import uuid
 
 import duckdb
@@ -27,6 +31,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from src.storage.config import (
+    LakeMaintenanceInProgressError,
     decode_symbol,
     encode_symbol,
     init_tick_lake,
@@ -38,30 +43,117 @@ from src.storage.publication import (
     LakePublisherLock,
     PublishReceipt,
 )
-from src.storage.schema import SchemaValidationError, ticks_to_table
+from src.storage.schema import SchemaValidationError, ticks_to_table, validate_table_v1
 
 logger = logging.getLogger("migration_tool")
 
 
 def _atomic_save_json(data: Dict[str, Any], target_path: Union[str, Path]) -> None:
-    """Atomically write dictionary as JSON using fsync and atomic replace."""
+    """Atomically persist JSON, including a best-effort parent-directory fsync."""
     target_path = Path(target_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target_path.parent / f"tmp_{target_path.stem}_{uuid.uuid4().hex}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_path, target_path)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, target_path)
+        try:
+            directory_fd = os.open(str(target_path.parent), os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+class MigrationError(RuntimeError):
+    """Base error for migration authorization and checkpoint failures."""
+
+
+class MigrationIdentityError(MigrationError):
+    """A source, scope, schema, or resume identity does not match."""
+
+
+class MigrationOwnershipError(MigrationError):
+    """Another cooperative migration process owns the shared staging tree."""
+
+
+class MigrationVerificationError(MigrationError):
+    """Staged or published bytes no longer match their verified authorization."""
+
+
+class MigrationCollisionError(MigrationError):
+    """A namespaced migration destination is already occupied by other bytes."""
+
+
+class SourceSnapshotChangedError(MigrationError):
+    """The source DuckDB changed while the read-only migration was running."""
+
+
+class MigrationOwnershipLock:
+    """Non-blocking OS lock serializing cooperative access to migration staging."""
+
+    def __init__(self, migration_dir: Path, lock_path: Optional[Path] = None):
+        self.migration_dir = Path(migration_dir).resolve()
+        self.lock_path = Path(lock_path or (self.migration_dir / "migration.lock"))
+        self._fd: Optional[int] = None
+
+    def acquire(self) -> bool:
+        if self._fd is not None:
+            return True
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(self.lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            if sys.platform != "win32":
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except (BlockingIOError, OSError, IOError) as exc:
+            os.close(fd)
+            raise MigrationOwnershipError(
+                f"Another migration owns staging for {self.migration_dir}"
+            ) from exc
+        self._fd = fd
+        return True
+
+    def release(self) -> None:
+        if self._fd is None:
+            return
+        try:
+            if sys.platform != "win32":
+                import fcntl
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+            else:
+                import msvcrt
+                os.lseek(self._fd, 0, os.SEEK_SET)
+                msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(self._fd)
+            self._fd = None
+
+    def __enter__(self) -> "MigrationOwnershipLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.release()
 
 
 @dataclass
 class MigrationConfig:
-    """Configuration options for historical migration run."""
+    """Configuration options for a source- and scope-bound migration run."""
     source_db: Optional[Union[str, Path]] = None
     lake_root: Optional[Union[str, Path]] = None
     source_table: Optional[str] = None
-    mode: str = "all"  # "plan" | "export" | "verify" | "publish" | "all"
+    mode: str = "all"
     chunk_size: int = 100_000
     symbols: Optional[Union[str, List[str]]] = None
     date_start: Optional[str] = None
@@ -70,6 +162,7 @@ class MigrationConfig:
     resume: bool = False
     force: bool = False
     compression: str = "snappy"
+    migration_id: Optional[str] = None
 
     def __post_init__(self):
         if self.source_db is not None:
@@ -77,13 +170,15 @@ class MigrationConfig:
         if self.lake_root is not None:
             self.lake_root = Path(self.lake_root)
         if isinstance(self.symbols, str):
-            self.symbols = [s.strip().upper() for s in self.symbols.split(",") if s.strip()]
+            self.symbols = [item.strip().upper() for item in self.symbols.split(",") if item.strip()]
         elif self.symbols is not None:
-            self.symbols = [s.strip().upper() for s in self.symbols if s.strip()]
+            self.symbols = [str(item).strip().upper() for item in self.symbols if str(item).strip()]
         self.chunk_size = int(self.chunk_size)
         self.dry_run = bool(self.dry_run)
         self.resume = bool(self.resume)
         self.force = bool(self.force)
+        if self.migration_id is not None:
+            self.migration_id = str(self.migration_id).lower()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -92,13 +187,14 @@ class MigrationConfig:
             "source_table": self.source_table,
             "mode": self.mode,
             "chunk_size": self.chunk_size,
-            "symbols": list(self.symbols) if self.symbols else None,
+            "symbols": list(self.symbols) if self.symbols is not None else None,
             "date_start": self.date_start,
             "date_end": self.date_end,
             "dry_run": self.dry_run,
             "resume": self.resume,
             "force": self.force,
             "compression": self.compression,
+            "migration_id": self.migration_id,
         }
 
     @classmethod
@@ -116,6 +212,7 @@ class MigrationConfig:
             resume=data.get("resume", False),
             force=data.get("force", False),
             compression=data.get("compression", "snappy"),
+            migration_id=data.get("migration_id"),
         )
 
     def save(self, path: Union[str, Path]) -> None:
@@ -123,8 +220,8 @@ class MigrationConfig:
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> "MigrationConfig":
-        with open(Path(path), "r", encoding="utf-8") as f:
-            return cls.from_dict(json.load(f))
+        with open(Path(path), "r", encoding="utf-8") as handle:
+            return cls.from_dict(json.load(handle))
 
 
 @dataclass
@@ -166,12 +263,19 @@ class PartitionPlan:
 
 @dataclass
 class MigrationPlan:
-    """Execution plan describing symbols, date partitions, and chunk counts to export."""
+    """Execution plan bound to one immutable source snapshot and selection scope."""
     created_at: str = ""
     source_db: str = ""
     lake_root: str = ""
     total_rows: int = 0
     partitions: List[Dict[str, Any]] = field(default_factory=list)
+    migration_id: str = ""
+    source_path: str = ""
+    source_snapshot_sha256: str = ""
+    source_schema_sha256: str = ""
+    source_table: str = ""
+    projection_version: int = 1
+    scope: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -179,7 +283,14 @@ class MigrationPlan:
             "source_db": self.source_db,
             "lake_root": self.lake_root,
             "total_rows": self.total_rows,
-            "partitions": [p.to_dict() if hasattr(p, "to_dict") else p for p in self.partitions],
+            "partitions": [item.to_dict() if hasattr(item, "to_dict") else item for item in self.partitions],
+            "migration_id": self.migration_id,
+            "source_path": self.source_path,
+            "source_snapshot_sha256": self.source_snapshot_sha256,
+            "source_schema_sha256": self.source_schema_sha256,
+            "source_table": self.source_table,
+            "projection_version": self.projection_version,
+            "scope": self.scope,
         }
 
     @classmethod
@@ -190,6 +301,13 @@ class MigrationPlan:
             lake_root=data.get("lake_root", ""),
             total_rows=data.get("total_rows", 0),
             partitions=data.get("partitions", []),
+            migration_id=data.get("migration_id", ""),
+            source_path=data.get("source_path", data.get("source_db", "")),
+            source_snapshot_sha256=data.get("source_snapshot_sha256", ""),
+            source_schema_sha256=data.get("source_schema_sha256", ""),
+            source_table=data.get("source_table", ""),
+            projection_version=data.get("projection_version", 1),
+            scope=data.get("scope", {}),
         )
 
     def save(self, path: Union[str, Path]) -> None:
@@ -197,8 +315,8 @@ class MigrationPlan:
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> "MigrationPlan":
-        with open(Path(path), "r", encoding="utf-8") as f:
-            return cls.from_dict(json.load(f))
+        with open(Path(path), "r", encoding="utf-8") as handle:
+            return cls.from_dict(json.load(handle))
 
 
 @dataclass
@@ -240,19 +358,37 @@ class PartitionState:
 
 @dataclass
 class MigrationState:
-    """State tracking for chunked export and resumption checkpoints."""
+    """Durable migration checkpoint with source identity and per-chunk evidence."""
     updated_at: str = ""
-    status: str = "IN_PROGRESS"  # "IN_PROGRESS" | "PUBLISHED"
+    status: str = "IN_PROGRESS"
     partitions: Dict[str, Any] = field(default_factory=dict)
+    migration_id: str = ""
+    source_path: str = ""
+    source_snapshot_sha256: str = ""
+    source_schema_sha256: str = ""
+    source_table: str = ""
+    projection_version: int = 1
+    scope: Dict[str, Any] = field(default_factory=dict)
+    plan_sha256: str = ""
+    export_options: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "updated_at": self.updated_at,
             "status": self.status,
             "partitions": {
-                k: (v.to_dict() if hasattr(v, "to_dict") else v)
-                for k, v in self.partitions.items()
+                key: (value.to_dict() if hasattr(value, "to_dict") else value)
+                for key, value in self.partitions.items()
             },
+            "migration_id": self.migration_id,
+            "source_path": self.source_path,
+            "source_snapshot_sha256": self.source_snapshot_sha256,
+            "source_schema_sha256": self.source_schema_sha256,
+            "source_table": self.source_table,
+            "projection_version": self.projection_version,
+            "scope": self.scope,
+            "plan_sha256": self.plan_sha256,
+            "export_options": self.export_options,
         }
 
     @classmethod
@@ -261,6 +397,15 @@ class MigrationState:
             updated_at=data.get("updated_at", ""),
             status=data.get("status", "IN_PROGRESS"),
             partitions=data.get("partitions", {}),
+            migration_id=data.get("migration_id", ""),
+            source_path=data.get("source_path", ""),
+            source_snapshot_sha256=data.get("source_snapshot_sha256", ""),
+            source_schema_sha256=data.get("source_schema_sha256", ""),
+            source_table=data.get("source_table", ""),
+            projection_version=data.get("projection_version", 1),
+            scope=data.get("scope", {}),
+            plan_sha256=data.get("plan_sha256", ""),
+            export_options=data.get("export_options", {}),
         )
 
     def save(self, path: Union[str, Path]) -> None:
@@ -268,8 +413,8 @@ class MigrationState:
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> "MigrationState":
-        with open(Path(path), "r", encoding="utf-8") as f:
-            return cls.from_dict(json.load(f))
+        with open(Path(path), "r", encoding="utf-8") as handle:
+            return cls.from_dict(json.load(handle))
 
 
 @dataclass
@@ -314,12 +459,21 @@ class PartitionVerificationResult:
 
 @dataclass
 class VerificationResult:
-    """Result of two-way EXCEPT ALL mathematical reconciliation."""
-    status: str = "FAILED"  # "PASSED" | "FAILED"
+    """Two-way EXCEPT ALL result bound to the exact migration authorization."""
+    status: str = "FAILED"
     total_source_rows: int = 0
     total_parquet_rows: int = 0
     discrepancies: List[Dict[str, Any]] = field(default_factory=list)
     verified_at: str = ""
+    migration_id: str = ""
+    source_path: str = ""
+    source_snapshot_sha256: str = ""
+    source_schema_sha256: str = ""
+    source_table: str = ""
+    projection_version: int = 1
+    scope: Dict[str, Any] = field(default_factory=dict)
+    plan_sha256: str = ""
+    files: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -328,6 +482,15 @@ class VerificationResult:
             "total_parquet_rows": self.total_parquet_rows,
             "discrepancies": self.discrepancies,
             "verified_at": self.verified_at,
+            "migration_id": self.migration_id,
+            "source_path": self.source_path,
+            "source_snapshot_sha256": self.source_snapshot_sha256,
+            "source_schema_sha256": self.source_schema_sha256,
+            "source_table": self.source_table,
+            "projection_version": self.projection_version,
+            "scope": self.scope,
+            "plan_sha256": self.plan_sha256,
+            "files": self.files,
         }
 
     @classmethod
@@ -338,6 +501,15 @@ class VerificationResult:
             total_parquet_rows=data.get("total_parquet_rows", 0),
             discrepancies=data.get("discrepancies", []),
             verified_at=data.get("verified_at", ""),
+            migration_id=data.get("migration_id", ""),
+            source_path=data.get("source_path", ""),
+            source_snapshot_sha256=data.get("source_snapshot_sha256", ""),
+            source_schema_sha256=data.get("source_schema_sha256", ""),
+            source_table=data.get("source_table", ""),
+            projection_version=data.get("projection_version", 1),
+            scope=data.get("scope", {}),
+            plan_sha256=data.get("plan_sha256", ""),
+            files=data.get("files", []),
         )
 
     def save(self, path: Union[str, Path]) -> None:
@@ -345,20 +517,17 @@ class VerificationResult:
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> "VerificationResult":
-        with open(Path(path), "r", encoding="utf-8") as f:
-            return cls.from_dict(json.load(f))
+        with open(Path(path), "r", encoding="utf-8") as handle:
+            return cls.from_dict(json.load(handle))
 
 
 class MigrationOrchestrator:
-    """
-    Coordinates historical migration lifecycle:
-    plan -> export -> verify -> publish
-    """
+    """Coordinates an immutable, source-bound DuckDB-to-Parquet migration."""
+
+    PROJECTION_VERSION = 1
 
     def __init__(self, config: MigrationConfig):
         self.config = config
-
-        # Resolve source_db
         if self.config.source_db is not None:
             self.source_db = Path(self.config.source_db).resolve()
         else:
@@ -369,51 +538,226 @@ class MigrationOrchestrator:
                 repo_root = Path(__file__).resolve().parent.parent
                 self.source_db = (repo_root / "data" / "streaming.duckdb").resolve()
 
-        # Resolve lake_root
         self.lake_root = resolve_tick_lake_root(self.config.lake_root)
-
-        # Migration directories and paths
         self.migration_dir = self.lake_root / "_migration"
         self.staging_dir = self.migration_dir / "staging"
-        self.plan_file = self.migration_dir / "plan.json"
-        self.state_file = self.migration_dir / "state.json"
-        self.verification_file = self.migration_dir / "verification.json"
+        self.plan_file = self.migration_dir / "plan.json"  # latest-run compatibility view
+        self.state_file = self.migration_dir / "state.json"  # latest-run compatibility view
+        self.verification_file = self.migration_dir / "verification.json"  # latest-run compatibility view
+        self.runs_dir = self.migration_dir / "runs"
+        self.active_file = self.migration_dir / "active.json"
+        self.lock_file = self.migration_dir / "migration.lock"
+
+        self.migration_id: Optional[str] = None
+        self.run_dir: Optional[Path] = None
+        self.run_plan_file: Optional[Path] = None
+        self.run_state_file: Optional[Path] = None
+        self.run_verification_file: Optional[Path] = None
+        self.publish_journal_file: Optional[Path] = None
+        self.source_table: Optional[str] = None
+        self.schema_info: Dict[str, Any] = {}
+        self.scope: Dict[str, Any] = {}
+        self.identity: Dict[str, Any] = {}
+
+    @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        return '"' + str(identifier).replace('"', '""') + '"'
+
+    @staticmethod
+    def _canonical_json(data: Any) -> bytes:
+        return json.dumps(
+            data,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        ).encode("utf-8")
+
+    @classmethod
+    def _json_sha256(cls, data: Any) -> str:
+        return hashlib.sha256(cls._canonical_json(data)).hexdigest()
+
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    @classmethod
+    def _schema_sha256(cls, schema: pa.Schema) -> str:
+        return cls._json_sha256([
+            {"name": field.name, "type": str(field.type), "nullable": field.nullable}
+            for field in schema
+        ])
+
+    def _source_snapshot_sha256(self) -> str:
+        """Fingerprint the closed DuckDB file and its WAL sidecar, if present."""
+        if not self.source_db.is_file():
+            raise FileNotFoundError(f"Source database not found at {self.source_db}")
+        candidates = [self.source_db, Path(str(self.source_db) + ".wal")]
+        manifest = []
+        for path in candidates:
+            if path.exists():
+                manifest.append({
+                    "name": path.name,
+                    "size": path.stat().st_size,
+                    "sha256": self._file_sha256(path),
+                })
+        return self._json_sha256(manifest)
+
+    def _normalized_scope(self) -> Dict[str, Any]:
+        symbols = sorted(set(self.config.symbols or [])) or None
+        start = self.config.date_start
+        end = self.config.date_end
+        for label, value in (("date_start", start), ("date_end", end)):
+            if value is not None:
+                try:
+                    if datetime.strptime(value, "%Y-%m-%d").strftime("%Y-%m-%d") != value:
+                        raise ValueError
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"{label} must be an ISO date (YYYY-MM-DD), got {value!r}") from exc
+        if start and end and start > end:
+            raise ValueError("date_start must be less than or equal to date_end")
+        return {"symbols": symbols, "date_start": start, "date_end": end}
+
+    def _ensure_identity(self) -> None:
+        if self.migration_id is not None:
+            return
+        if self.config.chunk_size <= 0:
+            raise ValueError("chunk_size must be a positive integer")
+
+        scope = self._normalized_scope()
+        before = self._source_snapshot_sha256()
+        con = duckdb.connect(str(self.source_db), read_only=True)
+        try:
+            con.execute("BEGIN TRANSACTION")
+            table = self._detect_source_table(con)
+            exists = con.execute(
+                "SELECT count(*) FROM information_schema.tables "
+                "WHERE table_schema='main' AND lower(table_name)=lower(?)",
+                [table],
+            ).fetchone()[0] > 0
+            if exists:
+                schema_info = self._inspect_source_schema(con, table)
+            else:
+                schema_info = {
+                    "table": table,
+                    "columns": {},
+                    "source_columns": [],
+                    "projections": [],
+                    "projection_sql": "",
+                    "ts_col": None,
+                    "sym_col": None,
+                    "price_col": None,
+                }
+            con.execute("COMMIT")
+        except Exception:
+            try:
+                con.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        finally:
+            con.close()
+
+        after = self._source_snapshot_sha256()
+        if before != after:
+            raise SourceSnapshotChangedError(
+                "Source DuckDB changed while migration identity was being established; "
+                "close/checkpoint the source and retry from a frozen snapshot"
+            )
+
+        schema_identity = {
+            "table": table,
+            "source_columns": schema_info.get("source_columns", []),
+            "resolved_columns": schema_info.get("columns", {}),
+            "projection_version": self.PROJECTION_VERSION,
+            "projection_sql": schema_info.get("projection_sql", ""),
+        }
+        schema_sha = self._json_sha256(schema_identity)
+        identity = {
+            "source_path": str(self.source_db),
+            "source_snapshot_sha256": before,
+            "source_schema_sha256": schema_sha,
+            "source_table": table,
+            "projection_version": self.PROJECTION_VERSION,
+            "scope": scope,
+        }
+        requested_id = self.config.migration_id
+        if requested_id is not None:
+            requested_id = str(requested_id).lower()
+            if not re.fullmatch(r"[0-9a-f]{32}", requested_id):
+                raise ValueError("migration_id must be a 32-character hexadecimal UUID")
+            migration_id = requested_id
+        else:
+            migration_id = self._json_sha256(identity)[:32]
+
+        self.migration_id = migration_id
+        self.run_dir = self.runs_dir / migration_id
+        self.run_plan_file = self.run_dir / "plan.json"
+        self.run_state_file = self.run_dir / "state.json"
+        self.run_verification_file = self.run_dir / "verification.json"
+        self.publish_journal_file = self.run_dir / "publish_journal.json"
+        self.source_table = table
+        self.schema_info = schema_info
+        self.scope = scope
+        self.identity = {**identity, "migration_id": migration_id}
+
+    @contextmanager
+    def _source_session(self):
+        """Use one read transaction and reject source changes across the operation."""
+        self._ensure_identity()
+        before = self._source_snapshot_sha256()
+        if before != self.identity["source_snapshot_sha256"]:
+            raise SourceSnapshotChangedError(
+                "Source fingerprint differs from the planned migration snapshot"
+            )
+        con = duckdb.connect(str(self.source_db), read_only=True)
+        try:
+            con.execute("BEGIN TRANSACTION")
+            yield con
+            con.execute("COMMIT")
+        except Exception:
+            try:
+                con.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        finally:
+            con.close()
+        after = self._source_snapshot_sha256()
+        if after != before:
+            raise SourceSnapshotChangedError(
+                "Source DuckDB changed during migration; staged output is not authorized"
+            )
 
     def _detect_source_table(self, con: duckdb.DuckDBPyConnection) -> str:
-        """Auto-detect source tick table name from duckdb metadata."""
+        """Auto-detect the source tick table, preserving the historical precedence."""
         if self.config.source_table:
             return self.config.source_table
-        tables = [
-            row[0]
-            for row in con.execute(
-                "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
-            ).fetchall()
-        ]
+        tables = [row[0] for row in con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+        ).fetchall()]
         if not tables:
             tables = [row[0] for row in con.execute("SHOW TABLES").fetchall()]
-        tables_lower = {t.lower(): t for t in tables}
-        for candidate in ["tick_data", "ticks", "streaming_ticks"]:
-            if candidate in tables_lower:
-                return tables_lower[candidate]
-        if tables:
-            return tables[0]
-        return "tick_data"
+        by_lower = {name.lower(): name for name in tables}
+        for candidate in ("tick_data", "ticks", "streaming_ticks"):
+            if candidate in by_lower:
+                return by_lower[candidate]
+        return tables[0] if tables else "tick_data"
 
     def _inspect_source_schema(self, con: duckdb.DuckDBPyConnection, table: str) -> Dict[str, Any]:
-        """
-        Inspect source table schema, resolve column aliases, and synthesize SQL projections.
-        Raises SchemaValidationError if required columns are missing.
-        """
+        """Resolve legacy aliases and return a canonical eight-column projection."""
         cols_rows = con.execute(
-            "SELECT column_name, data_type FROM information_schema.columns WHERE lower(table_name) = lower(?)",
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_schema='main' AND lower(table_name)=lower(?) ORDER BY ordinal_position",
             [table],
         ).fetchall()
         if not cols_rows:
-            cols_rows = con.execute(f"PRAGMA table_info('{table}')").fetchall()
-            cols_dict = {r[1].lower(): (r[1], str(r[2]).upper()) for r in cols_rows}
-        else:
-            cols_dict = {r[0].lower(): (r[0], str(r[1]).upper()) for r in cols_rows}
-
+            raise SchemaValidationError(f"Source table or view {table!r} has no inspectable columns")
+        cols_dict = {str(name).lower(): (str(name), str(dtype).upper()) for name, dtype in cols_rows}
         alias_map = {
             "timestamp": ["timestamp", "ts", "time", "datetime", "created_at"],
             "symbol": ["symbol", "sym", "ticker"],
@@ -424,659 +768,1401 @@ class MigrationOrchestrator:
             "source": ["source", "feed", "exchange", "src"],
             "session": ["session", "sess"],
         }
-
-        resolved_cols: Dict[str, Optional[str]] = {}
+        resolved: Dict[str, Optional[str]] = {}
         for canonical, aliases in alias_map.items():
-            resolved = None
-            for alias in aliases:
-                if alias.lower() in cols_dict:
-                    resolved = cols_dict[alias.lower()][0]
-                    break
-            resolved_cols[canonical] = resolved
-
-        # Check required columns
-        for req in ["timestamp", "symbol", "price"]:
-            if not resolved_cols[req]:
+            resolved[canonical] = next(
+                (cols_dict[alias][0] for alias in aliases if alias in cols_dict), None
+            )
+        for required in ("timestamp", "symbol", "price"):
+            if not resolved[required]:
                 raise SchemaValidationError(
-                    f"Required column '{req}' missing in source table '{table}'. "
-                    f"Available columns: {list(cols_dict.keys())}"
+                    f"Required column '{required}' missing in source table '{table}'. "
+                    f"Available columns: {list(cols_dict)}"
                 )
 
-        projections = []
-        # 1. timestamp
-        ts_col = resolved_cols["timestamp"]
-        projections.append(f"CAST({ts_col} AS TIMESTAMP) AS timestamp")
-
-        # 2. symbol
-        sym_col = resolved_cols["symbol"]
-        projections.append(f"CAST({sym_col} AS VARCHAR) AS symbol")
-
-        # 3. price
-        price_col = resolved_cols["price"]
-        projections.append(f"CAST({price_col} AS DOUBLE) AS price")
-
-        # 4. volume
-        if resolved_cols["volume"]:
-            projections.append(f"CAST({resolved_cols['volume']} AS DOUBLE) AS volume")
-        else:
-            projections.append("CAST(NULL AS DOUBLE) AS volume")
-
-        # 5. bid
-        if resolved_cols["bid"]:
-            projections.append(f"CAST({resolved_cols['bid']} AS DOUBLE) AS bid")
-        else:
-            projections.append("CAST(NULL AS DOUBLE) AS bid")
-
-        # 6. ask
-        if resolved_cols["ask"]:
-            projections.append(f"CAST({resolved_cols['ask']} AS DOUBLE) AS ask")
-        else:
-            projections.append("CAST(NULL AS DOUBLE) AS ask")
-
-        # 7. source
-        if resolved_cols["source"]:
-            projections.append(f"CAST({resolved_cols['source']} AS VARCHAR) AS source")
-        else:
-            projections.append("CAST('LEGACY' AS VARCHAR) AS source")
-
-        # 8. session
-        if resolved_cols["session"]:
-            projections.append(f"CAST({resolved_cols['session']} AS VARCHAR) AS session")
-        else:
-            projections.append("CAST('REG' AS VARCHAR) AS session")
-
+        projections = [
+            f"CAST({self._quote_identifier(resolved['timestamp'])} AS TIMESTAMP) AS timestamp",
+            f"CAST({self._quote_identifier(resolved['symbol'])} AS VARCHAR) AS symbol",
+            f"CAST({self._quote_identifier(resolved['price'])} AS DOUBLE) AS price",
+        ]
+        for canonical in ("volume", "bid", "ask"):
+            column = resolved[canonical]
+            projections.append(
+                f"CAST({self._quote_identifier(column)} AS DOUBLE) AS {canonical}"
+                if column else f"CAST(NULL AS DOUBLE) AS {canonical}"
+            )
+        for canonical, fallback in (("source", "LEGACY"), ("session", "REG")):
+            column = resolved[canonical]
+            projections.append(
+                f"CAST({self._quote_identifier(column)} AS VARCHAR) AS {canonical}"
+                if column else f"CAST('{fallback}' AS VARCHAR) AS {canonical}"
+            )
         return {
             "table": table,
-            "columns": resolved_cols,
+            "columns": resolved,
+            "source_columns": [{"name": name, "type": dtype} for name, dtype in cols_rows],
             "projections": projections,
             "projection_sql": ", ".join(projections),
-            "ts_col": ts_col,
-            "sym_col": sym_col,
-            "price_col": price_col,
+            "ts_col": resolved["timestamp"],
+            "sym_col": resolved["symbol"],
+            "price_col": resolved["price"],
         }
 
-    def plan(self) -> MigrationPlan:
-        """Analyze source DuckDB and generate execution plan."""
-        if not self.source_db.is_file():
-            raise FileNotFoundError(f"Source database not found at {self.source_db}")
+    def _plan_sha256(self, plan: MigrationPlan) -> str:
+        return self._json_sha256({
+            "migration_id": plan.migration_id,
+            "source_path": plan.source_path,
+            "source_snapshot_sha256": plan.source_snapshot_sha256,
+            "source_schema_sha256": plan.source_schema_sha256,
+            "source_table": plan.source_table,
+            "projection_version": plan.projection_version,
+            "scope": plan.scope,
+            "partitions": plan.partitions,
+            "total_rows": plan.total_rows,
+        })
 
-        con = duckdb.connect(str(self.source_db), read_only=True)
+    def _compute_plan(self, con: duckdb.DuckDBPyConnection) -> MigrationPlan:
+        self._ensure_identity()
+        partitions: List[Dict[str, Any]] = []
+        table = self.source_table or "tick_data"
+        table_exists = con.execute(
+            "SELECT count(*) FROM information_schema.tables "
+            "WHERE table_schema='main' AND lower(table_name)=lower(?)",
+            [table],
+        ).fetchone()[0] > 0
+        if table_exists:
+            info = self.schema_info
+            table_sql = self._quote_identifier(table)
+            ts_sql = self._quote_identifier(info["ts_col"])
+            symbol_sql = self._quote_identifier(info["sym_col"])
+            dirty_query = (
+                f"SELECT count(*) FROM {table_sql} WHERE {ts_sql} IS NULL OR {symbol_sql} IS NULL "
+                f"OR length(trim(CAST({symbol_sql} AS VARCHAR)))=0"
+            )
+            dirty_count = con.execute(dirty_query).fetchone()[0]
+            if dirty_count:
+                raise SchemaValidationError(
+                    f"Source table '{table}' contains {dirty_count} dirty rows with NULL timestamp or empty symbol"
+                )
+
+            query = (
+                f"SELECT symbol, strftime(timestamp, '%Y-%m-%d') AS date, count(*) AS row_count, "
+                f"min(timestamp) AS min_ts, max(timestamp) AS max_ts "
+                f"FROM (SELECT {info['projection_sql']} FROM {table_sql}) AS src"
+            )
+            clauses = []
+            params: List[Any] = []
+            symbols = self.scope["symbols"]
+            if symbols:
+                clauses.append("symbol IN (" + ",".join("?" for _ in symbols) + ")")
+                params.extend(symbols)
+            if self.scope["date_start"]:
+                clauses.append("strftime(timestamp, '%Y-%m-%d') >= ?")
+                params.append(self.scope["date_start"])
+            if self.scope["date_end"]:
+                clauses.append("strftime(timestamp, '%Y-%m-%d') <= ?")
+                params.append(self.scope["date_end"])
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
+            query += " GROUP BY symbol, date ORDER BY symbol, date"
+            for symbol, date_value, count, minimum, maximum in con.execute(query, params).fetchall():
+                partitions.append(PartitionPlan(
+                    symbol=str(symbol),
+                    date=str(date_value),
+                    row_count=int(count),
+                    min_timestamp=minimum.isoformat() if hasattr(minimum, "isoformat") else str(minimum),
+                    max_timestamp=maximum.isoformat() if hasattr(maximum, "isoformat") else str(maximum),
+                ).to_dict())
+
+        return MigrationPlan(
+            created_at=datetime.now(timezone.utc).isoformat(),
+            source_db=str(self.source_db),
+            lake_root=str(self.lake_root),
+            total_rows=sum(part["row_count"] for part in partitions),
+            partitions=partitions,
+            migration_id=self.migration_id or "",
+            source_path=str(self.source_db),
+            source_snapshot_sha256=self.identity["source_snapshot_sha256"],
+            source_schema_sha256=self.identity["source_schema_sha256"],
+            source_table=table,
+            projection_version=self.PROJECTION_VERSION,
+            scope=self.scope,
+        )
+
+    def _new_state(self, status: str, plan: Optional[MigrationPlan] = None) -> MigrationState:
+        return MigrationState(
+            updated_at=datetime.now(timezone.utc).isoformat(),
+            status=status,
+            partitions={},
+            migration_id=self.migration_id or "",
+            source_path=str(self.source_db),
+            source_snapshot_sha256=self.identity.get("source_snapshot_sha256", ""),
+            source_schema_sha256=self.identity.get("source_schema_sha256", ""),
+            source_table=self.source_table or "",
+            projection_version=self.PROJECTION_VERSION,
+            scope=self.scope,
+            plan_sha256=self._plan_sha256(plan) if plan else "",
+            export_options={
+                "chunk_size": self.config.chunk_size,
+                "compression": self.config.compression,
+                "projection_version": self.PROJECTION_VERSION,
+            },
+        )
+
+    def _write_plan(self, plan: MigrationPlan) -> None:
+        assert self.run_plan_file is not None
+        self.run_plan_file.parent.mkdir(parents=True, exist_ok=True)
+        plan.save(self.run_plan_file)
+        plan.save(self.plan_file)
+
+    def _write_state(self, state: MigrationState) -> None:
+        assert self.run_state_file is not None
+        state.updated_at = datetime.now(timezone.utc).isoformat()
+        state.save(self.run_state_file)
+        state.save(self.state_file)
+
+    def _load_state_for(self, migration_id: str) -> Optional[MigrationState]:
+        path = self.runs_dir / migration_id / "state.json"
+        if not path.is_file():
+            return None
         try:
-            table = self._detect_source_table(con)
-            table_exists = (
-                con.execute(
-                    "SELECT count(*) FROM information_schema.tables WHERE lower(table_name) = lower(?)",
-                    [table],
-                ).fetchone()[0]
-                > 0
-            )
+            return MigrationState.load(path)
+        except Exception as exc:
+            raise MigrationError(f"Cannot read migration checkpoint {path}: {exc}") from exc
 
-            partition_plans: List[Dict[str, Any]] = []
-            if table_exists:
-                schema_info = self._inspect_source_schema(con, table)
-                projection_sql = schema_info["projection_sql"]
-                ts_col = schema_info["ts_col"]
-                sym_col = schema_info["sym_col"]
-
-                # Pre-flight dirty rows check
-                dirty_check_query = (
-                    f"SELECT count(*) FROM {table} "
-                    f"WHERE {ts_col} IS NULL "
-                    f"OR {sym_col} IS NULL "
-                    f"OR length(trim(CAST({sym_col} AS VARCHAR))) = 0"
-                )
-                dirty_count = con.execute(dirty_check_query).fetchone()[0]
-                if dirty_count > 0:
-                    raise SchemaValidationError(
-                        f"Source table '{table}' contains {dirty_count} dirty rows with NULL timestamp or empty symbol."
-                    )
-
-                query = (
-                    f"SELECT symbol, strftime(timestamp, '%Y-%m-%d') AS date, "
-                    f"count(*) AS row_count, min(timestamp) AS min_ts, max(timestamp) AS max_ts "
-                    f"FROM (SELECT {projection_sql} FROM {table}) AS src"
-                )
-                where_clauses = []
-                params: List[Any] = []
-
-                if self.config.symbols:
-                    placeholders = ",".join(["?"] * len(self.config.symbols))
-                    where_clauses.append(f"symbol IN ({placeholders})")
-                    params.extend(self.config.symbols)
-                if self.config.date_start:
-                    where_clauses.append("strftime(timestamp, '%Y-%m-%d') >= ?")
-                    params.append(self.config.date_start)
-                if self.config.date_end:
-                    where_clauses.append("strftime(timestamp, '%Y-%m-%d') <= ?")
-                    params.append(self.config.date_end)
-
-                if where_clauses:
-                    query += " WHERE " + " AND ".join(where_clauses)
-                query += " GROUP BY symbol, date ORDER BY symbol, date"
-
-                rows = con.execute(query, params).fetchall()
-                for sym, dt, cnt, min_t, max_t in rows:
-                    min_iso = min_t.isoformat() if hasattr(min_t, "isoformat") else str(min_t)
-                    max_iso = max_t.isoformat() if hasattr(max_t, "isoformat") else str(max_t)
-                    p_plan = PartitionPlan(
-                        symbol=sym,
-                        date=dt,
-                        row_count=cnt,
-                        min_timestamp=min_iso,
-                        max_timestamp=max_iso,
-                    )
-                    partition_plans.append(p_plan.to_dict())
-
-            total_rows = sum(p["row_count"] for p in partition_plans)
-            plan = MigrationPlan(
-                created_at=datetime.now(timezone.utc).isoformat(),
-                source_db=str(self.source_db),
-                lake_root=str(self.lake_root),
-                total_rows=total_rows,
-                partitions=partition_plans,
-            )
-
-            if not self.config.dry_run:
-                self.migration_dir.mkdir(parents=True, exist_ok=True)
-                plan.save(self.plan_file)
-                if not self.state_file.exists():
-                    initial_state = MigrationState(
-                        updated_at=datetime.now(timezone.utc).isoformat(),
-                        status="IN_PROGRESS",
-                        partitions={},
-                    )
-                    initial_state.save(self.state_file)
-
-            return plan
-        finally:
-            con.close()
-
-    def export(self) -> MigrationState:
-        """Export source DuckDB tick_data into staged Parquet chunks."""
-        if not self.source_db.is_file():
-            raise FileNotFoundError(f"Source database not found at {self.source_db}")
-
-        # Invalidate any stale verification receipt before export
-        if self.verification_file.is_file():
+    def _load_state(self) -> Optional[MigrationState]:
+        self._ensure_identity()
+        assert self.run_state_file is not None
+        if self.run_state_file.is_file():
             try:
-                self.verification_file.unlink()
+                return MigrationState.load(self.run_state_file)
+            except Exception as exc:
+                raise MigrationError(f"Cannot read migration checkpoint {self.run_state_file}: {exc}") from exc
+        # Read a prior single-run checkpoint only when it is already bound to this UUID.
+        if self.state_file.is_file():
+            try:
+                compatibility = MigrationState.load(self.state_file)
+            except Exception as exc:
+                raise MigrationError(f"Cannot read latest migration checkpoint {self.state_file}: {exc}") from exc
+            if compatibility.migration_id == self.migration_id:
+                return compatibility
+        return None
+
+    def _validate_identity_fields(self, payload: Dict[str, Any], label: str) -> None:
+        expected = self.identity
+        for key in (
+            "migration_id", "source_path", "source_snapshot_sha256",
+            "source_schema_sha256", "source_table", "projection_version", "scope",
+        ):
+            if payload.get(key) != expected.get(key):
+                raise MigrationIdentityError(
+                    f"{label} identity mismatch for {key}: expected {expected.get(key)!r}, "
+                    f"found {payload.get(key)!r}"
+                )
+
+    def _read_active(self) -> Optional[Dict[str, Any]]:
+        if not self.active_file.is_file():
+            return None
+        try:
+            payload = json.loads(self.active_file.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict) or not payload.get("migration_id"):
+                raise ValueError("missing migration_id")
+            return payload
+        except Exception as exc:
+            raise MigrationError(f"Active migration marker is corrupt: {self.active_file}: {exc}") from exc
+
+    def _write_active(self) -> None:
+        _atomic_save_json({
+            "migration_id": self.migration_id,
+            "source_snapshot_sha256": self.identity["source_snapshot_sha256"],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, self.active_file)
+
+    def _assert_active_can_export(self) -> None:
+        active = self._read_active()
+        if not active or active.get("migration_id") == self.migration_id:
+            return
+        previous = self._load_state_for(str(active["migration_id"]))
+        if previous is None or previous.status != "PUBLISHED":
+            raise MigrationOwnershipError(
+                f"Migration {active['migration_id']} owns shared staging and is not published; "
+                "resume or finish it before exporting another migration"
+            )
+        self._cleanup_published_stage(previous)
+
+    def _find_resume_conflict(self) -> Optional[str]:
+        """Explain why --resume cannot attach to the current source/scope identity."""
+        active = self._read_active()
+        if active and active.get("migration_id") != self.migration_id:
+            previous = self._load_state_for(str(active["migration_id"]))
+            if previous is None or previous.status != "PUBLISHED":
+                return f"active migration is {active.get('migration_id')}"
+        if self.runs_dir.is_dir():
+            for checkpoint in self.runs_dir.glob("*/state.json"):
+                try:
+                    state = MigrationState.load(checkpoint)
+                except Exception as exc:
+                    raise MigrationError(f"Cannot inspect prior checkpoint {checkpoint}: {exc}") from exc
+                if state.source_path != str(self.source_db):
+                    continue
+                if state.scope != self.scope:
+                    return "filter scope differs from the previous migration for this source"
+                if state.source_snapshot_sha256 != self.identity["source_snapshot_sha256"]:
+                    return "source snapshot fingerprint differs from the previous migration"
+                if state.source_schema_sha256 != self.identity["source_schema_sha256"]:
+                    return "source schema/projection differs from the previous migration"
+        return None
+
+    def _validate_resume_state(self, state: MigrationState) -> None:
+        self._validate_identity_fields(state.to_dict(), "Resume checkpoint")
+        if state.plan_sha256:
+            plan = self._load_plan(required=True)
+            if self._plan_sha256(plan) != state.plan_sha256:
+                raise MigrationIdentityError("Resume checkpoint plan fingerprint changed")
+        old_options = state.export_options or {}
+        requested_options = {
+            "chunk_size": self.config.chunk_size,
+            "compression": self.config.compression,
+            "projection_version": self.PROJECTION_VERSION,
+        }
+        if old_options and old_options != requested_options:
+            raise MigrationIdentityError(
+                f"Resume export options changed: checkpoint={old_options}, requested={requested_options}"
+            )
+
+    def _load_plan(self, required: bool = True) -> Optional[MigrationPlan]:
+        self._ensure_identity()
+        assert self.run_plan_file is not None
+        if not self.run_plan_file.is_file():
+            if required:
+                raise MigrationError(f"Migration plan not found for {self.migration_id}")
+            return None
+        try:
+            plan = MigrationPlan.load(self.run_plan_file)
+        except Exception as exc:
+            raise MigrationError(f"Cannot read migration plan {self.run_plan_file}: {exc}") from exc
+        self._validate_identity_fields(plan.to_dict(), "Migration plan")
+        if plan.lake_root != str(self.lake_root):
+            raise MigrationIdentityError("Migration plan targets a different lake root")
+        return plan
+
+    def _ensure_plan_locked(self) -> MigrationPlan:
+        plan = self._load_plan(required=False)
+        if plan is None or self.config.force:
+            with self._source_session() as con:
+                plan = self._compute_plan(con)
+            self._write_plan(plan)
+        return plan
+
+    def plan(self) -> MigrationPlan:
+        """Analyze a frozen source snapshot and optionally persist the run-bound plan."""
+        self._ensure_identity()
+        if self.config.dry_run:
+            with self._source_session() as con:
+                return self._compute_plan(con)
+        with MigrationOwnershipLock(self.migration_dir, self.lock_file):
+            plan = self._ensure_plan_locked()
+            # Keep the documented latest-run compatibility view repairable even
+            # when its atomic write was interrupted after the run-bound plan saved.
+            plan.save(self.plan_file)
+            state = self._load_state()
+            if state is None:
+                self._write_state(self._new_state("PLANNED", plan))
+            else:
+                self._validate_identity_fields(state.to_dict(), "Migration checkpoint")
+                if not state.plan_sha256:
+                    state.plan_sha256 = self._plan_sha256(plan)
+                    self._write_state(state)
+            return plan
+
+    @staticmethod
+    def _partition_key(symbol: str, date_value: str) -> str:
+        return f"symbol={encode_symbol(symbol)}/date={date_value}"
+
+    def _staging_relative(self, symbol: str, date_value: str, name: str) -> str:
+        return (
+            f"staging/ticks/symbol={encode_symbol(symbol)}/date={date_value}/{name}"
+        )
+
+    def _safe_path(self, base: Path, relative_value: str) -> Path:
+        relative = Path(str(relative_value))
+        if relative.is_absolute() or ".." in relative.parts or "\\" in str(relative_value):
+            raise MigrationError(f"Unsafe migration path {relative_value!r}")
+        resolved_base = Path(base).resolve()
+        candidate = (resolved_base / relative).resolve(strict=False)
+        if not candidate.is_relative_to(resolved_base):
+            raise MigrationError(f"Migration path escapes its owner directory: {relative_value!r}")
+        current = resolved_base
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                raise MigrationError(f"Symlink is not permitted in migration path: {current}")
+        return candidate
+
+    def _stage_directory(self, symbol: str, date_value: str) -> Path:
+        return self.staging_dir / "ticks" / f"symbol={encode_symbol(symbol)}" / f"date={date_value}"
+
+    def _remove_verification_authorization(self) -> None:
+        assert self.run_verification_file is not None
+        for path in (self.run_verification_file, self.verification_file):
+            try:
+                path.unlink(missing_ok=True)
+                if path.parent.is_dir():
+                    try:
+                        directory_fd = os.open(str(path.parent), os.O_RDONLY)
+                        try:
+                            os.fsync(directory_fd)
+                        finally:
+                            os.close(directory_fd)
+                    except OSError:
+                        pass
+            except OSError as exc:
+                raise MigrationError(
+                    f"Cannot invalidate stale verification authorization {path}; export aborted"
+                ) from exc
+
+    def _actual_stage_paths(self) -> List[Path]:
+        ticks = self.staging_dir / "ticks"
+        if not ticks.exists():
+            return []
+        return sorted(ticks.rglob("*.parquet"))
+
+    def _clear_partition_stage(self, symbol: str, date_value: str) -> None:
+        directory = self._stage_directory(symbol, date_value)
+        if directory.exists():
+            for path in directory.rglob("*.parquet"):
+                if path.is_symlink():
+                    raise MigrationError(f"Refusing to unlink symlinked staged chunk {path}")
+                path.unlink()
+            for path in sorted(directory.rglob("*"), reverse=True):
+                if path.is_dir() and not path.is_symlink():
+                    try:
+                        path.rmdir()
+                    except OSError:
+                        pass
+            try:
+                directory.rmdir()
             except OSError:
                 pass
 
-        # Load existing state if resuming
-        if self.state_file.exists() and self.config.resume:
-            state = MigrationState.load(self.state_file)
-        else:
-            state = MigrationState(
-                updated_at=datetime.now(timezone.utc).isoformat(),
-                status="IN_PROGRESS",
-                partitions={},
+    def _cleanup_published_stage(self, state: MigrationState) -> None:
+        """Remove only files named by a completed migration checkpoint."""
+        known = set()
+        for partition_state in state.partitions.values():
+            for detail in partition_state.get("files", []):
+                rel = detail.get("staging_path")
+                if rel:
+                    known.add(str(rel))
+        actual = {
+            f"staging/{path.relative_to(self.staging_dir).as_posix()}"
+            for path in self._actual_stage_paths()
+        }
+        if not actual:
+            return
+        if not actual.issubset(known):
+            raise MigrationOwnershipError(
+                "Shared migration staging contains files not owned by the published checkpoint"
             )
-
-        # Obtain plan
-        if (
-            self.plan_file.is_file()
-            and not self.config.force
-            and not self.config.symbols
-            and not self.config.date_start
-            and not self.config.date_end
-        ):
-            plan = MigrationPlan.load(self.plan_file)
-        else:
-            plan = self.plan()
-
-        target_partitions = plan.partitions
-        if self.config.symbols:
-            target_partitions = [p for p in target_partitions if p["symbol"] in self.config.symbols]
-        if self.config.date_start:
-            target_partitions = [p for p in target_partitions if p["date"] >= self.config.date_start]
-        if self.config.date_end:
-            target_partitions = [p for p in target_partitions if p["date"] <= self.config.date_end]
-
-        con = duckdb.connect(str(self.source_db), read_only=True)
-        try:
-            table = self._detect_source_table(con)
-            schema_info = self._inspect_source_schema(con, table)
-            projection_sql = schema_info["projection_sql"]
-
-            for p in target_partitions:
-                symbol = p["symbol"]
-                date_str = p["date"]
-                encoded_symbol = encode_symbol(symbol)
-                part_key = f"symbol={encoded_symbol}/date={date_str}"
-
-                # Check resume
-                if self.config.resume and part_key in state.partitions:
-                    p_state = state.partitions[part_key]
-                    if isinstance(p_state, dict) and p_state.get("status") == "COMPLETED":
-                        continue
-                    elif hasattr(p_state, "status") and p_state.status == "COMPLETED":
-                        continue
-
-                staging_part_dir = (
-                    self.staging_dir / "ticks" / f"symbol={encoded_symbol}" / f"date={date_str}"
-                )
-                if not self.config.dry_run:
-                    staging_part_dir.mkdir(parents=True, exist_ok=True)
-                    # Purge any existing .parquet files in uncompleted staging partition to prevent stale chunks
-                    for old_chunk in staging_part_dir.glob("*.parquet"):
-                        try:
-                            old_chunk.unlink()
-                        except OSError:
-                            pass
-
-                cur = con.cursor()
-                query = (
-                    f"SELECT timestamp, symbol, price, volume, bid, ask, source, session "
-                    f"FROM (SELECT {projection_sql} FROM {table}) AS src "
-                    f"WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ? "
-                    f"ORDER BY timestamp ASC"
-                )
-                cur.execute(query, [symbol, date_str])
-
-                chunk_idx = 1
-                row_idx = 1
-                chunk_files = []
-                file_sizes = {}
-                sha_map = {}
-                part_row_count = 0
-
-                while True:
-                    rows = cur.fetchmany(self.config.chunk_size)
-                    if not rows:
-                        break
-
-                    chunk_name = f"chunk_{chunk_idx:06d}.parquet"
-                    chunk_path = staging_part_dir / chunk_name
-
-                    if not self.config.dry_run:
-                        chunk_records = []
-                        for r in rows:
-                            iid = f"mig_{symbol}_{date_str.replace('-', '')}_{row_idx:08d}"
-                            chunk_records.append((
-                                r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], iid
-                            ))
-                            row_idx += 1
-
-                        table_arrow = ticks_to_table(chunk_records, validate=True)
-                        symbol_dict = pc.dictionary_encode(table_arrow["symbol"])
-                        table_arrow = table_arrow.set_column(
-                            table_arrow.schema.get_field_index("symbol"),
-                            pa.field("symbol", pa.dictionary(pa.int32(), pa.string()), nullable=False),
-                            symbol_dict,
-                        )
-                        pq.write_table(
-                            table_arrow,
-                            chunk_path,
-                            compression=self.config.compression,
-                        )
-                        with open(chunk_path, "r+b") as f:
-                            os.fsync(f.fileno())
-
-                        f_size = chunk_path.stat().st_size
-                        f_sha = hashlib.sha256(chunk_path.read_bytes()).hexdigest()
-                        file_sizes[chunk_name] = f_size
-                        sha_map[chunk_name] = f_sha
-                    else:
-                        row_idx += len(rows)
-
-                    chunk_files.append(chunk_name)
-                    part_row_count += len(rows)
-                    chunk_idx += 1
-
-                partition_state = PartitionState(
-                    status="COMPLETED",
-                    chunks=chunk_files,
-                    row_count=part_row_count,
-                    file_sizes=file_sizes,
-                    sha256=sha_map,
-                )
-                state.partitions[part_key] = partition_state.to_dict()
-                state.updated_at = datetime.now(timezone.utc).isoformat()
-
-                if not self.config.dry_run:
-                    state.save(self.state_file)
-
-            return state
-        finally:
-            con.close()
-
-    def verify(self) -> VerificationResult:
-        """Execute two-way EXCEPT ALL reconciliation between DuckDB and staged/published Parquet."""
-        if self.config.dry_run:
-            if self.plan_file.is_file():
-                plan = MigrationPlan.load(self.plan_file)
-                total = plan.total_rows
-            else:
-                total = 0
-            return VerificationResult(
-                status="PASSED",
-                total_source_rows=total,
-                total_parquet_rows=total,
-                discrepancies=[],
-                verified_at=datetime.now(timezone.utc).isoformat(),
-            )
-
-        if not self.source_db.is_file():
-            raise FileNotFoundError(f"Source database not found at {self.source_db}")
-
-        if (
-            self.plan_file.is_file()
-            and not self.config.force
-            and not self.config.symbols
-            and not self.config.date_start
-            and not self.config.date_end
-        ):
-            plan = MigrationPlan.load(self.plan_file)
-        else:
-            plan = self.plan()
-
-        target_partitions = plan.partitions
-        if self.config.symbols:
-            target_partitions = [p for p in target_partitions if p["symbol"] in self.config.symbols]
-        if self.config.date_start:
-            target_partitions = [p for p in target_partitions if p["date"] >= self.config.date_start]
-        if self.config.date_end:
-            target_partitions = [p for p in target_partitions if p["date"] <= self.config.date_end]
-
-        con = duckdb.connect(str(self.source_db), read_only=True)
-        try:
-            table = self._detect_source_table(con)
-            schema_info = self._inspect_source_schema(con, table)
-            projection_sql = schema_info["projection_sql"]
-            all_discrepancies: List[Dict[str, Any]] = []
-            total_source = 0
-            total_parquet = 0
-
-            for p in target_partitions:
-                symbol = p["symbol"]
-                date_str = p["date"]
-                encoded_sym = encode_symbol(symbol)
-
-                # Look for parquet chunks: staged first, fallback to published
-                staged_dir = self.staging_dir / "ticks" / f"symbol={encoded_sym}" / f"date={date_str}"
-                pfiles = sorted(staged_dir.glob("*.parquet")) if staged_dir.is_dir() else []
-                if not pfiles:
-                    prod_dir = self.lake_root / "ticks" / f"symbol={encoded_sym}" / f"date={date_str}"
-                    pfiles = sorted(prod_dir.glob("*.parquet")) if prod_dir.is_dir() else []
-
-                source_count = con.execute(
-                    f"SELECT count(*) FROM (SELECT {projection_sql} FROM {table}) AS src WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ?",
-                    [symbol, date_str],
-                ).fetchone()[0]
-
-                if not pfiles:
-                    if source_count == 0:
-                        parquet_count = 0
-                    else:
-                        parquet_count = 0
-                        all_discrepancies.append({
-                            "type": "missing_parquet_files",
-                            "symbol": symbol,
-                            "date": date_str,
-                            "error": f"No Parquet files found for {symbol} on {date_str}, source has {source_count} rows",
-                        })
-                else:
-                    file_paths = [str(f) for f in pfiles]
-                    try:
-                        parquet_count = con.execute(
-                            "SELECT count(*) FROM read_parquet(?, hive_partitioning=false)",
-                            [file_paths],
-                        ).fetchone()[0]
-
-                        # Direction 1: source EXCEPT ALL parquet
-                        diff1 = con.execute(
-                            f"""
-                            SELECT count(*) FROM (
-                                (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
-                                 FROM (SELECT {projection_sql} FROM {table}) AS src
-                                 WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ?)
-                                EXCEPT ALL
-                                (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
-                                 FROM read_parquet(?, hive_partitioning=false))
-                            )
-                            """,
-                            [symbol, date_str, file_paths],
-                        ).fetchone()[0]
-
-                        # Direction 2: parquet EXCEPT ALL source
-                        diff2 = con.execute(
-                            f"""
-                            SELECT count(*) FROM (
-                                (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
-                                 FROM read_parquet(?, hive_partitioning=false))
-                                EXCEPT ALL
-                                (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
-                                 FROM (SELECT {projection_sql} FROM {table}) AS src
-                                 WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ?)
-                            )
-                            """,
-                            [file_paths, symbol, date_str],
-                        ).fetchone()[0]
-
-                        if source_count != parquet_count:
-                            all_discrepancies.append({
-                                "type": "row_count_mismatch",
-                                "symbol": symbol,
-                                "date": date_str,
-                                "source_count": source_count,
-                                "parquet_count": parquet_count,
-                            })
-                        if diff1 > 0:
-                            all_discrepancies.append({
-                                "type": "source_except_parquet_discrepancy",
-                                "symbol": symbol,
-                                "date": date_str,
-                                "missing_in_parquet": diff1,
-                            })
-                        if diff2 > 0:
-                            all_discrepancies.append({
-                                "type": "parquet_except_source_discrepancy",
-                                "symbol": symbol,
-                                "date": date_str,
-                                "missing_in_source": diff2,
-                            })
-
-                        total_parquet += parquet_count
-                    except Exception as e:
-                        all_discrepancies.append({
-                            "type": "parquet_read_error",
-                            "symbol": symbol,
-                            "date": date_str,
-                            "error": str(e),
-                        })
-
-                total_source += source_count
-
-            status = "PASSED" if len(all_discrepancies) == 0 else "FAILED"
-            vres = VerificationResult(
-                status=status,
-                total_source_rows=total_source,
-                total_parquet_rows=total_parquet,
-                discrepancies=all_discrepancies,
-                verified_at=datetime.now(timezone.utc).isoformat(),
-            )
-
-            if not self.config.dry_run:
-                self.migration_dir.mkdir(parents=True, exist_ok=True)
-                vres.save(self.verification_file)
-
-            return vres
-        finally:
-            con.close()
-
-    def publish(self) -> List[PublishReceipt]:
-        """Atomically promote verified staged chunks to production lake and write receipts."""
-        if self.config.dry_run:
-            return []
-
-        if not self.verification_file.is_file():
-            raise RuntimeError("Publish aborted: verification must pass before publishing.")
-
-        with open(self.verification_file, "r", encoding="utf-8") as f:
-            vdata = json.load(f)
-        if vdata.get("status") != "PASSED":
-            raise RuntimeError("Publish aborted: verification must pass before publishing.")
-
-        receipts: List[PublishReceipt] = []
-        with LakePublisherLock(self.lake_root, writer_id="migrator"):
-            staging_ticks = self.staging_dir / "ticks"
-            if staging_ticks.is_dir():
-                for symbol_dir in sorted(staging_ticks.glob("symbol=*")):
-                    symbol_part = symbol_dir.name
-                    symbol_enc = symbol_part.split("=", 1)[1]
-                    symbol = decode_symbol(symbol_enc)
-
-                    if self.config.symbols and symbol not in self.config.symbols:
-                        continue
-
-                    for date_dir in sorted(symbol_dir.glob("date=*")):
-                        date_part = date_dir.name
-                        date_str = date_part.split("=", 1)[1]
-
-                        if self.config.date_start and date_str < self.config.date_start:
-                            continue
-                        if self.config.date_end and date_str > self.config.date_end:
-                            continue
-
-                        target_dir = self.lake_root / "ticks" / symbol_part / date_part
-                        target_dir.mkdir(parents=True, exist_ok=True)
-
-                        # Move any remaining chunks in date_dir to target_dir
-                        chunk_files = sorted(date_dir.glob("*.parquet"))
-                        for cfile in chunk_files:
-                            target_dest = target_dir / cfile.name
-                            os.replace(cfile, target_dest)
-
-                        # Aggregate all chunks in target_dir for this partition
-                        target_chunks = sorted(target_dir.glob("*.parquet"))
-                        if not target_chunks:
-                            continue
-
-                        part_file_details: List[FilePublicationReceipt] = []
-                        target_rel_paths: List[str] = []
-                        part_row_count = 0
-
-                        for tfile in target_chunks:
-                            f_size = tfile.stat().st_size
-                            f_sha = hashlib.sha256(tfile.read_bytes()).hexdigest()
-                            f_rows = pq.ParquetFile(tfile).metadata.num_rows
-                            rel_path = str(tfile.relative_to(self.lake_root))
-
-                            part_row_count += f_rows
-                            target_rel_paths.append(rel_path)
-                            part_file_details.append(
-                                FilePublicationReceipt(
-                                    relative_path=rel_path,
-                                    symbol=symbol,
-                                    date=date_str,
-                                    row_count=f_rows,
-                                    file_size_bytes=f_size,
-                                    sha256=f_sha,
-                                )
-                            )
-
-                        batch_id = f"batch_migrated_{symbol}_{date_str.replace('-', '')}"
-                        published_at = datetime.now(timezone.utc).isoformat()
-                        receipt = PublishReceipt(
-                            batch_id=batch_id,
-                            writer_id="migrator",
-                            sequence=0,
-                            row_count=part_row_count,
-                            file_paths=target_rel_paths,
-                            file_details=part_file_details,
-                            status="PUBLISHED",
-                            published_at=published_at,
-                        )
-
-                        receipts_dir = self.lake_root / "_control" / "receipts"
-                        receipts_dir.mkdir(parents=True, exist_ok=True)
-                        receipt_path = receipts_dir / f"{batch_id}.json"
-
-                        receipt_dict = {
-                            "batch_id": receipt.batch_id,
-                            "writer_id": receipt.writer_id,
-                            "sequence": receipt.sequence,
-                            "row_count": receipt.row_count,
-                            "file_paths": receipt.file_paths,
-                            "file_details": [
-                                {
-                                    "relative_path": fd.relative_path,
-                                    "symbol": fd.symbol,
-                                    "date": fd.date,
-                                    "row_count": fd.row_count,
-                                    "file_size_bytes": fd.file_size_bytes,
-                                    "sha256": fd.sha256,
-                                }
-                                for fd in receipt.file_details
-                            ],
-                            "status": receipt.status,
-                            "published_at": receipt.published_at,
-                        }
-                        _atomic_save_json(receipt_dict, receipt_path)
-                        receipts.append(receipt)
-
-                        # Clean up date_dir if empty
-                        try:
-                            date_dir.rmdir()
-                        except OSError:
-                            pass
-
-                    # Clean up symbol_dir if empty
-                    try:
-                        symbol_dir.rmdir()
-                    except OSError:
-                        pass
-
-                # Clean up staging_ticks if empty
+        for relative in actual:
+            path = self._safe_path(self.migration_dir, relative)
+            path.unlink(missing_ok=True)
+        for path in sorted((self.staging_dir / "ticks").rglob("*"), reverse=True):
+            if path.is_dir() and not path.is_symlink():
                 try:
-                    staging_ticks.rmdir()
+                    path.rmdir()
                 except OSError:
                     pass
 
-            # Update state.json
-            if self.state_file.is_file():
-                state = MigrationState.load(self.state_file)
-                state.status = "PUBLISHED"
-                state.updated_at = datetime.now(timezone.utc).isoformat()
-                state.save(self.state_file)
-            else:
-                state = MigrationState(
-                    updated_at=datetime.now(timezone.utc).isoformat(),
-                    status="PUBLISHED",
-                    partitions={},
-                )
-                state.save(self.state_file)
+    def _checkpoint_file(self, path: Path, symbol: str, date_value: str, chunk_name: str) -> Dict[str, Any]:
+        if path.is_symlink() or not path.is_file():
+            raise MigrationError(f"Staged migration chunk is missing or unsafe: {path}")
+        parquet = pq.ParquetFile(path)
+        table = parquet.read()
+        validate_table_v1(table)
+        if any(row["symbol"] != symbol for row in table.select(["symbol"]).to_pylist()):
+            raise MigrationError(f"Staged chunk contains rows outside symbol partition {symbol}: {path}")
+        if any(row["timestamp"].date().isoformat() != date_value for row in table.select(["timestamp"]).to_pylist()):
+            raise MigrationError(f"Staged chunk contains rows outside date partition {date_value}: {path}")
+        return {
+            "name": chunk_name,
+            "staging_path": f"staging/{path.relative_to(self.staging_dir).as_posix()}",
+            "symbol": symbol,
+            "date": date_value,
+            "row_count": table.num_rows,
+            "size_bytes": path.stat().st_size,
+            "sha256": self._file_sha256(path),
+            "schema_sha256": self._schema_sha256(table.schema),
+        }
 
-        return receipts
+    def _validate_completed_partition(self, key: str, part: Dict[str, Any], checkpoint: Dict[str, Any]) -> None:
+        if checkpoint.get("status") != "COMPLETED":
+            return
+        symbol = part["symbol"]
+        date_value = part["date"]
+        files = checkpoint.get("files")
+        if not isinstance(files, list) or not files:
+            raise MigrationError(f"Completed checkpoint {key} has no verifiable chunk inventory")
+        expected_names = list(checkpoint.get("chunks", []))
+        if [detail.get("name") for detail in files] != expected_names:
+            raise MigrationError(f"Completed checkpoint {key} has an inconsistent chunk inventory")
+        actual = sorted(self._stage_directory(symbol, date_value).glob("*.parquet"))
+        if [path.name for path in actual] != sorted(expected_names):
+            raise MigrationError(f"Completed checkpoint {key} has missing or additional staged chunks")
+        total = 0
+        for detail, path in zip(sorted(files, key=lambda value: value["name"]), actual):
+            observed = self._checkpoint_file(path, symbol, date_value, path.name)
+            for field_name in ("staging_path", "row_count", "size_bytes", "sha256", "schema_sha256"):
+                if observed.get(field_name) != detail.get(field_name):
+                    raise MigrationError(
+                        f"Completed checkpoint {key} failed {field_name} verification for {path.name}"
+                    )
+            total += observed["row_count"]
+        if total != int(checkpoint.get("row_count", -1)) or total != int(part["row_count"]):
+            raise MigrationError(f"Completed checkpoint {key} row count does not match the source plan")
+
+    def export(self) -> MigrationState:
+        """Export to shared staging under migration ownership with validated checkpoints."""
+        self._ensure_identity()
+        if self.config.dry_run:
+            with self._source_session() as con:
+                plan = self._compute_plan(con)
+            return self._new_state("DRY_RUN", plan)
+
+        with MigrationOwnershipLock(self.migration_dir, self.lock_file):
+            self._assert_active_can_export()
+            plan = self._ensure_plan_locked()
+            state = self._load_state()
+            if state is not None:
+                self._validate_identity_fields(state.to_dict(), "Migration checkpoint")
+                if state.status == "PUBLISHED":
+                    self._validate_published_receipt(state, plan)
+                    return state
+                if state.status == "PUBLISHING" and self.config.resume:
+                    return state
+                if self.config.resume:
+                    if state.status not in {"PLANNED", "IN_PROGRESS", "VERIFICATION_FAILED", "VERIFIED"}:
+                        raise MigrationError(f"Cannot resume migration in state {state.status!r}")
+                    self._validate_resume_state(state)
+                else:
+                    if self.publish_journal_file is not None and self.publish_journal_file.exists():
+                        raise MigrationError("A publish journal exists; use --resume to finish or inspect it")
+                    state = self._new_state("IN_PROGRESS", plan)
+            elif self.config.resume:
+                conflict = self._find_resume_conflict()
+                if conflict:
+                    raise MigrationIdentityError(f"Cannot resume migration: {conflict}")
+                raise MigrationIdentityError(
+                    f"No checkpoint exists for migration {self.migration_id}; refusing an ambiguous resume"
+                )
+            else:
+                state = self._new_state("IN_PROGRESS", plan)
+
+            self._validate_identity_fields(state.to_dict(), "Migration checkpoint")
+            if state.plan_sha256 and state.plan_sha256 != self._plan_sha256(plan):
+                raise MigrationIdentityError("Migration checkpoint is bound to a different plan")
+            state.plan_sha256 = self._plan_sha256(plan)
+            state.export_options = {
+                "chunk_size": self.config.chunk_size,
+                "compression": self.config.compression,
+                "projection_version": self.PROJECTION_VERSION,
+            }
+            self._remove_verification_authorization()
+            self._write_active()
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            self.staging_dir.mkdir(parents=True, exist_ok=True)
+
+            if not self.config.resume or state.status in {"PLANNED", "VERIFICATION_FAILED", "VERIFIED"}:
+                if not self.config.resume:
+                    state.partitions = {}
+                state.status = "IN_PROGRESS"
+
+            table = self.source_table or "tick_data"
+            table_exists = bool(self.schema_info.get("projection_sql"))
+            try:
+                with self._source_session() as con:
+                    if table_exists:
+                        table_sql = self._quote_identifier(table)
+                        projection_sql = self.schema_info["projection_sql"]
+                        ordering = (
+                            "timestamp ASC, symbol ASC, price ASC, volume ASC NULLS FIRST, "
+                            "bid ASC NULLS FIRST, ask ASC NULLS FIRST, source ASC NULLS FIRST, "
+                            "session ASC NULLS FIRST"
+                        )
+                        for part in plan.partitions:
+                            symbol = part["symbol"]
+                            date_value = part["date"]
+                            key = self._partition_key(symbol, date_value)
+                            previous = state.partitions.get(key, {})
+                            if self.config.resume and previous.get("status") == "COMPLETED":
+                                self._validate_completed_partition(key, part, previous)
+                                continue
+
+                            self._clear_partition_stage(symbol, date_value)
+                            stage_dir = self._stage_directory(symbol, date_value)
+                            stage_dir.mkdir(parents=True, exist_ok=True)
+                            state.partitions[key] = {
+                                "status": "EXPORTING",
+                                "chunks": [],
+                                "files": [],
+                                "row_count": 0,
+                                "file_sizes": {},
+                                "sha256": {},
+                            }
+                            self._write_state(state)
+                            cur = con.cursor()
+                            query = (
+                                "SELECT timestamp, symbol, price, volume, bid, ask, source, session, "
+                                f"row_number() OVER (ORDER BY {ordering}) AS row_ordinal "
+                                f"FROM (SELECT {projection_sql} FROM {table_sql}) AS src "
+                                "WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ? "
+                                f"ORDER BY {ordering}"
+                            )
+                            cur.execute(query, [symbol, date_value])
+                            chunk_idx = 1
+                            part_count = 0
+                            chunk_names: List[str] = []
+                            file_details: List[Dict[str, Any]] = []
+                            while True:
+                                rows = cur.fetchmany(self.config.chunk_size)
+                                if not rows:
+                                    break
+                                chunk_name = f"chunk_{chunk_idx:06d}.parquet"
+                                chunk_path = stage_dir / chunk_name
+                                chunk_records = [
+                                    (*row[:8], f"mig_{self.migration_id}_{int(row[8]):016d}")
+                                    for row in rows
+                                ]
+                                table_arrow = ticks_to_table(chunk_records, validate=True)
+                                symbol_dict = pc.dictionary_encode(table_arrow["symbol"])
+                                table_arrow = table_arrow.set_column(
+                                    table_arrow.schema.get_field_index("symbol"),
+                                    pa.field("symbol", pa.dictionary(pa.int32(), pa.string()), nullable=False),
+                                    symbol_dict,
+                                )
+                                pq.write_table(table_arrow, chunk_path, compression=self.config.compression)
+                                with open(chunk_path, "rb") as handle:
+                                    os.fsync(handle.fileno())
+                                detail = self._checkpoint_file(chunk_path, symbol, date_value, chunk_name)
+                                file_details.append(detail)
+                                chunk_names.append(chunk_name)
+                                part_count += len(rows)
+                                state.partitions[key] = {
+                                    "status": "EXPORTING",
+                                    "chunks": list(chunk_names),
+                                    "files": list(file_details),
+                                    "row_count": part_count,
+                                    "file_sizes": {item["name"]: item["size_bytes"] for item in file_details},
+                                    "sha256": {item["name"]: item["sha256"] for item in file_details},
+                                }
+                                self._write_state(state)
+                                chunk_idx += 1
+                            if part_count != int(part["row_count"]):
+                                raise SourceSnapshotChangedError(
+                                    f"Source plan expected {part['row_count']} rows for {key}, exported {part_count}"
+                                )
+                            state.partitions[key] = {
+                                "status": "COMPLETED",
+                                "chunks": chunk_names,
+                                "files": file_details,
+                                "row_count": part_count,
+                                "file_sizes": {item["name"]: item["size_bytes"] for item in file_details},
+                                "sha256": {item["name"]: item["sha256"] for item in file_details},
+                            }
+                            self._write_state(state)
+                    state.status = "IN_PROGRESS"
+                    self._write_state(state)
+            except Exception:
+                # Keep the checkpoint/stage for an explicit --resume; no verification authorizes it.
+                raise
+            return state
+
+    def _expected_state_files(self, state: MigrationState) -> Dict[str, Dict[str, Any]]:
+        expected: Dict[str, Dict[str, Any]] = {}
+        for partition_state in state.partitions.values():
+            if partition_state.get("status") != "COMPLETED":
+                continue
+            for detail in partition_state.get("files", []):
+                rel = str(detail.get("staging_path", ""))
+                if not rel or rel in expected:
+                    raise MigrationError(f"Migration checkpoint has an invalid/duplicate staged path: {rel!r}")
+                expected[rel] = detail
+        return expected
+
+    def _partition_for_stage_path(self, path: Path) -> Optional[Tuple[str, str]]:
+        try:
+            relative = path.relative_to(self.staging_dir).parts
+        except ValueError:
+            return None
+        if len(relative) < 4 or relative[0] != "ticks" or not relative[1].startswith("symbol=") or not relative[2].startswith("date="):
+            return None
+        try:
+            return decode_symbol(relative[1].split("=", 1)[1]), relative[2].split("=", 1)[1]
+        except Exception:
+            return None
+
+    def _inspect_staged_file(self, path: Path) -> Dict[str, Any]:
+        relative = f"staging/{path.relative_to(self.staging_dir).as_posix()}"
+        part = self._partition_for_stage_path(path)
+        base = {
+            "staging_path": relative,
+            "symbol": part[0] if part else "",
+            "date": part[1] if part else "",
+            "name": path.name,
+            "size_bytes": path.stat().st_size if path.exists() else 0,
+            "sha256": self._file_sha256(path) if path.is_file() and not path.is_symlink() else "",
+            "row_count": None,
+            "schema_sha256": "",
+        }
+        if path.is_symlink() or not path.is_file():
+            raise MigrationError(f"Staged path is not a regular file: {path}")
+        if part is None:
+            raise MigrationError(f"Staged path is outside the planned partition layout: {path}")
+        table = pq.ParquetFile(path).read()
+        validate_table_v1(table)
+        if any(row["symbol"] != part[0] for row in table.select(["symbol"]).to_pylist()):
+            raise MigrationError(f"Staged file contains a symbol outside its path: {path}")
+        if any(row["timestamp"].date().isoformat() != part[1] for row in table.select(["timestamp"]).to_pylist()):
+            raise MigrationError(f"Staged file contains a date outside its path: {path}")
+        base["row_count"] = table.num_rows
+        base["schema_sha256"] = self._schema_sha256(table.schema)
+        return base
+
+    def _compute_verification(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        plan: MigrationPlan,
+        state: MigrationState,
+    ) -> VerificationResult:
+        expected = self._expected_state_files(state)
+        actual_paths = self._actual_stage_paths()
+        actual_by_rel = {
+            f"staging/{path.relative_to(self.staging_dir).as_posix()}": path
+            for path in actual_paths
+        }
+        discrepancies: List[Dict[str, Any]] = []
+        expected_names = set(expected)
+        actual_names = set(actual_by_rel)
+        if expected_names != actual_names:
+            discrepancies.append({
+                "type": "staging_inventory_mismatch",
+                "missing_files": sorted(expected_names - actual_names),
+                "extra_files": sorted(actual_names - expected_names),
+            })
+
+        inventory: List[Dict[str, Any]] = []
+        readable_paths: Dict[Tuple[str, str], List[str]] = {}
+        for rel, path in sorted(actual_by_rel.items()):
+            part = self._partition_for_stage_path(path)
+            try:
+                detail = self._inspect_staged_file(path)
+                inventory.append(detail)
+                if part is not None:
+                    readable_paths.setdefault(part, []).append(str(path))
+                checkpoint = expected.get(rel)
+                if checkpoint is None:
+                    continue
+                for field_name in ("sha256", "size_bytes", "row_count", "schema_sha256", "symbol", "date"):
+                    if detail.get(field_name) != checkpoint.get(field_name):
+                        discrepancies.append({
+                            "type": "staging_checkpoint_mismatch",
+                            "path": rel,
+                            "field": field_name,
+                            "expected": checkpoint.get(field_name),
+                            "actual": detail.get(field_name),
+                        })
+            except Exception as exc:
+                discrepancies.append({"type": "parquet_read_error", "path": rel, "error": str(exc)})
+                if part is not None:
+                    readable_paths.setdefault(part, []).append(str(path))
+                inventory.append({
+                    "staging_path": rel,
+                    "symbol": part[0] if part else "",
+                    "date": part[1] if part else "",
+                    "name": path.name,
+                    "size_bytes": path.stat().st_size if path.exists() else 0,
+                    "sha256": self._file_sha256(path) if path.is_file() and not path.is_symlink() else "",
+                    "row_count": None,
+                    "schema_sha256": "",
+                })
+
+        table = self.source_table or "tick_data"
+        table_sql = self._quote_identifier(table)
+        projection_sql = self.schema_info.get("projection_sql", "")
+        total_source = 0
+        total_parquet = 0
+        for part in plan.partitions:
+            symbol = str(part["symbol"])
+            date_value = str(part["date"])
+            source_count = int(con.execute(
+                f"SELECT count(*) FROM (SELECT {projection_sql} FROM {table_sql}) AS src "
+                "WHERE symbol=? AND strftime(timestamp, '%Y-%m-%d')=?",
+                [symbol, date_value],
+            ).fetchone()[0])
+            paths = sorted(readable_paths.get((symbol, date_value), []))
+            parquet_count = 0
+            if not paths:
+                if source_count:
+                    discrepancies.append({
+                        "type": "missing_parquet_files",
+                        "symbol": symbol,
+                        "date": date_value,
+                        "error": f"No staged Parquet files for {symbol} on {date_value}, source has {source_count} rows",
+                    })
+            else:
+                try:
+                    parquet_count = int(con.execute(
+                        "SELECT count(*) FROM read_parquet(?, hive_partitioning=false)", [paths]
+                    ).fetchone()[0])
+                    diff_source = int(con.execute(
+                        f"""SELECT count(*) FROM (
+                            (SELECT timestamp,symbol,price,volume,bid,ask,source,session
+                             FROM (SELECT {projection_sql} FROM {table_sql}) AS src
+                             WHERE symbol=? AND strftime(timestamp, '%Y-%m-%d')=?)
+                            EXCEPT ALL
+                            (SELECT timestamp,symbol,price,volume,bid,ask,source,session
+                             FROM read_parquet(?, hive_partitioning=false))
+                        )""",
+                        [symbol, date_value, paths],
+                    ).fetchone()[0])
+                    diff_parquet = int(con.execute(
+                        f"""SELECT count(*) FROM (
+                            (SELECT timestamp,symbol,price,volume,bid,ask,source,session
+                             FROM read_parquet(?, hive_partitioning=false))
+                            EXCEPT ALL
+                            (SELECT timestamp,symbol,price,volume,bid,ask,source,session
+                             FROM (SELECT {projection_sql} FROM {table_sql}) AS src
+                             WHERE symbol=? AND strftime(timestamp, '%Y-%m-%d')=?)
+                        )""",
+                        [paths, symbol, date_value],
+                    ).fetchone()[0])
+                    if source_count != parquet_count:
+                        discrepancies.append({
+                            "type": "row_count_mismatch", "symbol": symbol, "date": date_value,
+                            "source_count": source_count, "parquet_count": parquet_count,
+                        })
+                    if diff_source:
+                        discrepancies.append({
+                            "type": "source_except_parquet_discrepancy", "symbol": symbol,
+                            "date": date_value, "missing_in_parquet": diff_source,
+                        })
+                    if diff_parquet:
+                        discrepancies.append({
+                            "type": "parquet_except_source_discrepancy", "symbol": symbol,
+                            "date": date_value, "missing_in_source": diff_parquet,
+                        })
+                except Exception as exc:
+                    discrepancies.append({
+                        "type": "parquet_read_error", "symbol": symbol, "date": date_value,
+                        "error": str(exc),
+                    })
+            total_source += source_count
+            total_parquet += parquet_count
+
+        return VerificationResult(
+            status="PASSED" if not discrepancies else "FAILED",
+            total_source_rows=total_source,
+            total_parquet_rows=total_parquet,
+            discrepancies=discrepancies,
+            verified_at=datetime.now(timezone.utc).isoformat(),
+            migration_id=self.migration_id or "",
+            source_path=str(self.source_db),
+            source_snapshot_sha256=self.identity["source_snapshot_sha256"],
+            source_schema_sha256=self.identity["source_schema_sha256"],
+            source_table=self.source_table or "",
+            projection_version=self.PROJECTION_VERSION,
+            scope=self.scope,
+            plan_sha256=self._plan_sha256(plan),
+            files=sorted(inventory, key=lambda item: item["staging_path"]),
+        )
+
+    def _write_verification(self, result: VerificationResult) -> None:
+        assert self.run_verification_file is not None
+        result.save(self.run_verification_file)
+        result.save(self.verification_file)
+
+    def _load_verification(self, require_latest_alias: bool = True) -> VerificationResult:
+        self._ensure_identity()
+        assert self.run_verification_file is not None
+        if not self.run_verification_file.is_file():
+            raise RuntimeError("Publish aborted: verification must pass before publishing.")
+        try:
+            result = VerificationResult.load(self.run_verification_file)
+        except Exception as exc:
+            raise MigrationError(f"Cannot read verification authorization: {exc}") from exc
+        self._validate_identity_fields(result.to_dict(), "Verification report")
+        if require_latest_alias:
+            if not self.verification_file.is_file():
+                raise RuntimeError("Publish aborted: verification must pass before publishing.")
+            try:
+                latest = json.loads(self.verification_file.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise MigrationError(f"Cannot read latest verification authorization: {exc}") from exc
+            self._validate_identity_fields(latest, "Latest verification report")
+            if latest != result.to_dict():
+                raise MigrationIdentityError("Latest verification alias does not match the migration-bound report")
+        return result
+
+    @staticmethod
+    def _verification_proof(result: VerificationResult) -> Dict[str, Any]:
+        data = result.to_dict()
+        data.pop("verified_at", None)
+        return data
+
+    def _verify_ready_state(self, state: MigrationState, plan: MigrationPlan) -> VerificationResult:
+        self._validate_identity_fields(state.to_dict(), "Migration checkpoint")
+        if state.status not in {"VERIFIED", "IN_PROGRESS", "PUBLISHING", "PUBLISHED"}:
+            raise RuntimeError("Publish aborted: verification must pass before publishing.")
+        if state.plan_sha256 != self._plan_sha256(plan):
+            raise MigrationIdentityError("Migration checkpoint plan fingerprint changed")
+        stored = self._load_verification(require_latest_alias=True)
+        if stored.status != "PASSED" or stored.discrepancies:
+            raise RuntimeError("Publish aborted: verification must pass before publishing.")
+        if stored.plan_sha256 != self._plan_sha256(plan):
+            raise MigrationIdentityError("Verification is bound to a different migration plan")
+        with self._source_session() as con:
+            current = self._compute_verification(con, plan, state)
+        if current.status != "PASSED":
+            raise MigrationVerificationError(
+                "Publish aborted: staged migration no longer matches the verified source/inventory"
+            )
+        if self._verification_proof(current) != self._verification_proof(stored):
+            raise MigrationVerificationError(
+                "Publish aborted: staged contents, file inventory or reconciliation changed after verification"
+            )
+        return stored
+
+    def assert_publish_ready(self) -> VerificationResult:
+        """Read-only handoff preflight; valid while the live writer still owns the lake."""
+        self._ensure_identity()
+        with MigrationOwnershipLock(self.migration_dir, self.lock_file):
+            state = self._load_state()
+            plan = self._load_plan(required=True)
+            if state is None:
+                raise RuntimeError("Publish aborted: migration checkpoint is missing")
+            return self._verify_ready_state(state, plan)
+
+    def verify(self) -> VerificationResult:
+        """Reconcile the exact run-owned staged inventory to its frozen DuckDB source."""
+        self._ensure_identity()
+        if self.config.dry_run:
+            with self._source_session() as con:
+                plan = self._compute_plan(con)
+            return VerificationResult(
+                status="DRY_RUN",
+                total_source_rows=plan.total_rows,
+                total_parquet_rows=0,
+                discrepancies=[],
+                verified_at=datetime.now(timezone.utc).isoformat(),
+                migration_id=self.migration_id or "",
+                source_path=str(self.source_db),
+                source_snapshot_sha256=self.identity["source_snapshot_sha256"],
+                source_schema_sha256=self.identity["source_schema_sha256"],
+                source_table=self.source_table or "",
+                projection_version=self.PROJECTION_VERSION,
+                scope=self.scope,
+                plan_sha256=self._plan_sha256(plan),
+                files=[],
+            )
+
+        with MigrationOwnershipLock(self.migration_dir, self.lock_file):
+            state = self._load_state()
+            if state is None:
+                raise MigrationError("Cannot verify: migration export checkpoint is missing")
+            self._validate_identity_fields(state.to_dict(), "Migration checkpoint")
+            plan = self._load_plan(required=True)
+            if state.status == "PUBLISHED":
+                self._validate_published_receipt(state, plan)
+                if self.run_verification_file and self.run_verification_file.is_file():
+                    return VerificationResult.load(self.run_verification_file)
+                raise MigrationError("Published migration is missing its verification record")
+            active = self._read_active()
+            if active and active.get("migration_id") != self.migration_id:
+                raise MigrationOwnershipError("Another migration owns shared staging")
+            with self._source_session() as con:
+                result = self._compute_verification(con, plan, state)
+            self._write_verification(result)
+            state.status = "VERIFIED" if result.status == "PASSED" else "VERIFICATION_FAILED"
+            state.plan_sha256 = self._plan_sha256(plan)
+            self._write_state(state)
+            return result
+
+    def _journal_entries(self, state: MigrationState) -> List[Dict[str, Any]]:
+        assert self.migration_id is not None
+        entries = []
+        for key in sorted(state.partitions):
+            part_state = state.partitions[key]
+            if part_state.get("status") != "COMPLETED":
+                raise MigrationError(f"Cannot publish incomplete partition checkpoint {key}")
+            for detail in sorted(part_state.get("files", []), key=lambda item: item["name"]):
+                staged = str(detail["staging_path"])
+                target = (
+                    f"ticks/symbol={encode_symbol(detail['symbol'])}/date={detail['date']}/"
+                    f"migration_{self.migration_id}_{detail['name']}"
+                )
+                entries.append({
+                    **detail,
+                    "final_path": target,
+                    "status": "PENDING",
+                })
+        return entries
+
+    def _validate_final_file(self, path: Path, detail: Dict[str, Any]) -> None:
+        if path.is_symlink() or not path.is_file():
+            raise MigrationError(f"Published migration file is missing or unsafe: {path}")
+        if path.stat().st_size != int(detail["size_bytes"]):
+            raise MigrationError(f"Published migration file size mismatch: {path}")
+        if self._file_sha256(path) != detail["sha256"]:
+            raise MigrationError(f"Published migration file checksum mismatch: {path}")
+        table = pq.ParquetFile(path).read()
+        validate_table_v1(table)
+        if table.num_rows != int(detail["row_count"]):
+            raise MigrationError(f"Published migration file row count mismatch: {path}")
+        if any(row["symbol"] != detail["symbol"] for row in table.select(["symbol"]).to_pylist()):
+            raise MigrationError(f"Published migration file symbol mismatch: {path}")
+        if any(row["timestamp"].date().isoformat() != detail["date"] for row in table.select(["timestamp"]).to_pylist()):
+            raise MigrationError(f"Published migration file date mismatch: {path}")
+
+    def _validate_published_receipt(self, state: MigrationState, plan: MigrationPlan) -> None:
+        assert self.migration_id is not None
+        receipt_path = self.lake_root / "_control" / "receipts" / f"migration_{self.migration_id}.json"
+        if not receipt_path.is_file():
+            raise MigrationError(f"Published checkpoint has no migration receipt: {receipt_path}")
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise MigrationError(f"Cannot read migration receipt {receipt_path}: {exc}") from exc
+        if (
+            receipt.get("migration_id") != self.migration_id
+            or receipt.get("source_snapshot_sha256") != self.identity["source_snapshot_sha256"]
+            or receipt.get("plan_sha256") != self._plan_sha256(plan)
+        ):
+            raise MigrationIdentityError("Migration receipt provenance does not match its checkpoint")
+        expected = self._journal_entries(state)
+        details = receipt.get("file_details", [])
+        expected_by_path = {item["final_path"]: item for item in expected}
+        if set(receipt.get("file_paths", [])) != set(expected_by_path):
+            raise MigrationError("Migration receipt references files outside this migration")
+        if len(details) != len(expected_by_path):
+            raise MigrationError("Migration receipt has an incomplete file inventory")
+        for detail in details:
+            relative = detail.get("relative_path")
+            planned = expected_by_path.get(relative)
+            if planned is None:
+                raise MigrationError(f"Migration receipt claims an unowned file {relative!r}")
+            final_path = self._safe_path(self.lake_root, relative)
+            self._validate_final_file(final_path, planned)
+            for field_name, receipt_name in (
+                ("symbol", "symbol"), ("date", "date"), ("row_count", "row_count"),
+                ("size_bytes", "file_size_bytes"), ("sha256", "sha256"),
+            ):
+                if detail.get(receipt_name) != planned.get(field_name):
+                    raise MigrationError(f"Migration receipt detail mismatch for {relative}")
+        expected_rows = sum(int(item["row_count"]) for item in expected)
+        if int(receipt.get("row_count", -1)) != expected_rows:
+            raise MigrationError("Migration receipt total row count is invalid")
+
+    def _read_journal(self, entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+        assert self.publish_journal_file is not None
+        expected_by_path = {entry["final_path"]: entry for entry in entries}
+        if self.publish_journal_file.is_file():
+            try:
+                journal = json.loads(self.publish_journal_file.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise MigrationError(f"Publish journal is corrupt: {exc}") from exc
+            if journal.get("migration_id") != self.migration_id:
+                raise MigrationIdentityError("Publish journal belongs to another migration")
+            recorded = {entry.get("final_path"): entry for entry in journal.get("files", [])}
+            if set(recorded) != set(expected_by_path):
+                raise MigrationError("Publish journal inventory differs from the verified migration")
+            for target, planned in expected_by_path.items():
+                for field_name in ("staging_path", "sha256", "size_bytes", "row_count", "symbol", "date"):
+                    if recorded[target].get(field_name) != planned.get(field_name):
+                        raise MigrationError(f"Publish journal authorization changed for {target}")
+            journal["files"] = [recorded[entry["final_path"]] for entry in entries]
+            return journal
+        return {
+            "migration_id": self.migration_id,
+            "status": "PUBLISHING",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "files": entries,
+        }
+
+    def _copy_verified_file_no_replace(self, staged_path: Path, final_path: Path, detail: Dict[str, Any]) -> None:
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        if final_path.exists():
+            self._validate_final_file(final_path, detail)
+            return
+
+        temp_root = self.lake_root / "_staging"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(prefix=f"migration_{self.migration_id}_", suffix=".tmp", dir=temp_root)
+        temp_path = Path(temp_name)
+        input_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            source_fd = os.open(str(staged_path), input_flags)
+            try:
+                source_stat = os.fstat(source_fd)
+                if not stat.S_ISREG(source_stat.st_mode):
+                    raise MigrationError(f"Staged migration source is not a regular file: {staged_path}")
+                digest = hashlib.sha256()
+                size = 0
+                with os.fdopen(source_fd, "rb", closefd=True) as source, os.fdopen(fd, "wb", closefd=True) as target:
+                    fd = -1
+                    while True:
+                        block = source.read(1024 * 1024)
+                        if not block:
+                            break
+                        digest.update(block)
+                        size += len(block)
+                        target.write(block)
+                    target.flush()
+                    os.fsync(target.fileno())
+            except Exception:
+                try:
+                    os.close(source_fd)
+                except OSError:
+                    pass
+                raise
+            if size != int(detail["size_bytes"]) or digest.hexdigest() != detail["sha256"]:
+                raise MigrationVerificationError(
+                    f"Staged content changed during promotion: {staged_path}"
+                )
+            os.chmod(temp_path, 0o444)
+            self._validate_final_file(temp_path, detail)
+            try:
+                os.link(temp_path, final_path)
+            except FileExistsError:
+                self._validate_final_file(final_path, detail)
+            try:
+                dir_fd = os.open(str(final_path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            temp_path.unlink(missing_ok=True)
+
+    def _write_receipt(self, state: MigrationState, plan: MigrationPlan, journal: Dict[str, Any]) -> PublishReceipt:
+        assert self.migration_id is not None
+        entries = journal["files"]
+        file_details = []
+        for entry in entries:
+            file_details.append({
+                "relative_path": entry["final_path"],
+                "symbol": entry["symbol"],
+                "date": entry["date"],
+                "row_count": int(entry["row_count"]),
+                "file_size_bytes": int(entry["size_bytes"]),
+                "sha256": entry["sha256"],
+            })
+        row_count = sum(item["row_count"] for item in file_details)
+        batch_id = f"migration_{self.migration_id}"
+        receipt_payload = {
+            "batch_id": batch_id,
+            "writer_id": f"migrator_{self.migration_id}",
+            "sequence": 0,
+            "row_count": row_count,
+            "file_paths": [item["relative_path"] for item in file_details],
+            "file_details": file_details,
+            "status": "PUBLISHED",
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "migration_id": self.migration_id,
+            "source_path": str(self.source_db),
+            "source_snapshot_sha256": self.identity["source_snapshot_sha256"],
+            "source_schema_sha256": self.identity["source_schema_sha256"],
+            "scope": self.scope,
+            "plan_sha256": self._plan_sha256(plan),
+            "verification_sha256": self._json_sha256(self._verification_proof(self._load_verification())),
+        }
+        receipt_path = self.lake_root / "_control" / "receipts" / f"{batch_id}.json"
+        if receipt_path.exists():
+            current = json.loads(receipt_path.read_text(encoding="utf-8"))
+            comparable = dict(receipt_payload)
+            comparable.pop("published_at", None)
+            saved = dict(current)
+            saved.pop("published_at", None)
+            if comparable != saved:
+                raise MigrationIdentityError("Existing migration receipt conflicts with this migration")
+        else:
+            _atomic_save_json(receipt_payload, receipt_path)
+        return PublishReceipt(
+            batch_id=batch_id,
+            writer_id=receipt_payload["writer_id"],
+            sequence=0,
+            row_count=row_count,
+            file_paths=[item["relative_path"] for item in file_details],
+            file_details=[FilePublicationReceipt(
+                relative_path=item["relative_path"],
+                symbol=item["symbol"],
+                date=item["date"],
+                row_count=item["row_count"],
+                file_size_bytes=item["file_size_bytes"],
+                sha256=item["sha256"],
+            ) for item in file_details],
+            status="PUBLISHED",
+            published_at=receipt_payload["published_at"],
+        )
+
+    def _cleanup_published_files(self, state: MigrationState) -> None:
+        for partition_state in state.partitions.values():
+            for detail in partition_state.get("files", []):
+                path = self._safe_path(self.migration_dir, detail["staging_path"])
+                path.unlink(missing_ok=True)
+        if (self.staging_dir / "ticks").exists():
+            for directory in sorted((self.staging_dir / "ticks").rglob("*"), reverse=True):
+                if directory.is_dir() and not directory.is_symlink():
+                    try:
+                        directory.rmdir()
+                    except OSError:
+                        pass
+            try:
+                (self.staging_dir / "ticks").rmdir()
+            except OSError:
+                pass
+
+    def publish(self) -> List[PublishReceipt]:
+        """Revalidate verified scope and contents, then append immutable namespaced files."""
+        self._ensure_identity()
+        if self.config.dry_run:
+            return []
+
+        with MigrationOwnershipLock(self.migration_dir, self.lock_file):
+            state = self._load_state()
+            if state is None:
+                raise RuntimeError("Publish aborted: verification must pass before publishing.")
+            self._validate_identity_fields(state.to_dict(), "Migration checkpoint")
+            plan = self._load_plan(required=True)
+            if state.status == "PUBLISHED":
+                self._validate_published_receipt(state, plan)
+                return []
+
+            # LakePublisherLock is intentionally acquired only for the final cutover.
+            # Export and two-way verification can safely run while capture is active.
+            with LakePublisherLock(self.lake_root, writer_id=f"migrator:{self.migration_id}"):
+                verification = self._verify_ready_state(state, plan)
+                entries = self._journal_entries(state)
+                journal = self._read_journal(entries)
+                receipt_path = self.lake_root / "_control" / "receipts" / f"migration_{self.migration_id}.json"
+
+                # Preflight every destination before making any finalized file visible.
+                owned_paths = {item.get("final_path") for item in journal.get("files", [])}
+                for entry in entries:
+                    final_path = self._safe_path(self.lake_root, entry["final_path"])
+                    if final_path.exists():
+                        if entry["final_path"] not in owned_paths and not self.publish_journal_file.exists():
+                            raise MigrationCollisionError(
+                                f"Unowned destination already exists: {entry['final_path']}"
+                            )
+                        self._validate_final_file(final_path, entry)
+                if receipt_path.exists():
+                    try:
+                        existing_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                    except Exception as exc:
+                        raise MigrationError(f"Existing migration receipt is corrupt: {exc}") from exc
+                    if existing_receipt.get("migration_id") != self.migration_id:
+                        raise MigrationCollisionError("Migration receipt path is occupied by another migration")
+
+                assert self.publish_journal_file is not None
+                journal["status"] = "PUBLISHING"
+                journal["updated_at"] = datetime.now(timezone.utc).isoformat()
+                _atomic_save_json(journal, self.publish_journal_file)
+                state.status = "PUBLISHING"
+                self._write_state(state)
+
+                journal_by_path = {entry["final_path"]: entry for entry in journal["files"]}
+                for entry in entries:
+                    current = journal_by_path[entry["final_path"]]
+                    staged_path = self._safe_path(self.migration_dir, entry["staging_path"])
+                    final_path = self._safe_path(self.lake_root, entry["final_path"])
+                    if final_path.exists():
+                        self._validate_final_file(final_path, entry)
+                    else:
+                        self._copy_verified_file_no_replace(staged_path, final_path, entry)
+                    current["status"] = "PUBLISHED"
+                    journal["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    _atomic_save_json(journal, self.publish_journal_file)
+
+                # Recheck the complete owned set before writing the one migration receipt.
+                for entry in entries:
+                    self._validate_final_file(self._safe_path(self.lake_root, entry["final_path"]), entry)
+                receipt = self._write_receipt(state, plan, journal)
+                journal["status"] = "PUBLISHED"
+                journal["updated_at"] = datetime.now(timezone.utc).isoformat()
+                _atomic_save_json(journal, self.publish_journal_file)
+                state.status = "PUBLISHED"
+                self._write_state(state)
+                self._cleanup_published_files(state)
+                return [receipt]
 
     def run(self) -> int:
-        """Execute configured lifecycle mode and return exit code."""
+        """Run a selected lifecycle stage; dry-run is strictly read-only."""
         try:
             if self.config.mode == "plan":
                 self.plan()
             elif self.config.mode == "export":
                 self.export()
             elif self.config.mode == "verify":
-                res = self.verify()
-                if res.status != "PASSED":
+                result = self.verify()
+                if result.status not in {"PASSED", "DRY_RUN"}:
                     return 1
             elif self.config.mode == "publish":
                 self.publish()
             elif self.config.mode == "all":
                 self.plan()
-                self.export()
-                vres = self.verify()
-                if vres.status != "PASSED":
+                state = self.export()
+                if not self.config.dry_run and state.status == "PUBLISHED":
+                    return 0
+                result = self.verify()
+                if result.status not in {"PASSED", "DRY_RUN"}:
                     return 1
                 self.publish()
             else:
                 raise ValueError(f"Unknown mode: {self.config.mode}")
             return 0
-        except Exception as e:
-            logger.error(f"Migration lifecycle failure: {e}", exc_info=True)
+        except Exception as exc:
+            logger.error("Migration lifecycle failure: %s", exc, exc_info=True)
             return 1
 
+
+class MigrationHandoffCoordinator:
+    """Persisted, bounded writer-stop / history-publish / writer-restart protocol."""
+
+    def __init__(
+        self,
+        supervisor: Any,
+        migration: MigrationOrchestrator,
+        drain_timeout: float = 15.0,
+        restart_timeout: float = 20.0,
+    ):
+        if drain_timeout <= 0 or restart_timeout <= 0:
+            raise ValueError("handoff timeouts must be positive")
+        self.supervisor = supervisor
+        self.migration = migration
+        self.drain_timeout = float(drain_timeout)
+        self.restart_timeout = float(restart_timeout)
+        self.migration._ensure_identity()
+        self.state_file = self.migration.migration_dir / "handoff.json"
+        self._paused = False
+
+    def _read_status(self) -> Dict[str, Any]:
+        status_path = self.migration.lake_root / "_control" / "writer_status.json"
+        try:
+            return json.loads(status_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RuntimeError(f"Cannot read live writer status {status_path}: {exc}") from exc
+
+    def _save(self, phase: str, **fields: Any) -> Dict[str, Any]:
+        prior: Dict[str, Any] = {}
+        if self.state_file.is_file():
+            try:
+                prior = json.loads(self.state_file.read_text(encoding="utf-8"))
+            except Exception:
+                prior = {}
+        payload = {
+            **prior,
+            **fields,
+            "schema_version": 1,
+            "migration_id": self.migration.migration_id,
+            "phase": phase,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _atomic_save_json(payload, self.state_file)
+        return payload
+
+    def _wait_status(self, predicate, timeout: float) -> Dict[str, Any]:
+        deadline = time.monotonic() + timeout
+        last_error: Optional[Exception] = None
+        while time.monotonic() < deadline:
+            try:
+                status = self._read_status()
+                if predicate(status):
+                    return status
+            except Exception as exc:
+                last_error = exc
+            time.sleep(0.02)
+        if last_error:
+            raise RuntimeError(f"Writer did not reach the required handoff state: {last_error}")
+        raise RuntimeError("Writer did not reach the required handoff state before the deadline")
+
+    def execute(self) -> List[PublishReceipt]:
+        phase = "PREPARING"
+        old_pid: Optional[int] = None
+        try:
+            self._save("PREPARING", drain_timeout=self.drain_timeout)
+            # This reads and rechecks the full authorization without competing for the
+            # publisher lock that the live writer intentionally owns.
+            self.migration.assert_publish_ready()
+            initial = self._read_status()
+            old_pid = int(initial.get("pid")) if initial.get("pid") is not None else None
+            if initial.get("status") != "RUNNING" or old_pid is None:
+                raise RuntimeError("Supervised writer is not healthy/running before cutover")
+            if self.supervisor.child_pid is not None and self.supervisor.child_pid != old_pid:
+                raise RuntimeError("Writer status PID does not match the supervised child")
+
+            phase = "DRAINING"
+            self._save(phase, old_writer_pid=old_pid, pre_cutover_rows=int(initial.get("total_rows_written", 0)))
+            exit_code = self.supervisor.suspend_for_handoff(timeout=self.drain_timeout)
+            self._paused = True
+            if exit_code not in (0, None):
+                raise RuntimeError(f"Supervised writer exited unsuccessfully during drain: {exit_code}")
+            drained = self._wait_status(
+                lambda status: status.get("status") == "STOPPED" and int(status.get("queue_depth", -1)) == 0,
+                self.drain_timeout,
+            )
+            self._save(
+                "DRAINED",
+                drained_rows=int(drained.get("total_rows_written", 0)),
+                drain_status=drained.get("status"),
+            )
+
+            phase = "PUBLISHING"
+            self._save(phase)
+            receipts = self.migration.publish()
+
+            phase = "RESTARTING"
+            self._save(phase)
+            self.supervisor.resume_after_handoff()
+            self._paused = False
+            restarted = self._wait_status(
+                lambda status: (
+                    status.get("status") == "RUNNING"
+                    and status.get("pid") != old_pid
+                    and int(status.get("total_rows_written", 0)) > 0
+                ),
+                self.restart_timeout,
+            )
+            self._save(
+                "COMPLETE",
+                new_writer_pid=int(restarted["pid"]),
+                post_cutover_rows=int(restarted.get("total_rows_written", 0)),
+                published_batches=sum(1 for _ in receipts),
+                capture_gap_expected=True,
+            )
+            return receipts
+        except Exception as exc:
+            failed_phase = phase
+            recovery_error = None
+            if self._paused or getattr(self.supervisor, "is_handoff_suspended", False):
+                try:
+                    self.supervisor.resume_after_handoff()
+                    self._paused = False
+                except Exception as restart_exc:
+                    recovery_error = str(restart_exc)
+            self._save(
+                "FAILED",
+                failed_phase=failed_phase,
+                error=f"{type(exc).__name__}: {exc}",
+                restart_error=recovery_error,
+                old_writer_pid=old_pid,
+            )
+            raise
 
 def parse_args(args: Optional[Sequence[str]] = None) -> MigrationConfig:
     """Parse command line arguments into MigrationConfig."""
@@ -1141,6 +2227,7 @@ def parse_args(args: Optional[Sequence[str]] = None) -> MigrationConfig:
         default="snappy",
         help="Parquet compression codec (default: snappy)",
     )
+    parser.add_argument("--migration-id", type=str, default=None, help="Optional explicit 32-hex migration UUID")
 
     parsed = parser.parse_args(args)
     return MigrationConfig(
@@ -1156,6 +2243,7 @@ def parse_args(args: Optional[Sequence[str]] = None) -> MigrationConfig:
         resume=parsed.resume,
         force=parsed.force,
         compression=parsed.compression,
+        migration_id=parsed.migration_id,
     )
 
 

@@ -418,7 +418,11 @@ def test_streaming_candles_render_exchange_time(tmp_path, monkeypatch):
     db_path = _build_streaming_db(tmp_path / "streaming.duckdb")
     monkeypatch.setattr(conn_mod, "DEFAULT_STREAMING_DB_PATH", db_path)
 
-    res = get_streaming_candles("NVDA", timeframe="1m", limit=50)
+    client = DuckDBClient(db_path=db_path, read_only=True)
+    try:
+        res = get_streaming_candles("NVDA", timeframe="1m", limit=50, client=client)
+    finally:
+        client.close()
     assert not res.get("error"), res.get("error")
     assert res["timezone"] == EXCHANGE_TZ
     assert res["time_epoch_basis"] == TIME_EPOCH_BASIS
@@ -436,7 +440,11 @@ def test_streaming_candles_tz_aware_storage(tmp_path, monkeypatch):
     db_path = _build_streaming_db(tmp_path / "streaming_tz.duckdb", ts_type="TIMESTAMPTZ")
     monkeypatch.setattr(conn_mod, "DEFAULT_STREAMING_DB_PATH", db_path)
 
-    res = get_streaming_candles("NVDA", timeframe="1m", limit=50)
+    client = DuckDBClient(db_path=db_path, read_only=True)
+    try:
+        res = get_streaming_candles("NVDA", timeframe="1m", limit=50, client=client)
+    finally:
+        client.close()
     assert res["count"] > 0
     assert res["storage_timestamp_type"] == "TIMESTAMP WITH TIME ZONE"
     assert res["candles"][0]["time_str"] == f"{EDT_SESSION_DATE} {REG_OPEN_ET}"

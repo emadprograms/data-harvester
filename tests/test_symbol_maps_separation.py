@@ -118,7 +118,7 @@ def test_independent_crud_operations():
 def test_stream_runner_drops_excluded_assets():
     """Verify that StreamingEngine strictly drops ticks for assets not in streaming_symbol_map."""
     async def _test():
-        engine = StreamingEngine()
+        engine = StreamingEngine(db_path=":memory:")
         # Configure allowed symbols to only AAPL and NVDA
         engine.active_streaming_symbols = {"AAPL", "NVDA"}
         engine.epic_to_display = {"AAPL": "AAPL", "NVDA": "NVDA"}

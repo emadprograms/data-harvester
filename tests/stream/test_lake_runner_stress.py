@@ -27,7 +27,7 @@ import pytest
 from src.storage.parquet_writer import TickLakeWriter
 from src.storage.publication import LakePublisherLock, PublishError
 from src.storage.schema import QuoteTick
-from src.stream.runner import StreamingEngine
+from src.stream.runner import DrainFailedError, StreamingEngine
 
 
 # =====================================================================
@@ -333,29 +333,33 @@ def test_runner_shutdown_mid_flush_race(tmp_path):
     asyncio.run(_run())
 
 
-def test_runner_drain_timeout_enforcement_and_honest_reporting(tmp_path):
-    """
-    Drain timeout (e.g. 0.2s) with slow flush mock.
-    Verifies shutdown finishes without hanging, logs timeout, accounts undrained tasks in ticks_dropped.
-    """
+def test_runner_drain_timeout_reports_pending_work_without_false_drops(tmp_path):
+    """A deadline with RAM-only queue items is a failed drain, not an acknowledged drop."""
     async def _run():
         lake_root = tmp_path / "lake"
         engine = StreamingEngine(lake_root=lake_root, flush_interval=0.05)
         engine.running = True
-
-        # Enqueue ticks without running worker so tasks remain unfinished
         for i in range(25):
             engine._enqueue_tick(("2026-10-02 12:00:00", "AAPL", 100.0 + i, 1.0, 99.9, 100.1, "CAPITAL", "REG"))
 
-        assert engine.write_queue.unfinished_tasks == 25
-
         t0 = time.monotonic()
-        # shutdown with short drain_timeout of 0.2s
-        await engine.shutdown(drain_timeout=0.2)
+        with pytest.raises(DrainFailedError, match="25 accepted items pending"):
+            await engine.shutdown(drain_timeout=0.2)
         elapsed = time.monotonic() - t0
 
-        assert elapsed < 0.8  # Terminated promptly around 0.2s without freezing
-        assert engine.ticks_dropped >= 25  # Undrained tasks accounted in ticks_dropped
+        assert elapsed < 0.8
+        assert engine.drain_succeeded is False
+        assert engine.pending_accepted_ticks == 25
+        assert engine.write_queue.unfinished_tasks == 25
+        assert engine.ticks_dropped == 0
+        assert engine.writer.status == "DRAIN_FAILED"
+
+        # This test intentionally has no worker; acknowledge nothing and release test resources.
+        while not engine.write_queue.empty():
+            engine.write_queue.get_nowait()
+            engine.write_queue.task_done()
+        engine._pending_accepted_items = 0
+        engine.writer.close()
 
     asyncio.run(_run())
 
@@ -416,6 +420,13 @@ def test_runner_sigint_sigterm_lifecycle(tmp_path):
     """
     for sig in (signal.SIGINT, signal.SIGTERM):
         lake_root = tmp_path / f"lake_signal_{sig.name}"
+        # F08 intentionally leaves a new registry empty; seed one explicit symbol
+        # so this lifecycle test exercises mock ingestion and graceful draining.
+        from src.storage.config import init_tick_lake
+        from src.storage.registry import SymbolRegistry, init_registry
+        init_tick_lake(lake_root)
+        init_registry(lake_root)
+        SymbolRegistry(lake_root).add_symbol("AAPL", capital_ticker="AAPL")
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -615,36 +626,50 @@ def test_exhausted_retries_io_error_telemetry(tmp_path):
     writer.close()
 
 
-def test_disk_full_in_runner_pipeline_prevents_queue_hang(tmp_path):
-    """
-    Mock publish_batch_async in StreamingEngine to raise OSError(errno.ENOSPC).
-    Verifies shutdown() does not freeze or time out, ticks_dropped incremented, unfinished_tasks cleared cleanly.
-    """
+def test_disk_full_in_runner_pipeline_retains_batch_until_recovery(tmp_path):
+    """ENOSPC leaves accepted queue items owned until storage recovers."""
     async def _run():
         lake_root = tmp_path / "lake"
         engine = StreamingEngine(lake_root=lake_root, flush_interval=0.05)
         engine.running = True
+        original_publish = engine.writer.publish_batch_async
 
         async def enospc_publish(batch):
             raise OSError(errno.ENOSPC, "No space left on device")
 
         engine.writer.publish_batch_async = enospc_publish
         worker_task = asyncio.create_task(engine._lake_writer_worker())
-
-        for i in range(10):
-            engine._enqueue_tick(("2026-10-02 12:00:00", "NVDA", 450.0 + i, 1.0, 449.9, 450.1, "CAPITAL", "REG"))
-
-        # When worker encounters error, it must task_done() so shutdown does not hang
-        await engine.shutdown(drain_timeout=2.0)
-
-        assert engine.ticks_dropped == 10
-        assert engine.write_queue.unfinished_tasks == 0
-
-        worker_task.cancel()
         try:
-            await worker_task
-        except asyncio.CancelledError:
-            pass
+            for i in range(10):
+                engine._enqueue_tick(("2026-10-02 12:00:00", "NVDA", 450.0 + i, 1.0, 449.9, 450.1, "CAPITAL", "REG"))
+            await asyncio.wait_for(engine.storage_error_event.wait(), timeout=2.0)
+            with pytest.raises(DrainFailedError):
+                await engine.shutdown(drain_timeout=0.1)
+
+            assert engine.pending_accepted_ticks == 10
+            assert engine.ticks_dropped == 0
+            assert engine.write_queue.unfinished_tasks == 10
+            assert engine.writer.status == "DRAIN_FAILED"
+
+            engine.writer.publish_batch_async = original_publish
+            engine.resume_storage()
+            await asyncio.wait_for(engine.write_queue.join(), timeout=5.0)
+            await asyncio.wait_for(worker_task, timeout=2.0)
+            await engine.shutdown(drain_timeout=1.0)
+
+            assert engine.ticks_committed == 10
+            assert engine.ticks_dropped == 0
+        finally:
+            engine.writer.publish_batch_async = original_publish
+            if not worker_task.done():
+                engine.resume_storage()
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    pass
+            if engine.writer.status != "STOPPED":
+                engine.writer.close()
 
     asyncio.run(_run())
 

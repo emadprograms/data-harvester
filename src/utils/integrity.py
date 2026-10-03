@@ -355,9 +355,13 @@ def analyze_price_drift(symbol: str, tolerance: float = 0.50, client=None, hist_
         resolved_lake = None
         if lake_root is not None:
             resolved_lake = Path(lake_root).resolve()
+        elif stream_path is not None:
+            # An explicit streaming DuckDB path is a backend choice. It must not
+            # be ignored in favor of an inherited environment-selected lake.
+            resolved_lake = None
         elif os.environ.get("TICK_LAKE_ROOT"):
             resolved_lake = Path(os.environ["TICK_LAKE_ROOT"]).resolve()
-        elif not (stream_path and os.path.exists(stream_path)):
+        else:
             try:
                 from src.storage.config import resolve_tick_lake_root
                 resolved_lake = resolve_tick_lake_root()

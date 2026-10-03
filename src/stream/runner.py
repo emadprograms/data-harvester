@@ -7,6 +7,7 @@ Supports dynamic subscription reload without dropping the WebSocket connection.
 """
 import asyncio
 import logging
+import math
 from pathlib import Path
 import signal
 import sys
@@ -33,10 +34,48 @@ logging.basicConfig(
 logger = logging.getLogger("stream_runner")
 
 
+class DrainFailedError(RuntimeError):
+    """Raised when accepted stream work cannot be durably drained before shutdown."""
+
+
+DEFAULT_STREAM_FLUSH_INTERVAL_SECONDS = 5.0
+DEFAULT_STREAM_MAX_BATCH_ROWS = 5000
+
+
+def _is_fresh_lake_path(path: Union[str, Path]) -> bool:
+    """A lake can bootstrap an empty registry only before any lake artifact exists."""
+    root = Path(path).resolve()
+    if not root.exists():
+        return True
+    return root.is_dir() and not any(root.iterdir())
+
+
+def _positive_float(value: Any, env_name: str, default: float) -> float:
+    raw = value if value is not None else os.environ.get(env_name, default)
+    try:
+        resolved = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{env_name} must be a finite positive number, got {raw!r}") from exc
+    if not math.isfinite(resolved) or resolved <= 0:
+        raise ValueError(f"{env_name} must be a finite positive number, got {raw!r}")
+    return resolved
+
+
+def _positive_int(value: Any, env_name: str, default: int) -> int:
+    raw = value if value is not None else os.environ.get(env_name, default)
+    try:
+        numeric = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{env_name} must be a positive integer, got {raw!r}") from exc
+    if not math.isfinite(numeric) or numeric <= 0 or not numeric.is_integer():
+        raise ValueError(f"{env_name} must be a positive integer, got {raw!r}")
+    return int(numeric)
+
+
 class MockStreamer:
     """Mock streamer generating synthetic ticks for offline/test execution without real network/credentials."""
     def __init__(self, epics: List[str], on_tick_callback, ticks_per_sec: float = 50.0):
-        self.epics = list(epics) if epics else ["AAPL", "NVDA", "MSFT"]
+        self.epics = list(epics) if epics is not None else []
         self.on_tick_callback = on_tick_callback
         self.ticks_per_sec = float(ticks_per_sec)
         self.running = False
@@ -93,10 +132,11 @@ class StreamingEngine:
     def __init__(
         self,
         db_path=None,
-        flush_interval=2.0,
+        flush_interval=None,
         enable_binance=False,
         lake_root=None,
         max_queue_size=10000,
+        max_batch_rows=None,
         writer_id="writer_1",
         registry_poll_interval=1.0,
         registry_debounce_interval=0.05,
@@ -105,14 +145,19 @@ class StreamingEngine:
         mock_ticks_per_sec: float = 50.0,
     ):
         self.lake_root = lake_root
-        self.max_queue_size = max_queue_size
-        self.flush_interval = flush_interval
+        self.flush_interval = _positive_float(
+            flush_interval, "STREAM_FLUSH_INTERVAL_SECONDS", DEFAULT_STREAM_FLUSH_INTERVAL_SECONDS
+        )
+        self.max_batch_rows = _positive_int(
+            max_batch_rows, "STREAM_MAX_BATCH_ROWS", DEFAULT_STREAM_MAX_BATCH_ROWS
+        )
+        self.max_queue_size = _positive_int(max_queue_size, "STREAM_MAX_QUEUE_SIZE", 10000)
         self.enable_binance = enable_binance
         self.mock_mode = mock_mode
         self.drain_delay = float(drain_delay)
         self.mock_ticks_per_sec = float(mock_ticks_per_sec)
         self.running = False
-        self.write_queue = BoundedWriteQueue(maxsize=max_queue_size)
+        self.write_queue = BoundedWriteQueue(maxsize=self.max_queue_size)
         self.reload_event = asyncio.Event()
         self.db_conn = None
         self.total_ticks_saved = 0
@@ -120,6 +165,13 @@ class StreamingEngine:
         self.ticks_received = 0
         self.ticks_enqueued = 0
         self.ticks_dropped = 0
+        self._pending_accepted_items = 0
+        self.storage_error_event = asyncio.Event()
+        self._storage_resume_event = asyncio.Event()
+        self._storage_resume_event.set()
+        self._storage_error: Optional[BaseException] = None
+        self.drain_succeeded = True
+        self._retained_worker_buffer: List[Any] = []
         self.writer = None
         self.lake_writer = None
         self.registry = None
@@ -127,38 +179,55 @@ class StreamingEngine:
         self.registry_debounce_interval: float = float(registry_debounce_interval)
 
         if self.lake_root is not None:
+            self.lake_root = Path(self.lake_root).resolve()
+            fresh_lake = _is_fresh_lake_path(self.lake_root)
             from src.storage.parquet_writer import TickLakeWriter
             self.writer = TickLakeWriter(
                 root=self.lake_root,
                 writer_id=writer_id,
-                flush_interval_seconds=flush_interval,
-                max_queue_size=max_queue_size,
+                flush_interval_seconds=self.flush_interval,
+                max_queue_size=self.max_queue_size,
+                max_batch_rows=self.max_batch_rows,
             )
             self.lake_writer = self.writer
             self.db_path = None
             try:
-                from src.storage.registry import SymbolRegistry
+                from src.storage.registry import SymbolRegistry, init_registry
                 self.registry = SymbolRegistry(root=self.lake_root)
+                if fresh_lake and not self.registry.path.exists():
+                    init_registry(self.lake_root)
             except Exception:
-                pass
+                self.writer.close()
+                self.writer = None
+                self.lake_writer = None
+                raise
         elif db_path is None and (os.environ.get("TICK_LAKE_ROOT") or os.environ.get("DATA_DIR")):
+            # An environment-selected lake is an explicit backend choice. Do not
+            # silently redirect a configured lake failure into streaming.duckdb.
+            from src.storage.config import resolve_tick_lake_root
+            resolved_root = resolve_tick_lake_root()
+            self.lake_root = Path(resolved_root).resolve()
+            fresh_lake = _is_fresh_lake_path(self.lake_root)
+            from src.storage.parquet_writer import TickLakeWriter
+            self.writer = TickLakeWriter(
+                root=self.lake_root,
+                writer_id=writer_id,
+                flush_interval_seconds=self.flush_interval,
+                max_queue_size=self.max_queue_size,
+                max_batch_rows=self.max_batch_rows,
+            )
+            self.lake_writer = self.writer
+            self.db_path = None
             try:
-                from src.storage.config import resolve_tick_lake_root
-                resolved_root = resolve_tick_lake_root()
-                self.lake_root = resolved_root
-                from src.storage.parquet_writer import TickLakeWriter
-                self.writer = TickLakeWriter(
-                    root=self.lake_root,
-                    writer_id=writer_id,
-                    flush_interval_seconds=flush_interval,
-                    max_queue_size=max_queue_size,
-                )
-                self.lake_writer = self.writer
-                self.db_path = None
-                from src.storage.registry import SymbolRegistry
+                from src.storage.registry import SymbolRegistry, init_registry
                 self.registry = SymbolRegistry(root=self.lake_root)
+                if fresh_lake and not self.registry.path.exists():
+                    init_registry(self.lake_root)
             except Exception:
-                self.db_path = DEFAULT_STREAMING_DB_PATH
+                self.writer.close()
+                self.writer = None
+                self.lake_writer = None
+                raise
         else:
             self.db_path = db_path or DEFAULT_STREAMING_DB_PATH
 
@@ -178,20 +247,56 @@ class StreamingEngine:
     def ticks_committed(self) -> int:
         return self.total_ticks_persisted
 
-    def _enqueue_tick(self, tick_tuple):
-        """Pushes an individual tick into the async write queue."""
+    @property
+    def pending_accepted_ticks(self) -> int:
+        """Queue items still owned by the writer, whether queued or in-flight."""
+        return self._pending_accepted_items
+
+    def _enqueue_tick(self, tick_tuple) -> bool:
+        """Best-effort synchronous admission; returns False and counts a pre-admission drop on full."""
         self.ticks_received += 1
         try:
             self.write_queue.put_nowait(tick_tuple)
-            self.ticks_enqueued += 1
         except asyncio.QueueFull:
             self._record_drop(1)
             sym = tick_tuple[1] if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1 else str(tick_tuple)
-            logger.warning("write_queue full (%d), dropping tick: %s", self.write_queue.maxsize, sym)
+            logger.warning("write_queue full (%d), synchronously rejected tick: %s", self.write_queue.maxsize, sym)
+            return False
+        self.ticks_enqueued += 1
+        self._pending_accepted_items += 1
+        return True
 
-    def _enqueue_bar(self, bar_tuple):
-        """Backward-compatible bar enqueueing."""
-        self._enqueue_tick(bar_tuple)
+    async def _enqueue_tick_async(self, tick_tuple) -> None:
+        """Lossless async admission that waits for bounded queue capacity."""
+        self.ticks_received += 1
+        await self.write_queue.put(tick_tuple)
+        self.ticks_enqueued += 1
+        self._pending_accepted_items += 1
+
+    def _pause_storage(self, error: BaseException) -> None:
+        self._storage_error = error
+        self.storage_error_event.set()
+        self._storage_resume_event.clear()
+        if self.writer is not None:
+            try:
+                self.writer.set_operational_status("DEGRADED", queue_depth=self.pending_accepted_ticks)
+            except Exception:
+                pass
+
+    def resume_storage(self) -> None:
+        """Resume retries for a retained in-flight batch after storage recovery."""
+        self._storage_error = None
+        self.storage_error_event.clear()
+        if self.writer is not None:
+            try:
+                self.writer.set_operational_status("RUNNING", queue_depth=self.pending_accepted_ticks)
+            except Exception:
+                pass
+        self._storage_resume_event.set()
+
+    def _enqueue_bar(self, bar_tuple) -> bool:
+        """Backward-compatible best-effort synchronous bar admission."""
+        return self._enqueue_tick(bar_tuple)
 
     async def _handle_binance_tick(self, tick_tuple):
         """Feeds a raw trade tick from Binance directly into the write queue with fencing."""
@@ -200,12 +305,12 @@ class StreamingEngine:
             if self._subscriptions_initialized or self.active_streaming_symbols:
                 if sym not in self.active_streaming_symbols:
                     return
-        self._enqueue_tick(tick_tuple)
+        await self._enqueue_tick_async(tick_tuple)
 
     async def _handle_binance_bar(self, bar_tuple, is_closed=True):
         """Backward-compatible handler for Binance bars."""
         if is_closed:
-            self._enqueue_tick(bar_tuple)
+            await self._enqueue_tick_async(bar_tuple)
 
     async def _handle_capital_tick(self, tick):
         """Feeds a tick from Capital.com directly into the write queue, filtering out excluded/purged assets."""
@@ -230,7 +335,7 @@ class StreamingEngine:
                 if self._subscriptions_initialized or self.active_streaming_symbols:
                     if sym not in self.active_streaming_symbols:
                         return
-        self._enqueue_tick(tick_tuple)
+        await self._enqueue_tick_async(tick_tuple)
 
     async def _duckdb_writer_worker(self):
         """Worker that drains the write queue and batches raw tick writes into streaming.duckdb."""
@@ -281,94 +386,82 @@ class StreamingEngine:
                 logger.error(f"Error during final buffer flush: {e}")
 
     async def _lake_writer_worker(self):
-        """Worker that drains the write queue and batches raw tick writes into TickLakeWriter."""
-        buffer = []
+        """Persist accepted queue items; retain ownership until a receipt confirms commit."""
+        buffer = list(self._retained_worker_buffer)
+        self._retained_worker_buffer.clear()
         last_flush = time.monotonic()
         cancelled = False
 
-        while (self.running or not self.write_queue.empty()) and not cancelled:
-            try:
-                wait_time = min(0.05, self.flush_interval) if buffer else (0.05 if not self.running else min(0.2, self.flush_interval))
-                try:
-                    tick = await asyncio.wait_for(self.write_queue.get(), timeout=wait_time)
-                    # Normalize if 9-element bar tuple from legacy callers: (ts, sym, o, h, l, c, v, sess, src)
-                    if len(tick) == 9:
-                        tick = (tick[0], tick[1], tick[5], tick[6], None, None, tick[8], tick[7])
-                    buffer.append(tick)
-                    while len(buffer) < 1000:
-                        try:
-                            t = self.write_queue.get_nowait()
-                            if len(t) == 9:
-                                t = (t[0], t[1], t[5], t[6], None, None, t[8], t[7])
-                            buffer.append(t)
-                        except asyncio.QueueEmpty:
-                            break
-                except asyncio.TimeoutError:
-                    pass
+        def normalize_bar(tick):
+            if isinstance(tick, (list, tuple)) and len(tick) == 9:
+                return (tick[0], tick[1], tick[5], tick[6], None, None, tick[8], tick[7])
+            return tick
+
+        try:
+            while self.running or not self.write_queue.empty() or buffer:
+                # A failed batch remains at the head of this worker-owned buffer. New
+                # callbacks may enqueue only until the bounded queue fills.
+                await self._storage_resume_event.wait()
+
+                if len(buffer) < self.max_batch_rows:
+                    wait_time = 0.2
+                    if buffer:
+                        remaining = self.flush_interval - (time.monotonic() - last_flush)
+                        wait_time = min(wait_time, max(0.001, remaining))
+                    try:
+                        tick = await asyncio.wait_for(self.write_queue.get(), timeout=wait_time)
+                        buffer.append(normalize_bar(tick))
+                        while len(buffer) < self.max_batch_rows:
+                            try:
+                                buffer.append(normalize_bar(self.write_queue.get_nowait()))
+                            except asyncio.QueueEmpty:
+                                break
+                    except asyncio.TimeoutError:
+                        pass
 
                 now = time.monotonic()
-                should_flush = (
-                    len(buffer) >= 1000 or
-                    (buffer and (now - last_flush) >= self.flush_interval) or
-                    (not self.running and buffer)
+                should_flush = bool(buffer) and (
+                    len(buffer) >= self.max_batch_rows
+                    or now - last_flush >= self.flush_interval
+                    or not self.running
                 )
+                if not should_flush:
+                    continue
 
-                if should_flush:
-                    batch = list(buffer)
-                    buffer.clear()
-                    batch_len = len(batch)
-                    try:
-                        publish_task = asyncio.create_task(self.writer.publish_batch_async(batch))
-                        try:
-                            await asyncio.shield(publish_task)
-                        except asyncio.CancelledError:
-                            cancelled = True
-                            await publish_task
-                        self.total_ticks_persisted += batch_len
-                        self.total_ticks_saved += batch_len
-                        for _ in range(batch_len):
-                            self.write_queue.task_done()
-                        last_flush = time.monotonic()
-                    except asyncio.CancelledError:
-                        cancelled = True
-                        raise
-                    except Exception as exc:
-                        logger.error(f"Lake writer worker error: {exc}")
-                        self._record_drop(batch_len)
-                        for _ in range(batch_len):
-                            self.write_queue.task_done()
-
-            except asyncio.CancelledError:
-                cancelled = True
-                break
-            except Exception as e:
-                logger.error(f"Lake writer worker error: {e}")
-                await asyncio.sleep(0.1)
-
-        # Final flush on worker exit if buffer still has items
-        if buffer:
-            batch = list(buffer)
-            buffer.clear()
-            batch_len = len(batch)
-            try:
+                batch = list(buffer)
                 publish_task = asyncio.create_task(self.writer.publish_batch_async(batch))
                 try:
-                    await asyncio.shield(publish_task)
-                except asyncio.CancelledError:
-                    cancelled = True
-                    await publish_task
-                self.total_ticks_persisted += batch_len
-                self.total_ticks_saved += batch_len
+                    try:
+                        receipt = await asyncio.shield(publish_task)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                        receipt = await publish_task
+                except Exception as exc:
+                    logger.error("Lake writer worker retained %d accepted items after storage failure: %s", len(batch), exc)
+                    self._pause_storage(exc)
+                    if cancelled:
+                        self._retained_worker_buffer = list(buffer)
+                        buffer.clear()
+                        raise asyncio.CancelledError()
+                    continue
+
+                batch_len = len(buffer)
+                buffer.clear()
+                self._pending_accepted_items = max(0, self._pending_accepted_items - batch_len)
+                committed_rows = int(receipt.row_count)
+                self.total_ticks_persisted += committed_rows
+                self.total_ticks_saved += committed_rows
                 for _ in range(batch_len):
                     self.write_queue.task_done()
-            except asyncio.CancelledError:
-                cancelled = True
-                raise
-            except Exception as e:
-                logger.error(f"Error during final lake flush: {e}")
-                self._record_drop(batch_len)
-                for _ in range(batch_len):
-                    self.write_queue.task_done()
+                self._storage_error = None
+                self.storage_error_event.clear()
+                last_flush = time.monotonic()
+                if cancelled:
+                    break
+        except asyncio.CancelledError:
+            if buffer:
+                self._retained_worker_buffer = list(buffer)
+            raise
 
         if cancelled:
             raise asyncio.CancelledError()
@@ -459,10 +552,40 @@ class StreamingEngine:
                                 break
 
                     if signal_detected:
-                        # Debounce rapid burst of signals
-                        debounce = getattr(self, "registry_debounce_interval", 0.05)
+                        # Coalesce a burst until the signal files have been quiet
+                        # for the configured debounce window. A fixed sleep can
+                        # consume only the first edge and then reload repeatedly
+                        # while a sustained registry-update storm is still writing.
+                        debounce = max(0.0, float(getattr(self, "registry_debounce_interval", 0.05)))
                         if debounce > 0:
-                            await asyncio.sleep(debounce)
+                            def signal_state():
+                                state = []
+                                for signal_path in signal_paths:
+                                    try:
+                                        stat = signal_path.stat()
+                                        state.append((str(signal_path), stat.st_mtime_ns, stat.st_size))
+                                    except FileNotFoundError:
+                                        state.append((str(signal_path), None, None))
+                                    except OSError:
+                                        state.append((str(signal_path), "unavailable", None))
+                                return tuple(state)
+
+                            started_at = time.monotonic()
+                            last_change = started_at
+                            previous_state = signal_state()
+                            max_debounce = max(debounce * 4.0, 0.25)
+                            while self.running:
+                                elapsed = time.monotonic() - started_at
+                                if elapsed >= max_debounce:
+                                    break
+                                await asyncio.sleep(min(0.01, max_debounce - elapsed))
+                                current_state = signal_state()
+                                now = time.monotonic()
+                                if current_state != previous_state:
+                                    previous_state = current_state
+                                    last_change = now
+                                elif now - last_change >= debounce:
+                                    break
 
                         # Clean up signal files and event
                         for sp in signal_paths:
@@ -523,9 +646,9 @@ class StreamingEngine:
         if self.registry is not None:
             try:
                 active_entries = self.registry.get_active_symbols()
-            except RegistryError as e:
-                logger.warning(f"Failed to load active symbols from registry: {e}")
-                active_entries = []
+            except RegistryError:
+                self.running = False
+                raise
             for entry in active_entries:
                 sym = entry.symbol
                 self.active_streaming_symbols.add(sym)
@@ -547,7 +670,7 @@ class StreamingEngine:
                         else:
                             self.epic_to_display[display_name] = display_name
 
-        if not capital_symbols:
+        if not capital_symbols and self.writer is None:
             capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
             for s in capital_symbols:
                 self.active_streaming_symbols.add(s)
@@ -591,14 +714,15 @@ class StreamingEngine:
                     tickers.get("binance_ticker") for display_name, tickers in s_map.items()
                     if tickers.get("binance_ticker")
                 ]
-            if not binance_symbols:
+            if not binance_symbols and self.registry is None:
                 binance_symbols = ["btcusdt", "ethusdt"]
-            self.binance_streamer = BinanceStreamer(
-                symbols=binance_symbols,
-                stream_type="trade",
-                on_tick_callback=self._handle_binance_tick
-            )
-            tasks.append(asyncio.create_task(self.binance_streamer.start()))
+            if binance_symbols:
+                self.binance_streamer = BinanceStreamer(
+                    symbols=binance_symbols,
+                    stream_type="trade",
+                    on_tick_callback=self._handle_binance_tick
+                )
+                tasks.append(asyncio.create_task(self.binance_streamer.start()))
 
         logger.info("🚀 24/7 Capital.com Tick Streaming Engine started successfully.")
         try:
@@ -617,7 +741,7 @@ class StreamingEngine:
             self.binance_streamer.stop()
 
     async def shutdown(self, drain_timeout: float = 10.0):
-        """Gracefully drains remaining queued ticks and closes TickLakeWriter."""
+        """Stop providers and report failure rather than acknowledge unsaved work."""
         self.running = False
         if self.drain_delay > 0:
             await asyncio.sleep(self.drain_delay)
@@ -627,31 +751,37 @@ class StreamingEngine:
         if self.binance_streamer:
             self.binance_streamer.stop()
 
-        # Await write queue drain
-        if hasattr(self, "write_queue"):
-            try:
-                await asyncio.wait_for(self.write_queue.join(), timeout=drain_timeout)
-            except asyncio.TimeoutError:
-                unfinished = getattr(self.write_queue, "unfinished_tasks", 0)
-                self._record_drop(unfinished)
-                logger.warning(
-                    "Timed out waiting for write queue to drain during shutdown (%d unfinished tasks dropped)",
-                    unfinished,
-                )
+        try:
+            await asyncio.wait_for(self.write_queue.join(), timeout=drain_timeout)
+        except asyncio.TimeoutError as exc:
+            self.drain_succeeded = False
+            message = (
+                f"Streaming drain timed out with {self.pending_accepted_ticks} accepted items pending "
+                f"({getattr(self.write_queue, 'unfinished_tasks', 0)} unfinished queue tasks)"
+            )
+            if self.writer is not None:
+                try:
+                    self.writer.set_operational_status("DRAIN_FAILED", queue_depth=self.pending_accepted_ticks)
+                except Exception:
+                    pass
+            raise DrainFailedError(message) from exc
 
         if self.writer is not None:
             try:
                 await self.writer.flush_async()
-            except Exception as e:
-                logger.warning(f"Error during writer flush_async: {e}")
-            try:
                 await self.writer.close_async()
-            except Exception as e:
-                logger.warning(f"Error during writer close_async: {e}")
+            except Exception as exc:
+                self.drain_succeeded = False
+                try:
+                    self.writer.set_operational_status("DRAIN_FAILED", queue_depth=self.pending_accepted_ticks)
+                except Exception:
+                    pass
+                raise DrainFailedError(f"Streaming writer failed during final drain: {exc}") from exc
 
         if self.db_conn:
             self.db_conn.close()
             self.db_conn = None
+        self.drain_succeeded = True
 
 
 def main():
@@ -659,7 +789,8 @@ def main():
     parser = argparse.ArgumentParser(description="24/7 Capital.com Tick Streaming Engine")
     parser.add_argument("--lake-root", type=str, default=None, help="Path to tick lake root")
     parser.add_argument("--writer-id", type=str, default="writer_1", help="Writer ID for LakePublisher")
-    parser.add_argument("--flush-interval", type=float, default=2.0, help="Batch flush interval in seconds")
+    parser.add_argument("--flush-interval", type=float, default=None, help="Batch flush interval in seconds")
+    parser.add_argument("--max-batch-rows", type=int, default=None, help="Maximum rows per publication batch")
     parser.add_argument("--max-queue-size", type=int, default=10000, help="Max bounded queue size")
     parser.add_argument("--mock", action="store_true", help="Run with MockStreamer generating synthetic ticks")
     parser.add_argument("--fail-immediately", action="store_true", help="Exit immediately with returncode 1 (for supervisor flapping chaos)")
@@ -677,6 +808,7 @@ def main():
         lake_root=lake_root,
         writer_id=args.writer_id,
         flush_interval=args.flush_interval,
+        max_batch_rows=args.max_batch_rows,
         max_queue_size=args.max_queue_size,
         enable_binance=args.enable_binance,
         mock_mode=args.mock,
@@ -708,7 +840,16 @@ def main():
 
         if stop_event.is_set():
             engine.stop()
-            await engine.shutdown()
+            # StreamingEngine.start() owns the single shutdown/drain path in its
+            # finally block. Await it instead of closing the same writer here;
+            # double shutdown can race the executor and report a false drain failure.
+            if engine_task in pending:
+                try:
+                    await engine_task
+                except Exception as exc:
+                    logger.error("Streaming engine failed while draining on shutdown: %s", exc)
+                    raise
+                pending.discard(engine_task)
 
         for t in pending:
             t.cancel()

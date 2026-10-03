@@ -1,6 +1,6 @@
 # Tick lake audit remediation: regression tests and implementation
 
-Status: **proposed; not implemented by this document**. Baseline: `280d5b2a`, audited 2026-10-03.
+Status: **F01-F11 implementation and offline qualification passed; separate performance gates unresolved**. Baseline: `280d5b2a`, audited 2026-10-03. Execution evidence: [`tick-lake-audit-remediation-execution.md`](tick-lake-audit-remediation-execution.md).
 
 This is the current remediation plan for the failed acceptance criteria in the latest audit. It supplements [the original architecture](partitioned-parquet-tick-lake.md) and supersedes the completion claim in [the previous test-first plan](tick-lake-test-first-remediation.md) for the issues below. Preserve useful existing coverage. Do not treat milestone completion banners or a green stress suite as evidence that these failures are resolved.
 
@@ -8,10 +8,7 @@ This is the current remediation plan for the failed acceptance criteria in the l
 
 Deliver concurrent ingestion and analytics over immutable Parquet files without silently losing, duplicating or replacing data during normal restart, retry, migration or shutdown. Keep in-memory DuckDB readers and finalized-file discovery. Do not introduce online compaction manifests or reader leases as part of this remediation; offline maintenance is sufficient when all affected readers and writers are quiescent.
 
-This request creates documentation only. The next implementation should proceed in two reviewable stages:
-
-1. Implement isolated regression tests and correct misleading existing assertions. Run them against the current code and record genuine failures. Stop at this gate if only test implementation has been authorized.
-2. Once application changes are authorized, implement the fixes in the dependency order below and demonstrate those same tests passing. Do not rewrite their expected outcomes to match defective behavior.
+Execution authority and status: the user authorized implementation after test preparation. The isolated regression tests were run against the baseline first; the 40-failure/8-pass evidence is recorded in the execution report. Application changes followed in the dependency order below. Preserve this test-first boundary for any further changes: prepare or identify the failing regression before a new application fix, then demonstrate the same acceptance test passing. Do not rewrite expected outcomes to match defective behavior.
 
 The audit ran storage/stream tests: 213 passed, two localhost-dependent setup errors, one deselected; the two affected tests subsequently passed with localhost access. Thus 215 tests passed across those runs. Independent temporary-data reproducers still exposed the failures below. This was not a full-repository or endurance qualification. Recreate the reproducers as committed tests; temporary audit scripts are not lasting coverage.
 
@@ -269,6 +266,6 @@ Before isolation is fixed, explicitly supply a temporary `TICK_LAKE_ROOT` to eve
 
 Create an execution report alongside this plan with: baseline and final commit IDs; Python/DuckDB/PyArrow versions; OS; exact commands; collected/passed/failed/deselected/skipped counts; F01–F11 and additional-contract mappings to actual test node IDs; pre-fix failure and post-fix success evidence; remaining limitations. Distinguish a functional test failure, invalid fixture and environmental restriction.
 
-As part of the later remediation work, correct the old `Executed`/milestone `PASSED` claims to reflect unresolved gates. Restore completion status only after the report supports it. This document deliberately does not rewrite historical artifacts or claim any application fixes have occurred.
+The execution report and `.planning/v4.1-MILESTONE-AUDIT.md` record the current outcomes. The historical `Executed`/milestone `PASSED` claims remain labeled as historical evidence rather than reused for F01-F11. Current findings F01-F11 and the offline repository suite pass; the separately run dashboard latency performance gates remain unresolved as recorded in the execution report.
 
 Release acceptance requires no silent restart loss, no accepted-batch loss on recoverable I/O failure, no duplicate replay after partial publication, immutable verified migration, real maintenance fencing, explicit backend selection, safe empty-registry behavior, effective configured batching and read-only dry-run. Any abrupt-crash/feed-gap durability promise must have its own implemented mechanism and evidence; it cannot be inferred from a green unit suite.

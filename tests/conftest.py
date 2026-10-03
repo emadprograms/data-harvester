@@ -1,18 +1,19 @@
+import builtins
+import io
 import os
 import sys
 import shutil
 import tempfile
 import socket
 import ipaddress
+import threading
 from datetime import datetime, timedelta, date, timezone
 import pytest
 import duckdb
 
-from src.config import US_EASTERN, UTC
-
 
 class ProductionAccessBlockedError(PermissionError):
-    """Raised when test code attempts to access production database files or directories."""
+    """Raised when test code attempts to access protected storage paths."""
     pass
 
 
@@ -22,7 +23,7 @@ class NetworkBlockedError(RuntimeError):
 
 
 # ============================================================================
-# SESSION-LEVEL PATH REDIRECTION
+# SESSION-LEVEL PATH REDIRECTION — MUST PRECEDE APPLICATION IMPORTS
 # ============================================================================
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -31,7 +32,17 @@ REPO_DATA_REAL = os.path.realpath(REPO_DATA_DIR)
 MICRON_DATA_DIR = "/Volumes/Micron-E 0256 A/data-harvester/data"
 
 _SESSION_TEMP_DIR = tempfile.mkdtemp(prefix="pytest_data_harvest_")
+_SESSION_LAKE_ROOT = os.path.join(_SESSION_TEMP_DIR, "tick_lake")
+# Explicitly override inherited values before importing any application module.
+# load_dotenv() uses override=False, so a repository .env cannot replace these.
 os.environ["DATA_DIR"] = _SESSION_TEMP_DIR
+os.environ["TICK_LAKE_ROOT"] = _SESSION_LAKE_ROOT
+
+# The fake protected roots are added only by a fixture that tests the guard.
+_PROTECTED_TEST_ROOTS = set()
+_PROTECTED_ROOTS_LOCK = threading.RLock()
+
+from src.config import US_EASTERN, UTC
 
 
 def _patch_all_modules():
@@ -64,8 +75,10 @@ _patch_all_modules()
 
 # Initialize session isolated databases with schema tables
 from src.database.schema import init_historical_db, init_streaming_db
+from src.storage.config import init_tick_lake
 init_historical_db()
 init_streaming_db()
+init_tick_lake(_SESSION_LAKE_ROOT)
 
 STANDARD_HISTORICAL_SYMBOLS = [
     "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "SPY", "QQQ", "AMD",
@@ -167,6 +180,145 @@ def is_production_path(path) -> bool:
     return False
 
 
+def _normalised_path_for_guard(path):
+    if isinstance(path, int) or path is None:
+        return None
+    if hasattr(path, "name") and not isinstance(path, (str, bytes, os.PathLike)):
+        path = path.name
+    try:
+        return os.fspath(path)
+    except TypeError:
+        return None
+
+
+def is_protected_path(path) -> bool:
+    """Return true for production paths and fixture-registered fake protected roots."""
+    path_str = _normalised_path_for_guard(path)
+    if not path_str:
+        return False
+    if isinstance(path_str, bytes):
+        path_str = os.fsdecode(path_str)
+    if is_production_path(path_str):
+        return True
+
+    absolute = os.path.abspath(path_str)
+    resolved = os.path.realpath(absolute)
+    with _PROTECTED_ROOTS_LOCK:
+        roots = tuple(_PROTECTED_TEST_ROOTS)
+    for root in roots:
+        root_abs = os.path.abspath(root)
+        root_real = os.path.realpath(root_abs)
+        for candidate, protected_root in ((absolute, root_abs), (resolved, root_real)):
+            try:
+                if os.path.commonpath((candidate, protected_root)) == protected_root:
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
+def _deny_protected_write(path, operation: str) -> None:
+    if is_protected_path(path):
+        raise ProductionAccessBlockedError(
+            f"Blocked {operation} to protected path: {path}"
+        )
+
+
+_original_builtin_open = builtins.open
+_original_io_open = io.open
+
+
+def _guarded_open(file, mode="r", *args, **kwargs):
+    if any(flag in str(mode) for flag in ("w", "a", "x", "+")):
+        _deny_protected_write(file, "open for write")
+    return _original_builtin_open(file, mode, *args, **kwargs)
+
+
+def _guarded_io_open(file, mode="r", *args, **kwargs):
+    if any(flag in str(mode) for flag in ("w", "a", "x", "+")):
+        _deny_protected_write(file, "open for write")
+    return _original_io_open(file, mode, *args, **kwargs)
+
+
+builtins.open = _guarded_open
+io.open = _guarded_io_open
+
+_original_os_open = os.open
+_original_os_replace = os.replace
+_original_os_rename = os.rename
+_original_os_remove = os.remove
+_original_os_unlink = os.unlink
+_original_os_mkdir = os.mkdir
+_original_os_makedirs = os.makedirs
+_original_os_rmdir = os.rmdir
+
+
+def _guarded_os_open(path, flags, *args, **kwargs):
+    write_flags = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+    if flags & write_flags:
+        _deny_protected_write(path, "os.open")
+    return _original_os_open(path, flags, *args, **kwargs)
+
+
+def _guarded_os_replace(src, dst, *args, **kwargs):
+    _deny_protected_write(src, "replace source")
+    _deny_protected_write(dst, "replace destination")
+    return _original_os_replace(src, dst, *args, **kwargs)
+
+
+def _guarded_os_rename(src, dst, *args, **kwargs):
+    _deny_protected_write(src, "rename source")
+    _deny_protected_write(dst, "rename destination")
+    return _original_os_rename(src, dst, *args, **kwargs)
+
+
+def _guarded_os_remove(path, *args, **kwargs):
+    _deny_protected_write(path, "remove")
+    return _original_os_remove(path, *args, **kwargs)
+
+
+def _guarded_os_unlink(path, *args, **kwargs):
+    _deny_protected_write(path, "unlink")
+    return _original_os_unlink(path, *args, **kwargs)
+
+
+def _guarded_os_mkdir(path, *args, **kwargs):
+    _deny_protected_write(path, "mkdir")
+    return _original_os_mkdir(path, *args, **kwargs)
+
+
+def _guarded_os_makedirs(path, *args, **kwargs):
+    _deny_protected_write(path, "makedirs")
+    return _original_os_makedirs(path, *args, **kwargs)
+
+
+def _guarded_os_rmdir(path, *args, **kwargs):
+    _deny_protected_write(path, "rmdir")
+    return _original_os_rmdir(path, *args, **kwargs)
+
+
+os.open = _guarded_os_open
+os.replace = _guarded_os_replace
+os.rename = _guarded_os_rename
+os.remove = _guarded_os_remove
+os.unlink = _guarded_os_unlink
+os.mkdir = _guarded_os_mkdir
+os.makedirs = _guarded_os_makedirs
+os.rmdir = _guarded_os_rmdir
+
+# PyArrow's C++ writer does not necessarily pass through Python's open()/os.open().
+import pyarrow.parquet as _guarded_pq
+_original_parquet_write_table = _guarded_pq.write_table
+
+
+def _guarded_parquet_write_table(table, where, *args, **kwargs):
+    _deny_protected_write(where, "Parquet write")
+    return _original_parquet_write_table(table, where, *args, **kwargs)
+
+
+_guarded_pq.write_table = _guarded_parquet_write_table
+
+
 _original_duckdb_connect = duckdb.connect
 
 
@@ -177,7 +329,7 @@ def guarded_duckdb_connect(*args, **kwargs):
     elif "database" in kwargs:
         db_target = kwargs["database"]
 
-    if is_production_path(db_target):
+    if is_protected_path(db_target):
         raise ProductionAccessBlockedError(
             f"Blocked access to production database path: {db_target}"
         )
@@ -192,7 +344,7 @@ _original_duckdb_client_attach = DuckDBClient.attach
 
 
 def guarded_duckdb_client_attach(self, target_db_path: str, alias: str, read_only: bool = True):
-    if is_production_path(target_db_path):
+    if is_protected_path(target_db_path):
         raise ProductionAccessBlockedError(
             f"Blocked attach to production database path: {target_db_path}"
         )
@@ -274,6 +426,50 @@ def pytest_sessionfinish(session, exitstatus):
 # ============================================================================
 # TEST FIXTURES
 # ============================================================================
+
+@pytest.fixture
+def isolated_lake_root(tmp_path, monkeypatch):
+    """A fresh lake root selected explicitly for this test."""
+    root = tmp_path / "lake"
+    monkeypatch.setenv("TICK_LAKE_ROOT", str(root))
+    return root
+
+
+@pytest.fixture
+def isolated_legacy_data_dir(tmp_path, monkeypatch):
+    """An explicit legacy-only DATA_DIR with no lake selection in the environment."""
+    data_dir = tmp_path / "legacy-data"
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.delenv("TICK_LAKE_ROOT", raising=False)
+    return data_dir
+
+
+@pytest.fixture
+def isolated_subprocess_env(tmp_path):
+    """Environment for child processes; keeps all default storage inside tmp_path."""
+    env = os.environ.copy()
+    data_dir = tmp_path / "child-data"
+    lake_root = tmp_path / "child-lake"
+    env["DATA_DIR"] = str(data_dir)
+    env["TICK_LAKE_ROOT"] = str(lake_root)
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, [REPO_ROOT, env.get("PYTHONPATH", "")])
+    )
+    return env
+
+
+@pytest.fixture
+def protected_temp_dir(tmp_path):
+    """Register a fake protected directory to exercise guards without real storage."""
+    protected_root = tmp_path / "fake-protected-root"
+    with _PROTECTED_ROOTS_LOCK:
+        _PROTECTED_TEST_ROOTS.add(str(protected_root))
+    try:
+        yield protected_root
+    finally:
+        with _PROTECTED_ROOTS_LOCK:
+            _PROTECTED_TEST_ROOTS.discard(str(protected_root))
+
 
 @pytest.fixture(autouse=True)
 def _network_and_path_tracker(request):

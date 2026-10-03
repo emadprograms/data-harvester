@@ -78,6 +78,7 @@ class TickLakeWriter:
     ):
         self.root = resolve_tick_lake_root(root)
         self.writer_id = writer_id
+        self._run_id = uuid.uuid4().hex
         self.max_batch_rows = max_batch_rows
         self.flush_interval_seconds = flush_interval_seconds
         self.max_queue_size = max_queue_size
@@ -94,18 +95,22 @@ class TickLakeWriter:
             root=self.root,
             writer_id=self.writer_id,
             compression=self.compression,
+            file_namespace=self._run_id,
         )
 
         # Recover any uncommitted intents from previous crash
-        recover_pending_publications(self.root)
+        recover_pending_publications(self.root, ownership_lock=self.publisher.lock)
 
         self._metrics = WriterMetrics()
         self._status = "RUNNING"
         self._seq_counter = 0
         self._batch_sequence = 0
+        self._prepared_batch: Optional[Tuple[int, str, List[QuoteTick]]] = None
+        self._prepared_source_signature: Optional[str] = None
         self._buffer: List[QuoteTick] = []
         self._buffer_lock = threading.RLock()
         self._publish_lock = threading.RLock()
+        self._external_queue_depth = 0
         self._last_flush_monotonic = time.monotonic()
         self._metrics.last_flush_monotonic = self._last_flush_monotonic
         self._last_drop_status_write_monotonic = 0.0
@@ -140,6 +145,19 @@ class TickLakeWriter:
     @property
     def status(self) -> str:
         return self._status
+
+    def set_operational_status(self, status: str, queue_depth: Optional[int] = None) -> None:
+        """Update externally managed stream health without altering batch ownership."""
+        allowed = {"RUNNING", "DEGRADED", "DRAIN_FAILED", "CLOSING", "STOPPED"}
+        if status not in allowed:
+            raise ValueError(f"Unsupported writer status: {status}")
+        with self._publish_lock:
+            if self._status == "STOPPED" and status != "STOPPED":
+                raise RuntimeError("Cannot change status after the writer has stopped")
+            self._status = status
+            if queue_depth is not None:
+                self._external_queue_depth = max(0, int(queue_depth))
+            self._update_status_file()
 
     def _validate_and_normalize_tick(self, tick: Any) -> Tuple[bool, Optional[QuoteTick]]:
         """
@@ -267,7 +285,7 @@ class TickLakeWriter:
         # 5. Ingest ID (assign deterministic/sequential if missing)
         if not ingest_id:
             self._seq_counter += 1
-            ingest_id = f"{self.writer_id}_{self._seq_counter:08d}"
+            ingest_id = f"{self.writer_id}_{self._run_id}_{self._seq_counter:08d}"
         else:
             ingest_id = str(ingest_id)
 
@@ -287,7 +305,7 @@ class TickLakeWriter:
         """Atomically update _control/writer_status.json."""
         try:
             with self._buffer_lock:
-                queue_depth = len(self._buffer)
+                queue_depth = len(self._buffer) + self._external_queue_depth
             payload = {
                 "status": self._status,
                 "writer_id": self.writer_id,
@@ -384,11 +402,11 @@ class TickLakeWriter:
         self.write_tick(tick)
 
     def _publish_batch_core(self, valid_ticks: List[QuoteTick]) -> PublishReceipt:
-        """Core batch publication with retry backoff and metrics tracking."""
+        """Publish with one stable run/batch identity across every retry."""
         with self._publish_lock:
             if not valid_ticks:
                 return PublishReceipt(
-                    batch_id=f"batch_{self.writer_id}_{self._batch_sequence:06d}",
+                    batch_id=f"batch_{self._run_id}_{self._batch_sequence:06d}",
                     writer_id=self.writer_id,
                     sequence=self._batch_sequence,
                     row_count=0,
@@ -396,9 +414,17 @@ class TickLakeWriter:
                     published_at=datetime.now(timezone.utc).isoformat(),
                 )
 
-            self._batch_sequence += 1
-            seq = self._batch_sequence
-            batch_id = f"batch_{self.writer_id}_{seq:06d}"
+            if self._prepared_batch is None:
+                self._batch_sequence += 1
+                sequence = self._batch_sequence
+                batch_id = f"batch_{self._run_id}_{sequence:06d}"
+                self._prepared_batch = (sequence, batch_id, list(valid_ticks))
+            else:
+                sequence, batch_id, prepared_ticks = self._prepared_batch
+                if prepared_ticks != list(valid_ticks):
+                    raise PublishError(
+                        f"Prepared batch {batch_id} must be retried unchanged before publishing another batch"
+                    )
 
             last_exc = None
             for attempt in range(1, self.retry_attempts + 1):
@@ -406,8 +432,10 @@ class TickLakeWriter:
                     receipt = self.publisher.publish_batch(
                         records_or_table=valid_ticks,
                         batch_id=batch_id,
-                        sequence=seq,
+                        sequence=sequence,
                     )
+                    self._prepared_batch = None
+                    self._prepared_source_signature = None
                     self._metrics.total_published += receipt.row_count
                     self._metrics.batches_published += 1
                     self._metrics.last_batch_id = receipt.batch_id
@@ -426,23 +454,39 @@ class TickLakeWriter:
                     else:
                         self._update_status_file()
                         raise
+            raise PublishError(f"Batch {self._prepared_batch[1]} exhausted retries: {last_exc}")
 
     def publish_batch(self, ticks: Iterable[Any]) -> PublishReceipt:
         """Synchronously validates, normalizes, and publishes a batch of ticks."""
-        if self._status not in ("RUNNING", "CLOSING"):
-            raise RuntimeError(f"Cannot publish batch when writer status is {self._status}")
+        with self._publish_lock:
+            if self._status not in ("RUNNING", "CLOSING"):
+                raise RuntimeError(f"Cannot publish batch when writer status is {self._status}")
 
-        valid_ticks: List[QuoteTick] = []
-        for t in ticks:
-            valid, norm_tick = self._validate_and_normalize_tick(t)
-            if valid:
-                self._metrics.total_received += 1
-                self._metrics.total_accepted += 1
-                valid_ticks.append(norm_tick)
+            tick_list = list(ticks)
+            source_signature = repr(tick_list)
+            if self._prepared_batch is not None:
+                if self._prepared_source_signature != source_signature:
+                    raise PublishError(
+                        f"Prepared batch {self._prepared_batch[1]} must be retried unchanged before publishing another batch"
+                    )
+                valid_ticks = list(self._prepared_batch[2])
             else:
-                self._metrics.total_quarantined += 1
+                valid_ticks: List[QuoteTick] = []
+                for tick in tick_list:
+                    valid, norm_tick = self._validate_and_normalize_tick(tick)
+                    if valid:
+                        self._metrics.total_received += 1
+                        self._metrics.total_accepted += 1
+                        valid_ticks.append(norm_tick)
+                    else:
+                        self._metrics.total_quarantined += 1
 
-        return self._publish_batch_core(valid_ticks)
+            try:
+                return self._publish_batch_core(valid_ticks)
+            except Exception:
+                if self._prepared_batch is not None and self._prepared_source_signature is None:
+                    self._prepared_source_signature = source_signature
+                raise
 
     async def publish_batch_async(self, ticks: Iterable[Any]) -> PublishReceipt:
         """Asynchronously publishes a batch off the event loop on worker thread."""
@@ -460,8 +504,17 @@ class TickLakeWriter:
                 if not self._buffer:
                     self._update_status_file()
                     return None
-                batch = list(self._buffer)
-                self._buffer.clear()
+                if self._prepared_batch is not None:
+                    prepared_ticks = self._prepared_batch[2]
+                    if self._buffer[:len(prepared_ticks)] != prepared_ticks:
+                        raise PublishError(
+                            f"Prepared batch {self._prepared_batch[1]} is not at the head of the writer buffer"
+                        )
+                    batch = list(prepared_ticks)
+                    del self._buffer[:len(prepared_ticks)]
+                else:
+                    batch = list(self._buffer)
+                    self._buffer.clear()
                 self._last_flush_monotonic = time.monotonic()
                 self._metrics.last_flush_monotonic = self._last_flush_monotonic
 

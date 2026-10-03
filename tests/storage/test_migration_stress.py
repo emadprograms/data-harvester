@@ -644,29 +644,31 @@ class TestMigrationCrashInterruptionAndResume:
         vres = orch.verify()
         assert vres.status == "PASSED"
 
-        # Monkeypatch os.replace to crash after moving chunk 1
-        orig_replace = os.replace
-        replace_count = 0
+        # Fail the second no-clobber promotion after the publish journal is durable.
+        orig_link = os.link
+        link_count = 0
 
-        def crash_on_chunk_2(src, dst):
-            nonlocal replace_count
-            replace_count += 1
-            if replace_count == 2:
-                raise OSError("Simulated disk error during chunk 2 promotion")
-            orig_replace(src, dst)
+        def crash_on_second_promotion(src, dst, *args, **kwargs):
+            nonlocal link_count
+            if str(dst).endswith(".parquet"):
+                link_count += 1
+                if link_count == 2:
+                    raise OSError("Simulated disk error during chunk 2 promotion")
+            return orig_link(src, dst, *args, **kwargs)
 
-        monkeypatch.setattr(os, "replace", crash_on_chunk_2)
+        monkeypatch.setattr(os, "link", crash_on_second_promotion)
 
         with pytest.raises(OSError, match="Simulated disk error"):
             orch.publish()
 
         target_dir = lake_root / "ticks" / "symbol=AAPL" / "date=2026-07-10"
         staging_dir = lake_root / "_migration" / "staging" / "ticks" / "symbol=AAPL" / "date=2026-07-10"
+        journal = json.loads(orch.publish_journal_file.read_text(encoding="utf-8"))
+        first_target = lake_root / journal["files"][0]["final_path"]
 
-        # Disk state: target has chunk 1, staging has chunks 2 and 3
-        assert (target_dir / "chunk_000001.parquet").exists()
-        assert (staging_dir / "chunk_000002.parquet").exists()
-        assert (staging_dir / "chunk_000003.parquet").exists()
+        # One immutable target is visible; the complete staged set remains until receipt durability.
+        assert first_target.is_file()
+        assert len(list(staging_dir.glob("*.parquet"))) == 3
 
         # Resume publish
         monkeypatch.undo()

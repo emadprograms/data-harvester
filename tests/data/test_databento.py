@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import pandas as pd
 
+import src.data.databento_backfill as backfill_module
 from src.data.databento_backfill import (
     get_target_stock_symbols,
     get_day_trading_bounds,
@@ -19,6 +20,13 @@ from src.data.databento_backfill import (
     NY_TZ
 )
 from src.database.connection import DuckDBClient
+
+
+def test_databento_sdk_is_only_required_for_live_client(monkeypatch):
+    """Offline backfill helpers remain importable without the optional SDK."""
+    monkeypatch.setattr(backfill_module, "db", None)
+    with pytest.raises(RuntimeError, match="Databento SDK is required for live backfill"):
+        backfill_module.get_databento_client(api_key="test-key")
 
 
 def test_target_stock_symbols_filtering():

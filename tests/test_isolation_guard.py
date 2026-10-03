@@ -9,10 +9,16 @@ Verifies that:
 """
 import os
 import socket
+import tempfile
+from pathlib import Path
 import pytest
 import duckdb
 
-from tests.conftest import ProductionAccessBlockedError, NetworkBlockedError
+from tests.conftest import (
+    ProductionAccessBlockedError,
+    NetworkBlockedError,
+    is_protected_path,
+)
 from src.database.connection import (
     DEFAULT_DATA_DIR,
     DEFAULT_STREAMING_DB_PATH,
@@ -64,6 +70,42 @@ class TestProductionPathGuard:
             assert res[0][0] == 42
         finally:
             conn.close()
+
+
+class TestFilesystemWriteIsolationGuard:
+    """Writes and parquet output must be blocked for a fake protected root."""
+
+    def test_registered_fake_protected_root_blocks_mutations(self, protected_temp_dir, tmp_path):
+        protected_file = protected_temp_dir / "nested" / "data.bin"
+        assert is_protected_path(protected_file)
+
+        with pytest.raises(ProductionAccessBlockedError):
+            protected_temp_dir.mkdir()
+        with pytest.raises(ProductionAccessBlockedError):
+            open(protected_file, "wb")
+        with pytest.raises(ProductionAccessBlockedError):
+            protected_file.write_bytes(b"must not be written")
+        with pytest.raises(ProductionAccessBlockedError):
+            duckdb.connect(str(protected_temp_dir / "protected.duckdb"))
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        with pytest.raises(ProductionAccessBlockedError):
+            pq.write_table(pa.table({"value": [1]}), protected_file)
+
+        # The guard is scoped: ordinary per-test temporary files remain writable.
+        safe_file = tmp_path / "safe.bin"
+        safe_file.write_bytes(b"allowed")
+        assert safe_file.read_bytes() == b"allowed"
+        pq.write_table(pa.table({"value": [1]}), tmp_path / "safe.parquet")
+
+    def test_test_storage_environment_is_set_before_application_configuration(self):
+        from src.storage.config import resolve_tick_lake_root
+
+        root = resolve_tick_lake_root()
+        assert root == Path(os.environ["TICK_LAKE_ROOT"]).resolve()
+        assert str(root).startswith(tempfile.gettempdir())
+        assert str(Path(os.environ["DATA_DIR"]).resolve()).startswith(tempfile.gettempdir())
 
 
 class TestNetworkIsolationGuard:

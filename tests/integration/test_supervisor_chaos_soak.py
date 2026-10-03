@@ -55,10 +55,20 @@ from tools.validate_concurrency import print_summary_table, run_concurrency_vali
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
+def _seed_mock_streamer_registry(lake_root: Path) -> None:
+    """Seed one explicit instrument for mock-streamer lifecycle tests (F08)."""
+    from src.storage.registry import SymbolRegistry, init_registry
+
+    init_tick_lake(lake_root)
+    init_registry(lake_root)
+    SymbolRegistry(lake_root).add_symbol("AAPL", capital_ticker="AAPL")
+
+
 # ============================================================================
 # SUITE 1: Multi-Process Sustained Soak Tests (TEST-P27-01)
 # ============================================================================
 
+@pytest.mark.performance
 @pytest.mark.integration
 def test_multi_process_sustained_soak_10k_ticks(tmp_path):
     """
@@ -122,6 +132,7 @@ def test_multi_process_sustained_soak_10k_ticks(tmp_path):
     assert m.open_fds_count > 0, "Open FDs count was not recorded"
 
 
+@pytest.mark.performance
 @pytest.mark.integration
 def test_soak_multi_wave_dashboard_load_with_writer(tmp_path):
     """
@@ -424,7 +435,7 @@ def test_chaos_streamer_kill9_during_active_flush_auto_healing(tmp_path):
     new child re-acquires lock without LakeOwnershipError, and valid Parquet rows continue being written.
     """
     lake_root = tmp_path / "lake_streamer_chaos"
-    init_tick_lake(lake_root)
+    _seed_mock_streamer_registry(lake_root)
 
     supervisor = ProcessSupervisor(
         name="streamer_chaos",
@@ -711,7 +722,7 @@ def test_chaos_supervisor_sigterm_graceful_drain_deadline(tmp_path):
     child exits 0, supervisor exits 0, with zero zombies remaining.
     """
     lake_root = tmp_path / "lake_drain"
-    init_tick_lake(lake_root)
+    _seed_mock_streamer_registry(lake_root)
 
     sup_proc = subprocess.Popen(
         [

@@ -115,7 +115,7 @@ class TestStreamingEngineAndParsers:
         import asyncio
 
         async def _run():
-            engine = StreamingEngine()
+            engine = StreamingEngine(db_path=":memory:")
 
             # Raw tick
             tick1 = ("2026-01-01 10:00:00.123", "BTCUSDT", 90000.0, 0.5, None, None, "BINANCE", "REG")
