@@ -53,7 +53,7 @@ from src.storage.publication import (
     LakePublisherLock,
     LakePublisher,
     recover_pending_publications,
-    cleanup_orphaned_staging_files,
+    cleanup_orphaned_staging_files as cleanup_orphaned_parquet_staging_files,
 )
 
 from src.storage.parquet_writer import (
@@ -84,6 +84,7 @@ from src.storage.registry import (
     get_registry_path,
     touch_stream_reload_signal,
     get_symbol_registry,
+    cleanup_orphaned_staging_files,
 )
 
 from src.storage.reader import (
@@ -136,6 +137,7 @@ __all__ = [
     "LakePublisherLock",
     "LakePublisher",
     "recover_pending_publications",
+    "cleanup_orphaned_parquet_staging_files",
     "cleanup_orphaned_staging_files",
     # Streaming Parquet Writer
     "TickLakeWriter",

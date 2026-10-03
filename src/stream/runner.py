@@ -47,6 +47,8 @@ class StreamingEngine:
         lake_root=None,
         max_queue_size=10000,
         writer_id="writer_1",
+        registry_poll_interval=1.0,
+        registry_debounce_interval=0.05,
     ):
         self.lake_root = lake_root
         self.max_queue_size = max_queue_size
@@ -64,7 +66,8 @@ class StreamingEngine:
         self.writer = None
         self.lake_writer = None
         self.registry = None
-        self.registry_poll_interval = 1.0
+        self.registry_poll_interval = float(registry_poll_interval)
+        self.registry_debounce_interval: float = float(registry_debounce_interval)
 
         if self.lake_root is not None:
             from src.storage.parquet_writer import TickLakeWriter
@@ -380,29 +383,30 @@ class StreamingEngine:
                 elapsed = 0.0
 
                 while elapsed < interval and self.running:
-                    # 1. Check explicit asyncio reload_event
-                    if self.reload_event.is_set():
-                        self.reload_event.clear()
-                        logger.info("⚡ Live reload triggered via asyncio reload_event.")
-                        await self.reload_symbols()
-                        if self.registry:
-                            try:
-                                last_version = self.registry.version
-                            except Exception:
-                                pass
-                        break
+                    # 1 & 2. Check explicit asyncio reload_event or signal file hint
+                    signal_detected = self.reload_event.is_set()
+                    if not signal_detected:
+                        for sp in signal_paths:
+                            if sp.exists():
+                                signal_detected = True
+                                break
 
-                    # 2. Check signal file hint
-                    found_signal = False
-                    for sp in signal_paths:
-                        if sp.exists():
-                            found_signal = True
+                    if signal_detected:
+                        # Debounce rapid burst of signals
+                        debounce = getattr(self, "registry_debounce_interval", 0.05)
+                        if debounce > 0:
+                            await asyncio.sleep(debounce)
+
+                        # Clean up signal files and event
+                        for sp in signal_paths:
                             try:
-                                sp.unlink()
+                                if sp.exists():
+                                    sp.unlink()
                             except Exception:
                                 pass
-                    if found_signal:
-                        logger.info("⚡ Live reload triggered via .stream_reload.signal hint.")
+                        self.reload_event.clear()
+
+                        logger.info("⚡ Live reload triggered via signal hint or reload_event.")
                         await self.reload_symbols()
                         if self.registry:
                             try:
@@ -418,11 +422,11 @@ class StreamingEngine:
                 if self.running and self.registry:
                     try:
                         curr_version = self.registry.version
-                        if last_version is not None and curr_version != last_version:
+                        if last_version is not None and curr_version > last_version:
                             logger.info(f"🔄 Detected registry version bump ({last_version} -> {curr_version}). Reloading...")
                             last_version = curr_version
                             await self.reload_symbols()
-                        else:
+                        elif last_version is None:
                             last_version = curr_version
                     except Exception as e:
                         logger.debug(f"Error checking registry version: {e}")

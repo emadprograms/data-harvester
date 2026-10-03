@@ -259,6 +259,7 @@ class RegistryControlLock:
             raise RegistryLockError(f"Timed out acquiring thread lock on {self.lock_path}")
 
         # Acquire OS flock (looping with non-blocking until timeout)
+        fd = None
         try:
             fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o666)
             while True:
@@ -275,11 +276,14 @@ class RegistryControlLock:
                     return True
                 except (BlockingIOError, OSError):
                     if (time.monotonic() - start_time) >= self.timeout:
-                        os.close(fd)
-                        rlock.release()
                         raise RegistryLockError(f"Timed out acquiring process lock on {self.lock_path}")
                     time.sleep(0.01)
         except Exception:
+            if fd is not None and not self._acquired:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             rlock.release()
             raise
 
@@ -324,7 +328,9 @@ class SymbolRegistry:
         root: Optional[Union[str, Path]] = None,
         registry_path: Optional[Union[str, Path]] = None,
         signal_path: Optional[Union[str, Path]] = None,
+        lock_timeout: float = 5.0,
     ):
+        self._lock_timeout = float(lock_timeout)
         if root is not None:
             self._root = Path(root).resolve()
         elif registry_path is not None:
@@ -364,11 +370,12 @@ class SymbolRegistry:
         return self._signal_path
 
     @property
+    def lock_timeout(self) -> float:
+        return self._lock_timeout
+
+    @property
     def version(self) -> int:
-        try:
-            return self.load().version
-        except Exception:
-            return 1
+        return self.load().version
 
     def _save_snapshot(self, snapshot: RegistrySnapshot) -> None:
         """Atomically stages, fsyncs, and replaces the registry file on disk."""
@@ -394,9 +401,15 @@ class SymbolRegistry:
         try:
             with open(self._registry_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            if not isinstance(data, dict):
+                raise RegistryCorruptedError(
+                    f"Registry root element must be a dictionary, got {type(data).__name__}"
+                )
             return RegistrySnapshot.from_dict(data)
-        except json.JSONDecodeError as e:
-            raise RegistryCorruptedError(f"Registry corrupted: {e}")
+        except RegistryCorruptedError:
+            raise
+        except (json.JSONDecodeError, AttributeError, ValueError, TypeError, KeyError) as e:
+            raise RegistryCorruptedError(f"Registry corrupted: {e}") from e
 
     def get_snapshot(self) -> RegistrySnapshot:
         """Alias for load()."""
@@ -458,7 +471,7 @@ class SymbolRegistry:
         if asset_class and "asset_class" not in meta:
             meta["asset_class"] = asset_class
 
-        with RegistryControlLock(self._root):
+        with RegistryControlLock(self._root, timeout=self._lock_timeout):
             snapshot = self.load()
             if sym in snapshot.symbols:
                 existing = snapshot.symbols[sym]
@@ -493,7 +506,7 @@ class SymbolRegistry:
     def toggle_symbol(self, symbol: str, active: Optional[bool] = None) -> SymbolEntry:
         """Toggles or sets the active state of a symbol under lock."""
         sym = validate_symbol(symbol)
-        with RegistryControlLock(self._root):
+        with RegistryControlLock(self._root, timeout=self._lock_timeout):
             snapshot = self.load()
             if sym not in snapshot.symbols:
                 raise SymbolNotFoundError(f"Symbol {sym} not found in registry")
@@ -516,7 +529,7 @@ class SymbolRegistry:
     def remove_symbol(self, symbol: str) -> SymbolEntry:
         """Marks symbol as PENDING_PURGE and active=False under lock."""
         sym = validate_symbol(symbol)
-        with RegistryControlLock(self._root):
+        with RegistryControlLock(self._root, timeout=self._lock_timeout):
             snapshot = self.load()
             if sym not in snapshot.symbols:
                 raise SymbolNotFoundError(f"Symbol {sym} not found in registry")
@@ -534,7 +547,7 @@ class SymbolRegistry:
     def complete_purge(self, symbol: str) -> None:
         """Deletes symbol completely from active registry and archives generation under lock."""
         sym = validate_symbol(symbol)
-        with RegistryControlLock(self._root):
+        with RegistryControlLock(self._root, timeout=self._lock_timeout):
             snapshot = self.load()
             if sym in snapshot.symbols:
                 entry = snapshot.symbols[sym]
@@ -555,13 +568,14 @@ def init_registry(
     root: Union[str, Path],
     force: bool = False,
     registry_path: Optional[Union[str, Path]] = None,
+    lock_timeout: float = 5.0,
 ) -> RegistrySnapshot:
     """Initialize a versioned symbol registry file idempotently."""
-    reg = SymbolRegistry(root=root, registry_path=registry_path)
+    reg = SymbolRegistry(root=root, registry_path=registry_path, lock_timeout=lock_timeout)
     if reg.path.exists() and not force:
         return reg.load()
 
-    with RegistryControlLock(reg.root):
+    with RegistryControlLock(reg.root, timeout=reg._lock_timeout):
         if reg.path.exists() and not force:
             return reg.load()
 
@@ -627,6 +641,41 @@ def touch_stream_reload_signal(
 def get_symbol_registry(
     root: Optional[Union[str, Path]] = None,
     registry_path: Optional[Union[str, Path]] = None,
+    lock_timeout: float = 5.0,
 ) -> SymbolRegistry:
     """Obtain a SymbolRegistry instance resolved from root or environment."""
-    return SymbolRegistry(root=root, registry_path=registry_path)
+    return SymbolRegistry(root=root, registry_path=registry_path, lock_timeout=lock_timeout)
+
+
+def cleanup_orphaned_staging_files(
+    root: Union[str, Path],
+    max_age_seconds: float = 60.0,
+) -> int:
+    """Scans _control/ for tmp_registry_*.json older than max_age_seconds and removes them.
+
+    Returns the count of deleted orphaned files.
+    """
+    root_path = Path(root).resolve()
+    control_dir = root_path / "_control"
+    target_dirs = []
+    if control_dir.is_dir():
+        target_dirs.append(control_dir)
+    elif root_path.name == "_control" and root_path.is_dir():
+        target_dirs.append(root_path)
+    elif root_path.is_dir():
+        target_dirs.append(root_path)
+
+    now = time.time()
+    deleted_count = 0
+    for d in target_dirs:
+        for p in d.glob("tmp_registry_*.json"):
+            if not p.is_file():
+                continue
+            try:
+                mtime = p.stat().st_mtime
+                if (now - mtime) >= max_age_seconds:
+                    p.unlink(missing_ok=True)
+                    deleted_count += 1
+            except OSError:
+                pass
+    return deleted_count
