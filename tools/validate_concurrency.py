@@ -37,6 +37,7 @@ import sys
 import tempfile
 import time
 from typing import Any, Dict, List, Optional, Tuple
+import psutil
 
 logger = logging.getLogger("validate_concurrency")
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -69,6 +70,11 @@ class ConcurrencyMetrics:
     
     duckdb_io_exceptions_total: int = 0
     data_parity_match: bool = False
+
+    writer_peak_rss_mb: float = 0.0
+    dashboard_peak_rss_mb: float = 0.0
+    repo_b_peak_rss_mb: float = 0.0
+    open_fds_count: int = 0
 
 
 @dataclass
@@ -456,163 +462,223 @@ def run_concurrency_validation(
 
     t_bench_start = time.perf_counter()
 
-    # Step 1: Start Process 4 (Lock Isolation Guard)
-    dummy_db_dir = lake_root.parent / "dummy_legacy"
-    dummy_db_dir.mkdir(parents=True, exist_ok=True)
-    dummy_db_path = dummy_db_dir / "streaming.duckdb"
+    lock_proc: Optional[subprocess.Popen] = None
+    server_proc: Optional[subprocess.Popen] = None
+    repo_b_proc: Optional[subprocess.Popen] = None
+    writer_proc: Optional[subprocess.Popen] = None
 
-    lock_proc = _run_lock_guard_process(dummy_db_path)
-    
-    # Assert that dummy_db is indeed exclusively locked by Process 4
-    import duckdb
-    lock_verified = False
+    writer_peak_rss = 0.0
+    dash_peak_rss = 0.0
+    repo_b_peak_rss = 0.0
+
+    def sample_peaks():
+        nonlocal writer_peak_rss, dash_peak_rss, repo_b_peak_rss
+        for proc, kind in [
+            (writer_proc, "writer"),
+            (server_proc, "dash"),
+            (repo_b_proc, "repo_b"),
+        ]:
+            if proc is not None and proc.poll() is None:
+                try:
+                    p = psutil.Process(proc.pid)
+                    rss = p.memory_info().rss / (1024 * 1024)
+                    if kind == "writer" and rss > writer_peak_rss:
+                        writer_peak_rss = rss
+                    elif kind == "dash" and rss > dash_peak_rss:
+                        dash_peak_rss = rss
+                    elif kind == "repo_b" and rss > repo_b_peak_rss:
+                        repo_b_peak_rss = rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
     try:
-        _ = duckdb.connect(str(dummy_db_path), read_only=False)
-    except duckdb.IOException:
-        lock_verified = True
-    assert lock_verified, "Lock guard failed to establish exclusive lock on streaming.duckdb"
+        # Step 1: Start Process 4 (Lock Isolation Guard)
+        dummy_db_dir = lake_root.parent / "dummy_legacy"
+        dummy_db_dir.mkdir(parents=True, exist_ok=True)
+        dummy_db_path = dummy_db_dir / "streaming.duckdb"
 
-    # Step 2: Determine ephemeral port and launch Process 2 (Dashboard Server)
-    if port == 0:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.bind((host, 0))
-        port = s.getsockname()[1]
-        s.close()
-
-    server_env = os.environ.copy()
-    server_env["TICK_LAKE_ROOT"] = str(lake_root)
-    server_env["DATA_DIR"] = str(lake_root)
-    server_env["PYTHONPATH"] = str(REPO_ROOT)
-    server_env["PYTHONUNBUFFERED"] = "1"
-
-    server_proc = subprocess.Popen(
-        [sys.executable, "-m", "src.dashboard.server", "--port", str(port), "--host", host],
-        cwd=str(REPO_ROOT),
-        env=server_env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    # Health-check server until ready
-    import requests
-    base_url = f"http://{host}:{port}"
-    server_ready = False
-    for _ in range(50):
-        time.sleep(0.1)
+        lock_proc = _run_lock_guard_process(dummy_db_path)
+        
+        # Assert that dummy_db is indeed exclusively locked by Process 4
+        import duckdb
+        lock_verified = False
         try:
-            r = requests.get(f"{base_url}/api/status", timeout=1)
-            if r.status_code == 200:
-                server_ready = True
-                break
-        except Exception:
-            pass
+            _ = duckdb.connect(str(dummy_db_path), read_only=False)
+        except duckdb.IOException:
+            lock_verified = True
+        assert lock_verified, "Lock guard failed to establish exclusive lock on streaming.duckdb"
 
-    if not server_ready:
-        server_proc.terminate()
-        lock_proc.terminate()
-        raise RuntimeError(f"Dashboard server failed to start on port {port}")
+        # Step 2: Determine ephemeral port and launch Process 2 (Dashboard Server)
+        if port == 0:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind((host, 0))
+            port = s.getsockname()[1]
+            s.close()
 
-    # Step 3: Prepare output paths and stop signal
-    interop_dir = lake_root.parent / "bench_interop"
-    interop_dir.mkdir(parents=True, exist_ok=True)
-    writer_out = interop_dir / "writer_metrics.json"
-    repo_b_out = interop_dir / "repo_b_metrics.json"
-    writer_stop_signal = interop_dir / "writer_finished.signal"
+        server_env = os.environ.copy()
+        server_env["TICK_LAKE_ROOT"] = str(lake_root)
+        server_env["DATA_DIR"] = str(lake_root)
+        server_env["PYTHONPATH"] = str(REPO_ROOT)
+        server_env["PYTHONUNBUFFERED"] = "1"
 
-    # Step 4: Launch Process 3 (Repo B Reader Subprocess)
-    repo_b_proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            REPO_B_SUBPROCESS_SCRIPT,
-            str(REPO_ROOT),
-            str(lake_root),
-            str(repo_b_iterations),
-            str(repo_b_out),
-            str(writer_stop_signal),
-        ],
-        cwd=tempfile.gettempdir(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+        server_proc = subprocess.Popen(
+            [sys.executable, "-m", "src.dashboard.server", "--port", str(port), "--host", host],
+            cwd=str(REPO_ROOT),
+            env=server_env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
-    # Step 5: Launch Process 1 (Writer Subprocess)
-    writer_proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            WRITER_SUBPROCESS_SCRIPT,
-            str(REPO_ROOT),
-            str(lake_root),
-            str(total_ticks),
-            str(writer_out),
-        ],
-        cwd=str(REPO_ROOT),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-    # Step 6: Concurrently execute Dashboard HTTP load (150+ requests)
-    dashboard_latencies: List[float] = []
-    dashboard_errors = 0
-
-    endpoints = [
-        f"{base_url}/api/candles?symbol={{sym}}&source=streaming",
-        f"{base_url}/api/stream/tape?symbol={{sym}}&limit=50",
-        f"{base_url}/api/stream/status",
-        f"{base_url}/api/streaming/continuity?symbol={{sym}}&days=5",
-    ]
-
-    def _fire_request(url: str) -> Tuple[int, float]:
-        t0 = time.perf_counter()
-        res = requests.get(url, timeout=5)
-        t1 = time.perf_counter()
-        return res.status_code, (t1 - t0) * 1000.0
-
-    urls_to_fire = []
-    for i in range(dashboard_requests):
-        sym = SYMBOLS[i % len(SYMBOLS)]
-        tmpl = endpoints[i % len(endpoints)]
-        urls_to_fire.append(tmpl.format(sym=sym))
-
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        futures = [pool.submit(_fire_request, u) for u in urls_to_fire]
-        for f in as_completed(futures):
+        # Health-check server until ready
+        import requests
+        base_url = f"http://{host}:{port}"
+        server_ready = False
+        for _ in range(50):
+            time.sleep(0.1)
             try:
-                code, lat = f.result()
-                if code == 200:
-                    dashboard_latencies.append(lat)
-                else:
-                    dashboard_errors += 1
+                r = requests.get(f"{base_url}/api/status", timeout=1)
+                if r.status_code == 200:
+                    server_ready = True
+                    break
             except Exception:
-                dashboard_errors += 1
+                pass
 
-    # Step 7: Await Writer Process completion
-    w_out, w_err = writer_proc.communicate(timeout=30)
-    if writer_proc.returncode != 0:
-        logger.error(f"Writer stderr: {w_err.decode('utf-8', errors='replace')}")
-        raise RuntimeError(f"Writer process failed with code {writer_proc.returncode}")
+        if not server_ready:
+            raise RuntimeError(f"Dashboard server failed to start on port {port}")
 
-    # Signal Repo B that writing is done
-    writer_stop_signal.touch()
+        # Step 3: Prepare output paths and stop signal
+        interop_dir = lake_root.parent / "bench_interop"
+        interop_dir.mkdir(parents=True, exist_ok=True)
+        writer_out = interop_dir / "writer_metrics.json"
+        repo_b_out = interop_dir / "repo_b_metrics.json"
+        writer_stop_signal = interop_dir / "writer_finished.signal"
 
-    # Step 8: Await Repo B Process completion
-    rb_out, rb_err = repo_b_proc.communicate(timeout=30)
-    if repo_b_proc.returncode != 0:
-        logger.error(f"Repo B stderr: {rb_err.decode('utf-8', errors='replace')}")
-        raise RuntimeError(f"Repo B process failed with code {repo_b_proc.returncode}")
+        # Step 4: Launch Process 3 (Repo B Reader Subprocess)
+        repo_b_proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                REPO_B_SUBPROCESS_SCRIPT,
+                str(REPO_ROOT),
+                str(lake_root),
+                str(repo_b_iterations),
+                str(repo_b_out),
+                str(writer_stop_signal),
+            ],
+            cwd=tempfile.gettempdir(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
 
-    # Step 9: Stop Background Services
-    server_proc.terminate()
-    server_proc.wait(timeout=5)
+        # Step 5: Launch Process 1 (Writer Subprocess)
+        writer_proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                WRITER_SUBPROCESS_SCRIPT,
+                str(REPO_ROOT),
+                str(lake_root),
+                str(total_ticks),
+                str(writer_out),
+            ],
+            cwd=str(REPO_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
 
-    lock_proc.terminate()
-    lock_proc.wait(timeout=5)
+        # Step 6: Concurrently execute Dashboard HTTP load (150+ requests)
+        dashboard_latencies: List[float] = []
+        dashboard_errors = 0
+
+        endpoints = [
+            f"{base_url}/api/candles?symbol={{sym}}&source=streaming",
+            f"{base_url}/api/stream/tape?symbol={{sym}}&limit=50",
+            f"{base_url}/api/stream/status",
+            f"{base_url}/api/streaming/continuity?symbol={{sym}}&days=5",
+        ]
+
+        def _fire_request(url: str) -> Tuple[int, float]:
+            t0 = time.perf_counter()
+            res = requests.get(url, timeout=5)
+            t1 = time.perf_counter()
+            return res.status_code, (t1 - t0) * 1000.0
+
+        urls_to_fire = []
+        for i in range(dashboard_requests):
+            sym = SYMBOLS[i % len(SYMBOLS)]
+            tmpl = endpoints[i % len(endpoints)]
+            urls_to_fire.append(tmpl.format(sym=sym))
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = [pool.submit(_fire_request, u) for u in urls_to_fire]
+            for f in as_completed(futures):
+                sample_peaks()
+                try:
+                    code, lat = f.result()
+                    if code == 200:
+                        dashboard_latencies.append(lat)
+                    else:
+                        dashboard_errors += 1
+                except Exception:
+                    dashboard_errors += 1
+
+        # Step 7: Await Writer Process completion
+        w_start = time.perf_counter()
+        w_timeout = 60.0
+        while writer_proc.poll() is None:
+            sample_peaks()
+            time.sleep(0.05)
+            if time.perf_counter() - w_start > w_timeout:
+                writer_proc.kill()
+                raise TimeoutError(f"Writer process timed out after {w_timeout}s")
+
+        sample_peaks()
+        w_out, w_err = writer_proc.communicate()
+        if writer_proc.returncode != 0:
+            logger.error(f"Writer stderr: {w_err.decode('utf-8', errors='replace')}")
+            raise RuntimeError(f"Writer process failed with code {writer_proc.returncode}")
+
+        # Signal Repo B that writing is done
+        writer_stop_signal.touch()
+
+        # Step 8: Await Repo B Process completion
+        rb_start = time.perf_counter()
+        rb_timeout = 60.0
+        while repo_b_proc.poll() is None:
+            sample_peaks()
+            time.sleep(0.05)
+            if time.perf_counter() - rb_start > rb_timeout:
+                repo_b_proc.kill()
+                raise TimeoutError(f"Repo B process timed out after {rb_timeout}s")
+
+        sample_peaks()
+        rb_out, rb_err = repo_b_proc.communicate()
+        if repo_b_proc.returncode != 0:
+            logger.error(f"Repo B stderr: {rb_err.decode('utf-8', errors='replace')}")
+            raise RuntimeError(f"Repo B process failed with code {repo_b_proc.returncode}")
+
+    finally:
+        # Step 9: Reaping and stopping all child processes safely
+        for p in [writer_proc, repo_b_proc, server_proc, lock_proc]:
+            if p is not None and p.poll() is None:
+                try:
+                    p.terminate()
+                    p.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.wait(timeout=2)
+                except Exception:
+                    pass
 
     t_bench_end = time.perf_counter()
     duration_total = t_bench_end - t_bench_start
 
     # Step 10: Collect & Parse Metrics
+    try:
+        open_fds = psutil.Process().num_fds() if hasattr(psutil.Process(), "num_fds") else 0
+    except Exception:
+        open_fds = 0
+
     with open(writer_out, "r", encoding="utf-8") as f:
         writer_data = json.load(f)
 
@@ -645,6 +711,10 @@ def run_concurrency_validation(
         repo_b_corrupted_footers=repo_b_data["corrupted_footers"],
         duckdb_io_exceptions_total=repo_b_data["io_exceptions"],
         data_parity_match=(writer_data["total_published"] == repo_b_data["total_query_rows"] == total_ticks),
+        writer_peak_rss_mb=round(writer_peak_rss, 2),
+        dashboard_peak_rss_mb=round(dash_peak_rss, 2),
+        repo_b_peak_rss_mb=round(repo_b_peak_rss, 2),
+        open_fds_count=open_fds,
     )
 
     # Evaluate the 6 Gates
@@ -721,6 +791,7 @@ def print_summary_table(summary: ValidationSummary):
     print(f"   • Dashboard Load: {m.dashboard_requests} requests, avg={m.dashboard_avg_latency_ms:.2f}ms, p95={m.dashboard_p95_latency_ms:.2f}ms (errors: {m.dashboard_error_count})")
     print(f"   • Repo B Standalone: {m.repo_b_iterations} iterations, avg={m.repo_b_avg_latency_ms:.2f}ms, p95={m.repo_b_p95_latency_ms:.2f}ms")
     print(f"   • Data Parity: 100% Exact Match ({m.repo_b_query_rows:,} verified rows)")
+    print(f"   • Peak Memory: writer={m.writer_peak_rss_mb:.1f}MB, dashboard={m.dashboard_peak_rss_mb:.1f}MB, repo_b={m.repo_b_peak_rss_mb:.1f}MB | Open FDs: {m.open_fds_count}")
     print("-" * 88)
     if summary.overall_passed:
         print(f" OVERALL RESULT: ALL 6 PERFORMANCE & INTEGRITY GATES PASSED [Total time: {summary.duration_seconds:.2f}s]")
