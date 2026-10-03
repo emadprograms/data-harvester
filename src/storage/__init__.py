@@ -86,6 +86,11 @@ from src.storage.registry import (
     get_symbol_registry,
 )
 
+from src.storage.reader import (
+    TickLakeReader,
+    get_tick_lake_reader,
+)
+
 __all__ = [
     # Config & Hierarchy
     "StorageConfigError",
@@ -158,5 +163,8 @@ __all__ = [
     "get_registry_path",
     "touch_stream_reload_signal",
     "get_symbol_registry",
+    # Lake Reader (Phase 19)
+    "TickLakeReader",
+    "get_tick_lake_reader",
 ]
 
