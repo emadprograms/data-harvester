@@ -34,10 +34,11 @@ from src.storage.config import (
 )
 from src.storage.publication import (
     FilePublicationReceipt,
+    LakeOwnershipError,
     LakePublisherLock,
     PublishReceipt,
 )
-from src.storage.schema import ticks_to_table
+from src.storage.schema import SchemaValidationError, ticks_to_table
 
 logger = logging.getLogger("migration_tool")
 
@@ -388,12 +389,111 @@ class MigrationOrchestrator:
                 "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
             ).fetchall()
         ]
+        if not tables:
+            tables = [row[0] for row in con.execute("SHOW TABLES").fetchall()]
+        tables_lower = {t.lower(): t for t in tables}
         for candidate in ["tick_data", "ticks", "streaming_ticks"]:
-            if candidate in tables:
-                return candidate
+            if candidate in tables_lower:
+                return tables_lower[candidate]
         if tables:
             return tables[0]
         return "tick_data"
+
+    def _inspect_source_schema(self, con: duckdb.DuckDBPyConnection, table: str) -> Dict[str, Any]:
+        """
+        Inspect source table schema, resolve column aliases, and synthesize SQL projections.
+        Raises SchemaValidationError if required columns are missing.
+        """
+        cols_rows = con.execute(
+            "SELECT column_name, data_type FROM information_schema.columns WHERE lower(table_name) = lower(?)",
+            [table],
+        ).fetchall()
+        if not cols_rows:
+            cols_rows = con.execute(f"PRAGMA table_info('{table}')").fetchall()
+            cols_dict = {r[1].lower(): (r[1], str(r[2]).upper()) for r in cols_rows}
+        else:
+            cols_dict = {r[0].lower(): (r[0], str(r[1]).upper()) for r in cols_rows}
+
+        alias_map = {
+            "timestamp": ["timestamp", "ts", "time", "datetime", "created_at"],
+            "symbol": ["symbol", "sym", "ticker"],
+            "price": ["price", "last", "rate", "px", "close"],
+            "volume": ["volume", "vol", "size", "qty"],
+            "bid": ["bid", "bid_price", "bid_px"],
+            "ask": ["ask", "ask_price", "ask_px"],
+            "source": ["source", "feed", "exchange", "src"],
+            "session": ["session", "sess"],
+        }
+
+        resolved_cols: Dict[str, Optional[str]] = {}
+        for canonical, aliases in alias_map.items():
+            resolved = None
+            for alias in aliases:
+                if alias.lower() in cols_dict:
+                    resolved = cols_dict[alias.lower()][0]
+                    break
+            resolved_cols[canonical] = resolved
+
+        # Check required columns
+        for req in ["timestamp", "symbol", "price"]:
+            if not resolved_cols[req]:
+                raise SchemaValidationError(
+                    f"Required column '{req}' missing in source table '{table}'. "
+                    f"Available columns: {list(cols_dict.keys())}"
+                )
+
+        projections = []
+        # 1. timestamp
+        ts_col = resolved_cols["timestamp"]
+        projections.append(f"CAST({ts_col} AS TIMESTAMP) AS timestamp")
+
+        # 2. symbol
+        sym_col = resolved_cols["symbol"]
+        projections.append(f"CAST({sym_col} AS VARCHAR) AS symbol")
+
+        # 3. price
+        price_col = resolved_cols["price"]
+        projections.append(f"CAST({price_col} AS DOUBLE) AS price")
+
+        # 4. volume
+        if resolved_cols["volume"]:
+            projections.append(f"CAST({resolved_cols['volume']} AS DOUBLE) AS volume")
+        else:
+            projections.append("CAST(NULL AS DOUBLE) AS volume")
+
+        # 5. bid
+        if resolved_cols["bid"]:
+            projections.append(f"CAST({resolved_cols['bid']} AS DOUBLE) AS bid")
+        else:
+            projections.append("CAST(NULL AS DOUBLE) AS bid")
+
+        # 6. ask
+        if resolved_cols["ask"]:
+            projections.append(f"CAST({resolved_cols['ask']} AS DOUBLE) AS ask")
+        else:
+            projections.append("CAST(NULL AS DOUBLE) AS ask")
+
+        # 7. source
+        if resolved_cols["source"]:
+            projections.append(f"CAST({resolved_cols['source']} AS VARCHAR) AS source")
+        else:
+            projections.append("CAST('LEGACY' AS VARCHAR) AS source")
+
+        # 8. session
+        if resolved_cols["session"]:
+            projections.append(f"CAST({resolved_cols['session']} AS VARCHAR) AS session")
+        else:
+            projections.append("CAST('REG' AS VARCHAR) AS session")
+
+        return {
+            "table": table,
+            "columns": resolved_cols,
+            "projections": projections,
+            "projection_sql": ", ".join(projections),
+            "ts_col": ts_col,
+            "sym_col": sym_col,
+            "price_col": price_col,
+        }
 
     def plan(self) -> MigrationPlan:
         """Analyze source DuckDB and generate execution plan."""
@@ -405,7 +505,7 @@ class MigrationOrchestrator:
             table = self._detect_source_table(con)
             table_exists = (
                 con.execute(
-                    "SELECT count(*) FROM information_schema.tables WHERE table_schema='main' AND table_name = ?",
+                    "SELECT count(*) FROM information_schema.tables WHERE lower(table_name) = lower(?)",
                     [table],
                 ).fetchone()[0]
                 > 0
@@ -413,10 +513,28 @@ class MigrationOrchestrator:
 
             partition_plans: List[Dict[str, Any]] = []
             if table_exists:
+                schema_info = self._inspect_source_schema(con, table)
+                projection_sql = schema_info["projection_sql"]
+                ts_col = schema_info["ts_col"]
+                sym_col = schema_info["sym_col"]
+
+                # Pre-flight dirty rows check
+                dirty_check_query = (
+                    f"SELECT count(*) FROM {table} "
+                    f"WHERE {ts_col} IS NULL "
+                    f"OR {sym_col} IS NULL "
+                    f"OR length(trim(CAST({sym_col} AS VARCHAR))) = 0"
+                )
+                dirty_count = con.execute(dirty_check_query).fetchone()[0]
+                if dirty_count > 0:
+                    raise SchemaValidationError(
+                        f"Source table '{table}' contains {dirty_count} dirty rows with NULL timestamp or empty symbol."
+                    )
+
                 query = (
                     f"SELECT symbol, strftime(timestamp, '%Y-%m-%d') AS date, "
                     f"count(*) AS row_count, min(timestamp) AS min_ts, max(timestamp) AS max_ts "
-                    f"FROM {table}"
+                    f"FROM (SELECT {projection_sql} FROM {table}) AS src"
                 )
                 where_clauses = []
                 params: List[Any] = []
@@ -478,6 +596,13 @@ class MigrationOrchestrator:
         if not self.source_db.is_file():
             raise FileNotFoundError(f"Source database not found at {self.source_db}")
 
+        # Invalidate any stale verification receipt before export
+        if self.verification_file.is_file():
+            try:
+                self.verification_file.unlink()
+            except OSError:
+                pass
+
         # Load existing state if resuming
         if self.state_file.exists() and self.config.resume:
             state = MigrationState.load(self.state_file)
@@ -511,6 +636,8 @@ class MigrationOrchestrator:
         con = duckdb.connect(str(self.source_db), read_only=True)
         try:
             table = self._detect_source_table(con)
+            schema_info = self._inspect_source_schema(con, table)
+            projection_sql = schema_info["projection_sql"]
 
             for p in target_partitions:
                 symbol = p["symbol"]
@@ -531,11 +658,17 @@ class MigrationOrchestrator:
                 )
                 if not self.config.dry_run:
                     staging_part_dir.mkdir(parents=True, exist_ok=True)
+                    # Purge any existing .parquet files in uncompleted staging partition to prevent stale chunks
+                    for old_chunk in staging_part_dir.glob("*.parquet"):
+                        try:
+                            old_chunk.unlink()
+                        except OSError:
+                            pass
 
                 cur = con.cursor()
                 query = (
                     f"SELECT timestamp, symbol, price, volume, bid, ask, source, session "
-                    f"FROM {table} "
+                    f"FROM (SELECT {projection_sql} FROM {table}) AS src "
                     f"WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ? "
                     f"ORDER BY timestamp ASC"
                 )
@@ -649,6 +782,8 @@ class MigrationOrchestrator:
         con = duckdb.connect(str(self.source_db), read_only=True)
         try:
             table = self._detect_source_table(con)
+            schema_info = self._inspect_source_schema(con, table)
+            projection_sql = schema_info["projection_sql"]
             all_discrepancies: List[Dict[str, Any]] = []
             total_source = 0
             total_parquet = 0
@@ -666,7 +801,7 @@ class MigrationOrchestrator:
                     pfiles = sorted(prod_dir.glob("*.parquet")) if prod_dir.is_dir() else []
 
                 source_count = con.execute(
-                    f"SELECT count(*) FROM {table} WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ?",
+                    f"SELECT count(*) FROM (SELECT {projection_sql} FROM {table}) AS src WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ?",
                     [symbol, date_str],
                 ).fetchone()[0]
 
@@ -683,64 +818,75 @@ class MigrationOrchestrator:
                         })
                 else:
                     file_paths = [str(f) for f in pfiles]
-                    parquet_count = con.execute(
-                        "SELECT count(*) FROM read_parquet(?, hive_partitioning=false)",
-                        [file_paths],
-                    ).fetchone()[0]
+                    try:
+                        parquet_count = con.execute(
+                            "SELECT count(*) FROM read_parquet(?, hive_partitioning=false)",
+                            [file_paths],
+                        ).fetchone()[0]
 
-                    # Direction 1: source EXCEPT ALL parquet
-                    diff1 = con.execute(
-                        f"""
-                        SELECT count(*) FROM (
-                            (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
-                             FROM {table} WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ?)
-                            EXCEPT ALL
-                            (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
-                             FROM read_parquet(?, hive_partitioning=false))
-                        )
-                        """,
-                        [symbol, date_str, file_paths],
-                    ).fetchone()[0]
+                        # Direction 1: source EXCEPT ALL parquet
+                        diff1 = con.execute(
+                            f"""
+                            SELECT count(*) FROM (
+                                (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
+                                 FROM (SELECT {projection_sql} FROM {table}) AS src
+                                 WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ?)
+                                EXCEPT ALL
+                                (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
+                                 FROM read_parquet(?, hive_partitioning=false))
+                            )
+                            """,
+                            [symbol, date_str, file_paths],
+                        ).fetchone()[0]
 
-                    # Direction 2: parquet EXCEPT ALL source
-                    diff2 = con.execute(
-                        f"""
-                        SELECT count(*) FROM (
-                            (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
-                             FROM read_parquet(?, hive_partitioning=false) WHERE symbol = ?)
-                            EXCEPT ALL
-                            (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
-                             FROM {table} WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ?)
-                        )
-                        """,
-                        [file_paths, symbol, symbol, date_str],
-                    ).fetchone()[0]
+                        # Direction 2: parquet EXCEPT ALL source
+                        diff2 = con.execute(
+                            f"""
+                            SELECT count(*) FROM (
+                                (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
+                                 FROM read_parquet(?, hive_partitioning=false))
+                                EXCEPT ALL
+                                (SELECT timestamp, symbol, price, volume, bid, ask, source, session 
+                                 FROM (SELECT {projection_sql} FROM {table}) AS src
+                                 WHERE symbol = ? AND strftime(timestamp, '%Y-%m-%d') = ?)
+                            )
+                            """,
+                            [file_paths, symbol, date_str],
+                        ).fetchone()[0]
 
-                    if source_count != parquet_count:
+                        if source_count != parquet_count:
+                            all_discrepancies.append({
+                                "type": "row_count_mismatch",
+                                "symbol": symbol,
+                                "date": date_str,
+                                "source_count": source_count,
+                                "parquet_count": parquet_count,
+                            })
+                        if diff1 > 0:
+                            all_discrepancies.append({
+                                "type": "source_except_parquet_discrepancy",
+                                "symbol": symbol,
+                                "date": date_str,
+                                "missing_in_parquet": diff1,
+                            })
+                        if diff2 > 0:
+                            all_discrepancies.append({
+                                "type": "parquet_except_source_discrepancy",
+                                "symbol": symbol,
+                                "date": date_str,
+                                "missing_in_source": diff2,
+                            })
+
+                        total_parquet += parquet_count
+                    except Exception as e:
                         all_discrepancies.append({
-                            "type": "row_count_mismatch",
+                            "type": "parquet_read_error",
                             "symbol": symbol,
                             "date": date_str,
-                            "source_count": source_count,
-                            "parquet_count": parquet_count,
-                        })
-                    if diff1 > 0:
-                        all_discrepancies.append({
-                            "type": "source_except_parquet_discrepancy",
-                            "symbol": symbol,
-                            "date": date_str,
-                            "missing_in_parquet": diff1,
-                        })
-                    if diff2 > 0:
-                        all_discrepancies.append({
-                            "type": "parquet_except_source_discrepancy",
-                            "symbol": symbol,
-                            "date": date_str,
-                            "missing_in_source": diff2,
+                            "error": str(e),
                         })
 
                 total_source += source_count
-                total_parquet += parquet_count
 
             status = "PASSED" if len(all_discrepancies) == 0 else "FAILED"
             vres = VerificationResult(
@@ -793,25 +939,29 @@ class MigrationOrchestrator:
                         if self.config.date_end and date_str > self.config.date_end:
                             continue
 
-                        chunk_files = sorted(date_dir.glob("*.parquet"))
-                        if not chunk_files:
-                            continue
-
                         target_dir = self.lake_root / "ticks" / symbol_part / date_part
                         target_dir.mkdir(parents=True, exist_ok=True)
+
+                        # Move any remaining chunks in date_dir to target_dir
+                        chunk_files = sorted(date_dir.glob("*.parquet"))
+                        for cfile in chunk_files:
+                            target_dest = target_dir / cfile.name
+                            os.replace(cfile, target_dest)
+
+                        # Aggregate all chunks in target_dir for this partition
+                        target_chunks = sorted(target_dir.glob("*.parquet"))
+                        if not target_chunks:
+                            continue
 
                         part_file_details: List[FilePublicationReceipt] = []
                         target_rel_paths: List[str] = []
                         part_row_count = 0
 
-                        for cfile in chunk_files:
-                            target_dest = target_dir / cfile.name
-                            os.replace(cfile, target_dest)
-
-                            f_size = target_dest.stat().st_size
-                            f_sha = hashlib.sha256(target_dest.read_bytes()).hexdigest()
-                            f_rows = pq.ParquetFile(target_dest).metadata.num_rows
-                            rel_path = str(target_dest.relative_to(self.lake_root))
+                        for tfile in target_chunks:
+                            f_size = tfile.stat().st_size
+                            f_sha = hashlib.sha256(tfile.read_bytes()).hexdigest()
+                            f_rows = pq.ParquetFile(tfile).metadata.num_rows
+                            rel_path = str(tfile.relative_to(self.lake_root))
 
                             part_row_count += f_rows
                             target_rel_paths.append(rel_path)
