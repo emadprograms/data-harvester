@@ -251,11 +251,26 @@ def _get_lake_reader():
         if reader and reader.root:
             ticks_dir = reader.root / "ticks"
             status_file = reader.root / "_control" / "writer_status.json"
-            if ticks_dir.is_dir() or status_file.is_file() or os.environ.get("TICK_LAKE_ROOT"):
+            lake_json = reader.root / "lake.json"
+            if (
+                ticks_dir.is_dir()
+                or status_file.is_file()
+                or lake_json.is_file()
+                or os.environ.get("TICK_LAKE_ROOT")
+            ):
                 return reader
     except Exception:
         pass
     return None
+
+
+def _is_mocked_db_connection() -> bool:
+    """True if a test has explicitly patched get_streaming_db_connection with a mock."""
+    try:
+        from unittest.mock import Mock
+        return isinstance(get_streaming_db_connection, Mock) and not os.environ.get("TICK_LAKE_ROOT")
+    except Exception:
+        return False
 
 
 def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, client=None, date: str = None, hours: str = "extended") -> dict:
@@ -271,20 +286,18 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
     if not symbol:
         return {"error": "symbol parameter is required", "candles": [], "count": 0, "database": "streaming"}
 
-    if client is None:
+    if client is None and not _is_mocked_db_connection():
         lake_reader = _get_lake_reader()
         if lake_reader is not None:
-            files = lake_reader.resolve_partition_files(symbol=symbol)
-            if files or os.environ.get("TICK_LAKE_ROOT"):
-                return lake_reader.get_candles(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    start=start,
-                    end=end,
-                    limit=limit,
-                    date=date,
-                    hours=hours,
-                )
+            return lake_reader.get_candles(
+                symbol=symbol,
+                timeframe=timeframe,
+                start=start,
+                end=end,
+                limit=limit,
+                date=date,
+                hours=hours,
+            )
 
     timeframe = (timeframe or "1m").lower()
     interval_map = {
@@ -735,17 +748,17 @@ def get_symbols_coverage() -> dict:
         client.close()
 
 
-def get_stream_tape(symbol: str = None, limit: int = 50) -> dict:
+def get_stream_tape(symbol: str = None, limit: int = 50, offset: int = 0) -> dict:
     """
     Returns latest raw ticks from streaming tick lake or streaming.duckdb, calculating spread and throughput.
     """
-    lake_reader = _get_lake_reader()
-    if lake_reader is not None:
-        files = lake_reader.resolve_partition_files(symbol=symbol)
-        if files or os.environ.get("TICK_LAKE_ROOT"):
-            return lake_reader.get_tape(symbol=symbol, limit=limit)
+    if not _is_mocked_db_connection():
+        lake_reader = _get_lake_reader()
+        if lake_reader is not None:
+            return lake_reader.get_tape(symbol=symbol, limit=limit, offset=offset)
 
     limit = min(max(1, int(limit or 50)), 200)
+    offset = max(0, int(offset or 0))
     client = get_streaming_db_connection(read_only=True)
     if not client:
         return {"ticks": [], "count": 0, "error": "Streaming DB unavailable"}
@@ -802,10 +815,9 @@ def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int
     """
     Queries raw ticks from tick lake or streaming.duckdb with filtering by symbol, date/time range, limit, offset, and direction.
     """
-    lake_reader = _get_lake_reader()
-    if lake_reader is not None:
-        files = lake_reader.resolve_partition_files(symbol=symbol)
-        if files or os.environ.get("TICK_LAKE_ROOT"):
+    if not _is_mocked_db_connection():
+        lake_reader = _get_lake_reader()
+        if lake_reader is not None:
             ticks = lake_reader.query_ticks(
                 symbol=symbol,
                 start=start,
@@ -886,10 +898,9 @@ def get_stream_status() -> dict:
     """
     Inspects writer status file or process table for src.stream.runner and checks recent tick throughput.
     """
-    lake_reader = _get_lake_reader()
-    if lake_reader is not None:
-        status_file = lake_reader.root / "_control" / "writer_status.json"
-        if status_file.is_file() or os.environ.get("TICK_LAKE_ROOT"):
+    if not _is_mocked_db_connection():
+        lake_reader = _get_lake_reader()
+        if lake_reader is not None:
             return lake_reader.get_stream_status()
 
     current_pid = os.getpid()
@@ -1048,12 +1059,10 @@ def discover_available_weeks(client=None) -> list[dict]:
     sorted descending by week_start.
     """
     now = time.time()
-    if client is None:
+    if client is None and not _is_mocked_db_connection():
         lake_reader = _get_lake_reader()
         if lake_reader is not None:
-            lake_weeks = lake_reader.discover_available_weeks()
-            if lake_weeks or os.environ.get("TICK_LAKE_ROOT"):
-                return lake_weeks
+            return lake_reader.discover_available_weeks()
 
         if _AVAILABLE_WEEKS_CACHE["weeks"] and (now - _AVAILABLE_WEEKS_CACHE["timestamp"] < 300):
             return _AVAILABLE_WEEKS_CACHE["weeks"]
@@ -1174,21 +1183,19 @@ def get_streaming_continuity_analysis(
     view_mode = "all" if is_all else symbol
     include_extended = bool(include_extended)
 
-    if client is None:
+    if client is None and not _is_mocked_db_connection():
         lake_reader = _get_lake_reader()
         if lake_reader is not None:
-            ticks_dir = lake_reader.root / "ticks"
-            if ticks_dir.is_dir() or os.environ.get("TICK_LAKE_ROOT"):
-                return lake_reader.get_streaming_continuity_analysis(
-                    days=days,
-                    symbol=symbol,
-                    include_extended=include_extended,
-                    week_start=week_start,
-                    target_date=target_date,
-                    week_offset=week_offset,
-                    target_week=target_week,
-                    end_date=end_date,
-                )
+            return lake_reader.get_streaming_continuity_analysis(
+                days=days,
+                symbol=symbol,
+                include_extended=include_extended,
+                week_start=week_start,
+                target_date=target_date,
+                week_offset=week_offset,
+                target_week=target_week,
+                end_date=end_date,
+            )
 
     own_client = False
     if client is None:

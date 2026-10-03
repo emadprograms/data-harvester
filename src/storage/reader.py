@@ -7,6 +7,7 @@ using isolated DuckDB (:memory:) connections.
 import collections
 from datetime import date, datetime, timedelta, timezone
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -15,6 +16,7 @@ from zoneinfo import ZoneInfo
 import duckdb
 from pandas.tseries.holiday import USFederalHolidayCalendar
 import psutil
+import pyarrow.parquet as pq
 
 from src.storage.config import (
     LakeMaintenanceInProgressError,
@@ -48,6 +50,24 @@ MONITORED_19_SYMBOLS = [
 ]
 
 
+def _safe_float(val: Any, decimals: Optional[int] = None) -> Optional[float]:
+    """
+    Sanitize float values, converting NaN and Inf to None to prevent invalid JSON tokens.
+    Optionally rounds to specified decimal places.
+    """
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        if decimals is not None:
+            return round(f, decimals)
+        return f
+    except (ValueError, TypeError):
+        return None
+
+
 class TickLakeReader:
     """
     Reader interface for Partitioned Parquet Tick Lake.
@@ -71,8 +91,8 @@ class TickLakeReader:
             except Exception:
                 self.root = None
 
-        self.max_threads = max_threads
-        self.max_memory = max_memory or memory_limit or "2GB"
+        self.max_threads = max(1, int(max_threads or 4))
+        self.max_memory = str(max_memory or memory_limit or "2GB")
         self.memory_limit = self.max_memory
         self.check_maintenance = check_maintenance
 
@@ -268,14 +288,15 @@ class TickLakeReader:
 
             candles: List[Dict[str, Any]] = []
             for r in rows:
+                vol = _safe_float(r[6])
                 candles.append({
                     "time": r[0],
                     "symbol": r[1],
-                    "open": float(r[2]),
-                    "high": float(r[3]),
-                    "low": float(r[4]),
-                    "close": float(r[5]),
-                    "volume": float(r[6]),
+                    "open": _safe_float(r[2]),
+                    "high": _safe_float(r[3]),
+                    "low": _safe_float(r[4]),
+                    "close": _safe_float(r[5]),
+                    "volume": vol if vol is not None else 0.0,
                     "tick_count": int(r[7]),
                 })
             return candles
@@ -484,14 +505,15 @@ class TickLakeReader:
             candles: List[Dict[str, Any]] = []
             order_rows = rows if date else list(reversed(rows))
             for r in order_rows:
+                vol = _safe_float(r[6], 2)
                 candles.append({
                     "time": int(r[0]),
                     "time_str": str(r[1]),
-                    "open": round(float(r[2]), 4) if r[2] is not None else None,
-                    "high": round(float(r[3]), 4) if r[3] is not None else None,
-                    "low": round(float(r[4]), 4) if r[4] is not None else None,
-                    "close": round(float(r[5]), 4) if r[5] is not None else None,
-                    "volume": round(float(r[6]), 2) if r[6] is not None else 0.0,
+                    "open": _safe_float(r[2], 4),
+                    "high": _safe_float(r[3], 4),
+                    "low": _safe_float(r[4], 4),
+                    "close": _safe_float(r[5], 4),
+                    "volume": vol if vol is not None else 0.0,
                     "source": r[7] or "CAPITAL",
                     "session": r[8] or "REG",
                     "tick_count": int(r[9]) if len(r) > 9 and r[9] is not None else 0,
@@ -685,17 +707,18 @@ class TickLakeReader:
             rows = con.execute(query, params).fetchall()
             ticks: List[Dict[str, Any]] = []
             for r in rows:
-                bid_val = float(r[4]) if r[4] is not None else None
-                ask_val = float(r[5]) if r[5] is not None else None
-                spread_val = round(ask_val - bid_val, 4) if (ask_val is not None and bid_val is not None) else None
+                bid_val = _safe_float(r[4], 4)
+                ask_val = _safe_float(r[5], 4)
+                spread_val = _safe_float(ask_val - bid_val, 4) if (ask_val is not None and bid_val is not None) else None
+                vol = _safe_float(r[3], 2)
 
                 ticks.append({
                     "timestamp": str(r[0])[:-3],
                     "symbol": r[1],
-                    "price": round(float(r[2]), 4) if r[2] is not None else None,
-                    "volume": round(float(r[3]), 2) if r[3] is not None else 1.0,
-                    "bid": round(bid_val, 4) if bid_val is not None else None,
-                    "ask": round(ask_val, 4) if ask_val is not None else None,
+                    "price": _safe_float(r[2], 4),
+                    "volume": vol if vol is not None else 1.0,
+                    "bid": bid_val,
+                    "ask": ask_val,
                     "spread": spread_val,
                     "source": r[6] or "CAPITAL",
                     "session": r[7] or "REG",
@@ -709,12 +732,14 @@ class TickLakeReader:
         self,
         symbol: Optional[str] = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> Dict[str, Any]:
         """
         Latest ticks in reverse chronological order (timestamp DESC, ingest_id DESC)
         with computed spread and formatting for the streaming tape UI.
         """
         limit = min(max(1, int(limit or 50)), 500)
+        offset = max(0, int(offset or 0))
         all_files = self.resolve_partition_files(symbol=symbol)
         clean_sym = symbol.strip().upper() if symbol else "ALL"
 
@@ -728,9 +753,17 @@ class TickLakeReader:
 
         sorted_dates = sorted(date_groups.keys(), reverse=True)
         target_files: List[Path] = []
+        total_rows_estimate = 0
+        needed_rows = limit + offset
         for d in sorted_dates:
-            target_files.extend(date_groups[d])
-            if len(target_files) >= max(limit * 2, 50):
+            d_files = date_groups[d]
+            target_files.extend(d_files)
+            for f in d_files:
+                try:
+                    total_rows_estimate += pq.read_metadata(str(f)).num_rows
+                except Exception:
+                    total_rows_estimate += 500
+            if total_rows_estimate >= needed_rows and len(target_files) >= 1:
                 break
 
         file_paths = [str(f) for f in target_files]
@@ -751,9 +784,9 @@ class TickLakeReader:
             FROM read_parquet(?, hive_partitioning=false)
             {where_sql}
             ORDER BY timestamp DESC, ingest_id DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
         """
-        params.append(limit)
+        params.extend([limit, offset])
 
         con = self.connect()
         try:
@@ -761,18 +794,19 @@ class TickLakeReader:
             ticks: List[Dict[str, Any]] = []
             for r in rows:
                 ts_str = str(r[0])[:-3]
-                bid_val = float(r[4]) if r[4] is not None else None
-                ask_val = float(r[5]) if r[5] is not None else None
-                spread_val = round(float(r[6]), 4) if r[6] is not None else None
+                bid_val = _safe_float(r[4], 4)
+                ask_val = _safe_float(r[5], 4)
+                spread_val = _safe_float(r[6], 4)
+                vol = _safe_float(r[3], 2)
 
                 ticks.append({
                     "timestamp": ts_str,
                     "time_str": ts_str,
                     "symbol": r[1],
-                    "price": round(float(r[2]), 4) if r[2] is not None else None,
-                    "volume": round(float(r[3]), 2) if r[3] is not None else 1.0,
-                    "bid": round(bid_val, 4) if bid_val is not None else None,
-                    "ask": round(ask_val, 4) if ask_val is not None else None,
+                    "price": _safe_float(r[2], 4),
+                    "volume": vol if vol is not None else 1.0,
+                    "bid": bid_val,
+                    "ask": ask_val,
                     "spread": spread_val,
                     "source": r[7] or "CAPITAL",
                     "session": r[8] or "REG",
