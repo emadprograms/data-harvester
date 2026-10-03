@@ -61,6 +61,31 @@ from src.storage.parquet_writer import (
     WriterMetrics,
 )
 
+from src.storage.registry import (
+    DEFAULT_REGISTRY_FILENAME,
+    DEFAULT_SIGNAL_FILENAME,
+    DEFAULT_CONTROL_LOCK_FILENAME,
+    STATUS_ACTIVE,
+    STATUS_INACTIVE,
+    STATUS_PENDING_PURGE,
+    RegistryError,
+    SymbolPendingPurgeError,
+    SymbolNotFoundError,
+    SymbolAlreadyExistsError,
+    InvalidSymbolError,
+    RegistryLockError,
+    RegistryCorruptedError,
+    SymbolEntry,
+    RegistrySnapshot,
+    RegistryControlLock,
+    SymbolRegistry,
+    init_registry,
+    load_registry,
+    get_registry_path,
+    touch_stream_reload_signal,
+    get_symbol_registry,
+)
+
 __all__ = [
     # Config & Hierarchy
     "StorageConfigError",
@@ -110,4 +135,28 @@ __all__ = [
     # Streaming Parquet Writer
     "TickLakeWriter",
     "WriterMetrics",
+    # Versioned Symbol Registry (Phase 18)
+    "DEFAULT_REGISTRY_FILENAME",
+    "DEFAULT_SIGNAL_FILENAME",
+    "DEFAULT_CONTROL_LOCK_FILENAME",
+    "STATUS_ACTIVE",
+    "STATUS_INACTIVE",
+    "STATUS_PENDING_PURGE",
+    "RegistryError",
+    "SymbolPendingPurgeError",
+    "SymbolNotFoundError",
+    "SymbolAlreadyExistsError",
+    "InvalidSymbolError",
+    "RegistryLockError",
+    "RegistryCorruptedError",
+    "SymbolEntry",
+    "RegistrySnapshot",
+    "RegistryControlLock",
+    "SymbolRegistry",
+    "init_registry",
+    "load_registry",
+    "get_registry_path",
+    "touch_stream_reload_signal",
+    "get_symbol_registry",
 ]
+
