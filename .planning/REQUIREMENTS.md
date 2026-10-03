@@ -38,9 +38,9 @@ Replace the locked live DuckDB tick database with an append-only, partitioned Pa
 - [x] **LAKE-P4-04**: Repo B reader contract - deliver minimal schema documentation, query examples, and in-memory connection patterns for independent consumers.
 
 ### Phase 20: Zero-Loss Migration Tooling & Rehearsal (P6)
-- [ ] **LAKE-P6-01**: Migration CLI tool - implement `tools/migrate_streaming_to_parquet.py` with `plan`, `export`, `verify`, and `publish` modes.
-- [ ] **LAKE-P6-02**: Chunked export & checkpointing - export frozen `streaming.duckdb` into partitioned Parquet files with checkpointed progress.
-- [ ] **LAKE-P6-03**: Two-way `EXCEPT ALL` reconciliation - verify zero row loss, identical duplicates, and exact precision match between source and Parquet export.
+- [x] **LAKE-P6-01**: Migration CLI tool - implement `tools/migrate_streaming_to_parquet.py` with `plan`, `export`, `verify`, and `publish` modes.
+- [x] **LAKE-P6-02**: Chunked export & checkpointing - export frozen `streaming.duckdb` into partitioned Parquet files with checkpointed progress.
+- [x] **LAKE-P6-03**: Two-way `EXCEPT ALL` reconciliation - verify zero row loss, identical duplicates, and exact precision match between source and Parquet export.
 
 ### Phase 21: Production Cutover, Concurrency Validation & Handoff (P8)
 - [ ] **LAKE-P8-01**: Coordinated writer cutover - freeze legacy writer, switch runner to live Parquet lake, and publish migrated historical partitions.

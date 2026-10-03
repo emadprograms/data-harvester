@@ -69,7 +69,7 @@ See: [.planning/milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
   - Implement `src/storage/reader.py` (`TickLakeReader` with in-memory DuckDB).
   - Deterministic OHLCV resampling via `arg_min(price, (timestamp, ingest_id))`.
   - Update dashboard queries; deliver minimal read contract for Repo B.
-- [ ] **Phase 20: Zero-Loss Migration Tooling & Rehearsal (P6)**
+- [x] **Phase 20: Zero-Loss Migration Tooling & Rehearsal (P6)** (completed 2026-10-03)
   - Implement `tools/migrate_streaming_to_parquet.py`.
   - Chunked export and two-way `EXCEPT ALL` verification against frozen legacy DB.
 - [ ] **Phase 21: Production Cutover, Concurrency Validation & Handoff (P8)**
