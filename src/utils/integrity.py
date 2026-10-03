@@ -387,7 +387,7 @@ def analyze_price_drift(symbol: str, tolerance: float = 0.50, client=None, hist_
             client.attach(hp, "hist", read_only=True)
             stream_df = pd.DataFrame([
                 {
-                    "time": pd.to_datetime(c["timestamp"]),
+                    "time": pd.to_datetime(c.get("timestamp") or c.get("time")),
                     "symbol": c["symbol"],
                     "close_stream": float(c["close"]),
                 }

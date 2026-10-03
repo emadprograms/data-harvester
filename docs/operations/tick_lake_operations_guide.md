@@ -133,7 +133,7 @@ The supervisor process coordinates background execution of the streamer and dash
 - **Process Supervision:** Monitors child processes; captures stdout/stderr into rotating log files under `logs/` (rotated at 20MB).
 - **Code & Git Auto-Reload:** Watches `src/` and `.git/HEAD`. When new code is pulled or committed, child processes are automatically restarted cleanly.
 - **Crash Auto-Healing:** Detects process crashes and automatically restarts the child with exponential backoff (up to 30 seconds) to prevent CPU thrashing.
-- **Graceful Shutdown:** Catches `SIGINT` and `SIGTERM`. Grants children a 6-second drain period to finish pending batch writes before issuing `SIGKILL`.
+- **Graceful Shutdown:** Catches `SIGINT` and `SIGTERM`. Grants children a 15-second drain period to allow the streamer's 10-second bounded queue drain to finish cleanly before issuing `SIGKILL`.
 
 ### 3.2 macOS Production Scripts (`tools/mac/`)
 
