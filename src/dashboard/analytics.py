@@ -244,23 +244,32 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
 
 
 def _get_lake_reader():
-    """Helper to obtain TickLakeReader when lake root or partitions exist."""
+    """Select lake when configured; propagate selected-lake integrity failures."""
+    from src.storage.config import StorageConfigError, load_lake_metadata
+    from src.storage.reader import get_tick_lake_reader
+
+    explicitly_selected = bool(os.environ.get("TICK_LAKE_ROOT") or os.environ.get("DATA_DIR"))
     try:
-        from src.storage.reader import get_tick_lake_reader
         reader = get_tick_lake_reader()
-        if reader and reader.root:
-            ticks_dir = reader.root / "ticks"
-            status_file = reader.root / "_control" / "writer_status.json"
-            lake_json = reader.root / "lake.json"
-            if (
-                ticks_dir.is_dir()
-                or status_file.is_file()
-                or lake_json.is_file()
-                or os.environ.get("TICK_LAKE_ROOT")
-            ):
-                return reader
     except Exception:
-        pass
+        if explicitly_selected:
+            raise
+        return None
+
+    if explicitly_selected:
+        if reader is None or reader.root is None:
+            raise StorageConfigError("A lake backend was explicitly selected but its root could not be resolved")
+        # Configuration is not allowed to turn a missing/corrupt lake into an empty
+        # legacy fallback. Validate metadata before choosing the reader.
+        load_lake_metadata(reader.root)
+        return reader
+
+    if reader and reader.root:
+        ticks_dir = reader.root / "ticks"
+        status_file = reader.root / "_control" / "writer_status.json"
+        lake_json = reader.root / "lake.json"
+        if ticks_dir.is_dir() or status_file.is_file() or lake_json.is_file():
+            return reader
     return None
 
 

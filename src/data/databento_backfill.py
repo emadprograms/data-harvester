@@ -15,7 +15,12 @@ from typing import List, Tuple, Optional, Dict, Any
 import pandas as pd
 from dotenv import load_dotenv
 
-import databento as db
+try:
+    import databento as db
+except ModuleNotFoundError as exc:  # Optional for offline utilities and injected-client tests.
+    if exc.name != "databento":
+        raise
+    db = None
 from src.database.connection import get_streaming_db_connection, get_historical_db_connection
 
 logger = logging.getLogger("databento_backfill")
@@ -116,7 +121,7 @@ def get_day_trading_bounds(trading_date: date) -> Tuple[datetime, datetime, date
     )
 
 
-def get_databento_client(api_key: Optional[str] = None) -> db.Historical:
+def get_databento_client(api_key: Optional[str] = None) -> Any:
     """Instantiates a Databento Historical client."""
     if not api_key:
         load_dotenv(".env")
@@ -127,11 +132,13 @@ def get_databento_client(api_key: Optional[str] = None) -> db.Historical:
         )
     if not api_key:
         raise ValueError("No Databento API key found in environment or .env file.")
+    if db is None:
+        raise RuntimeError("Databento SDK is required for live backfill; install the optional databento package")
     return db.Historical(api_key)
 
 
 def estimate_day_cost(
-    client: db.Historical,
+    client: Any,
     symbols: List[str],
     trading_date: date,
     schema: str = "tbbo",
@@ -187,7 +194,7 @@ def is_day_already_backfilled(trading_date: date, symbols: List[str], streaming_
 
 
 def fetch_and_normalize_day(
-    client: db.Historical,
+    client: Any,
     symbols: List[str],
     trading_date: date,
     schema: str = "tbbo",
@@ -312,7 +319,7 @@ def run_databento_backfill(
     max_budget: float = 120.0,
     max_days: int = 40,
     start_date: Optional[date] = None,
-    client: Optional[db.Historical] = None,
+    client: Optional[Any] = None,
     progress_callback: Optional[Any] = None
 ) -> Dict[str, Any]:
     """

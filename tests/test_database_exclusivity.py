@@ -363,7 +363,7 @@ def test_crud_data_segregation_on_independent_databases():
 def test_runner_reload_symbols_does_not_fallback_to_historical():
     """Verify that StreamingEngine.reload_symbols() strictly does NOT fall back to historical symbols if streaming symbols are missing."""
     async def _run():
-        engine = StreamingEngine()
+        engine = StreamingEngine(db_path=":memory:")
 
         # Mock streaming database returning NO symbols
         with patch("src.stream.runner.get_streaming_database_symbols_from_db", return_value={}), \

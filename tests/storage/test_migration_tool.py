@@ -447,78 +447,82 @@ def test_export_mode_synthesizes_deterministic_ingest_id(migration_fixture: Dict
     )
     chunk_files = sorted(staging_part_dir.glob("*.parquet"))
 
-    id_regex = re.compile(r"^mig_AAPL_(20260710|2026-07-10)_\d{8}$")
+    id_regex = re.compile(r"^mig_[0-9a-f]{32}_\d{16}$")
     timestamps = []
     ingest_ids = []
+    source_rows = []
 
     for cfile in chunk_files:
         tbl = pq.read_table(cfile)
         t_col = tbl["timestamp"].to_pylist()
         i_col = tbl["ingest_id"].to_pylist()
+        columns = [tbl[name].to_pylist() for name in (
+            "timestamp", "symbol", "price", "volume", "bid", "ask", "source", "session", "ingest_id"
+        )]
         for ts, iid in zip(t_col, i_col):
-            assert id_regex.match(iid), f"Ingest ID '{iid}' does not match expected pattern"
+            assert id_regex.match(iid), f"Ingest ID '{iid}' does not contain a migration namespace"
             timestamps.append(ts)
             ingest_ids.append(iid)
+        source_rows.extend(zip(*columns))
 
     assert len(timestamps) == 120
     assert timestamps == sorted(timestamps), "Timestamps must be sorted in non-descending order"
-    assert ingest_ids == sorted(ingest_ids), "Deterministic ingest_ids must sort monotonically with timestamp"
-    assert len(set(ingest_ids)) == 120, "Deterministic ingest_ids must be strictly unique"
+    assert ingest_ids == sorted(ingest_ids), "Stable source ordinals must sort deterministically"
+    assert len(set(ingest_ids)) == 120, "Migration-scoped ingest IDs must be strictly unique"
 
-
-def test_export_mode_resume_skips_completed(migration_fixture: Dict[str, Any]):
-    """
-    Simulates a partial export where partition 1 is marked COMPLETED in state.json;
-    runs export with --resume; verifies partition 1 files are untouched and partition 2 is completed.
-    """
-    lake_root = migration_fixture["lake_root"]
-    migration_dir = lake_root / "_migration"
-    staging_dir = migration_dir / "staging" / "ticks"
-
-    part1_dir = staging_dir / "symbol=AAPL" / "date=2026-07-10"
-    part1_dir.mkdir(parents=True, exist_ok=True)
-    part1_file = part1_dir / "chunk_000001.parquet"
-    part1_file.write_bytes(b"dummy_completed_content_aapl")
-    orig_mtime = part1_file.stat().st_mtime
-
-    state_json = {
-        "updated_at": "2026-10-03T10:00:00Z",
-        "partitions": {
-            "symbol=AAPL/date=2026-07-10": {
-                "status": "COMPLETED",
-                "chunks": ["chunk_000001.parquet"],
-                "row_count": 120,
-            }
-        },
-    }
-    with open(migration_dir / "state.json", "w", encoding="utf-8") as f:
-        json.dump(state_json, f, indent=2)
-
-    config = MigrationConfig(
+    # Chunk size is not part of source identity: rebuilding under the same
+    # migration UUID must preserve the exact ID-to-row mapping.
+    expected_mapping = sorted(source_rows, key=lambda row: row[-1])
+    resized = MigrationOrchestrator(MigrationConfig(
         source_db=migration_fixture["source_db"],
+        lake_root=migration_fixture["lake_root"],
+        chunk_size=17,
+        mode="export",
+        symbols=["AAPL"],
+        date_start="2026-07-10",
+        date_end="2026-07-10",
+    ))
+    resized.export()
+    rebuilt_rows = []
+    rebuilt_dir = (
+        migration_fixture["lake_root"] / "_migration" / "staging" / "ticks"
+        / "symbol=AAPL" / "date=2026-07-10"
+    )
+    for cfile in sorted(rebuilt_dir.glob("*.parquet")):
+        table = pq.read_table(cfile)
+        rebuilt_rows.extend(zip(*[table[name].to_pylist() for name in (
+            "timestamp", "symbol", "price", "volume", "bid", "ask", "source", "session", "ingest_id"
+        )]))
+    assert sorted(rebuilt_rows, key=lambda row: row[-1]) == expected_mapping
+
+
+def test_export_mode_resume_skips_verified_completed_chunks(migration_fixture: Dict[str, Any]):
+    """A valid checkpoint with intact hashes is reused without rewriting its files."""
+    lake_root = migration_fixture["lake_root"]
+    source_db = migration_fixture["source_db"]
+    first = MigrationOrchestrator(MigrationConfig(
+        source_db=source_db,
         lake_root=lake_root,
         mode="export",
         chunk_size=50,
-        symbols=["AAPL", "NVDA"],
-        date_start="2026-07-10",
-        date_end="2026-07-10",
+    ))
+    state = first.export()
+    assert state.partitions
+    files = sorted((lake_root / "_migration" / "staging").glob("ticks/**/*.parquet"))
+    before = {path: (path.stat().st_mtime_ns, path.read_bytes()) for path in files}
+    assert files
+
+    resumed = MigrationOrchestrator(MigrationConfig(
+        source_db=source_db,
+        lake_root=lake_root,
+        mode="export",
+        chunk_size=50,
         resume=True,
-    )
-    orchestrator = MigrationOrchestrator(config)
-    orchestrator.export()
-
-    # Partition 1 file must be untouched
-    assert part1_file.stat().st_mtime == orig_mtime
-    assert part1_file.read_bytes() == b"dummy_completed_content_aapl"
-
-    # Partition 2 (NVDA) files must now exist and be marked COMPLETED in state
-    part2_dir = staging_dir / "symbol=NVDA" / "date=2026-07-10"
-    assert part2_dir.is_dir()
-    assert len(list(part2_dir.glob("*.parquet"))) > 0
-
-    with open(migration_dir / "state.json", "r", encoding="utf-8") as f:
-        updated_state = json.load(f)
-    assert updated_state["partitions"]["symbol=NVDA/date=2026-07-10"]["status"] == "COMPLETED"
+    ))
+    resumed_state = resumed.export()
+    assert resumed_state.migration_id == state.migration_id
+    assert all(part["status"] == "COMPLETED" for part in resumed_state.partitions.values())
+    assert {path: (path.stat().st_mtime_ns, path.read_bytes()) for path in files} == before
 
 
 # ============================================================================

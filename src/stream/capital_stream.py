@@ -20,7 +20,7 @@ MAX_EPICS_PER_SUB = 40
 class CapitalStreamer:
     """Consumes real-time market data quotes from Capital.com WebSockets."""
     def __init__(self, epics=None, on_tick_callback=None):
-        self.epics = list(epics or ["AAPL", "NVDA", "TSLA", "SPY", "QQQ", "AMD", "AMZN", "MSFT"])
+        self.epics = list(["AAPL", "NVDA", "TSLA", "SPY", "QQQ", "AMD", "AMZN", "MSFT"] if epics is None else epics)
         self.on_tick_callback = on_tick_callback
         self.running = False
         self.ws = None
@@ -114,6 +114,10 @@ class CapitalStreamer:
             return False
 
     async def start(self):
+        if not self.epics:
+            logger.info("Capital.com stream not started: no active subscriptions")
+            self.running = False
+            return
         self.running = True
         backoff = 1
 

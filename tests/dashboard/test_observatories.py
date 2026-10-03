@@ -48,7 +48,9 @@ def test_get_streaming_candles_pure_isolation():
             (now_ts, "TEST_STREAM", 100.0, 1.0, 99.9, 100.1, "CAPITAL", "REG")
         ])
 
-        res = get_streaming_candles("TEST_STREAM", timeframe="1m", limit=10)
+        # Supplying the legacy client explicitly avoids accidentally routing this
+        # DuckDB-only fixture through the environment-selected lake backend.
+        res = get_streaming_candles("TEST_STREAM", timeframe="1m", limit=10, client=s_client)
         assert res.get("database") == "streaming"
         assert res.get("symbol") == "TEST_STREAM"
         assert len(res.get("candles")) >= 1

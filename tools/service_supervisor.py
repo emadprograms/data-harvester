@@ -103,6 +103,9 @@ class ProcessSupervisor:
         self.process = None
         self._child_log_file = None
         self._child_start_time = 0.0
+        self._handoff_suspended = False
+        self._lifecycle_lock = threading.RLock()
+        self.last_child_exit_code = None
         self._consecutive_crashes = 0
         self.last_snapshot = get_watched_files(self.watch_dirs)
 
@@ -159,72 +162,105 @@ class ProcessSupervisor:
         except Exception:
             pass
 
+    @property
+    def is_handoff_suspended(self) -> bool:
+        with self._lifecycle_lock:
+            return self._handoff_suspended
+
     def _start_child(self):
-        rotate_log_if_needed(self.log_file_path)
-        python_exe = sys.executable
-        if python_exe.lower().endswith("pythonw.exe"):
-            cand = Path(python_exe).with_name("python.exe")
-            if cand.exists():
-                python_exe = str(cand)
+        """Start one child unless a coordinated handoff currently owns lifecycle control."""
+        with self._lifecycle_lock:
+            if self._handoff_suspended:
+                return None
+            if self.process is not None and self.process.poll() is None:
+                return self.process
+            rotate_log_if_needed(self.log_file_path)
+            python_exe = sys.executable
+            if python_exe.lower().endswith("pythonw.exe"):
+                cand = Path(python_exe).with_name("python.exe")
+                if cand.exists():
+                    python_exe = str(cand)
 
-        cmd = [python_exe, "-m", self.module] + self.module_args
-        self._log(f"Launching process: {' '.join(cmd)}")
-        self._child_log_file = open(self.log_file_path, "a", encoding="utf-8", buffering=1)
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTHONUTF8"] = "1"
-        env["PYTHONPATH"] = str(REPO_ROOT)
-        env.update(self.extra_env)
+            cmd = [python_exe, "-m", self.module] + self.module_args
+            self._log(f"Launching process: {' '.join(cmd)}")
+            self._child_log_file = open(self.log_file_path, "a", encoding="utf-8", buffering=1)
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
+            env["PYTHONPATH"] = str(REPO_ROOT)
+            env.update(self.extra_env)
 
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if sys.platform == "win32" else 0
-        self.process = subprocess.Popen(
-            cmd,
-            cwd=str(REPO_ROOT),
-            stdout=self._child_log_file,
-            stderr=subprocess.STDOUT,
-            env=env,
-            creationflags=flags
-        )
-        self._child_start_time = time.monotonic()
-        self._log(f"Started child process PID={self.process.pid}")
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if sys.platform == "win32" else 0
+            self.process = subprocess.Popen(
+                cmd,
+                cwd=str(REPO_ROOT),
+                stdout=self._child_log_file,
+                stderr=subprocess.STDOUT,
+                env=env,
+                creationflags=flags,
+            )
+            self._child_start_time = time.monotonic()
+            self.last_child_exit_code = None
+            self._log(f"Started child process PID={self.process.pid}")
+            return self.process
 
     def _stop_child(self, timeout=15.0):
-        if not self.process:
-            if self._child_log_file:
-                try:
-                    self._child_log_file.flush()
-                    self._child_log_file.close()
-                except Exception:
-                    pass
-                self._child_log_file = None
-            return
-        pid = self.process.pid
-        self._log(f"Stopping child process PID={pid}...")
-        try:
-            if self.process.poll() is None:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=timeout)
-                    self._log(f"Child process PID={pid} exited cleanly (exitcode={self.process.returncode}).")
-                except subprocess.TimeoutExpired:
-                    self._log(f"Process PID={pid} did not exit within {timeout}s; sending SIGKILL.")
-                    self.process.kill()
-                    self.process.wait()
-                    self._log(f"Child process PID={pid} killed (exitcode={self.process.returncode}).")
-            else:
-                self._log(f"Child process PID={pid} already exited (exitcode={self.process.returncode}).")
-        except Exception as e:
-            self._log(f"Error stopping child PID={pid}: {e}")
-        finally:
-            self.process = None
-            if self._child_log_file:
-                try:
-                    self._child_log_file.flush()
-                    self._child_log_file.close()
-                except Exception:
-                    pass
-                self._child_log_file = None
+        """Stop the current child and return its observed exit code."""
+        with self._lifecycle_lock:
+            process = self.process
+            if process is None:
+                if self._child_log_file:
+                    try:
+                        self._child_log_file.flush()
+                        self._child_log_file.close()
+                    except Exception:
+                        pass
+                    self._child_log_file = None
+                return self.last_child_exit_code
+            pid = process.pid
+            self._log(f"Stopping child process PID={pid}...")
+            try:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=timeout)
+                        self._log(f"Child process PID={pid} exited (exitcode={process.returncode}).")
+                    except subprocess.TimeoutExpired:
+                        self._log(f"Process PID={pid} did not exit within {timeout}s; sending SIGKILL.")
+                        process.kill()
+                        process.wait()
+                        self._log(f"Child process PID={pid} killed (exitcode={process.returncode}).")
+                else:
+                    self._log(f"Child process PID={pid} already exited (exitcode={process.returncode}).")
+                self.last_child_exit_code = process.returncode
+                return process.returncode
+            except Exception as exc:
+                self._log(f"Error stopping child PID={pid}: {exc}")
+                raise
+            finally:
+                self.process = None
+                if self._child_log_file:
+                    try:
+                        self._child_log_file.flush()
+                        self._child_log_file.close()
+                    except Exception:
+                        pass
+                    self._child_log_file = None
+
+    def suspend_for_handoff(self, timeout: float = 15.0):
+        """Fence automatic restart/reload and drain the managed child for cutover."""
+        with self._lifecycle_lock:
+            self._handoff_suspended = True
+        return self._stop_child(timeout=timeout)
+
+    def resume_after_handoff(self):
+        """Re-enable supervisor lifecycle and start one fresh child after cutover."""
+        with self._lifecycle_lock:
+            if not self.running or self._stop_event.is_set():
+                raise RuntimeError(f"Supervisor for {self.name} is stopping and cannot resume capture")
+            self._handoff_suspended = False
+            return self._start_child()
 
     def _check_code_changes(self):
         current_snapshot = get_watched_files(self.watch_dirs)
@@ -272,6 +308,8 @@ class ProcessSupervisor:
         while self.running and not self._stop_event.is_set():
             if self._stop_event.wait(self.poll_interval):
                 break
+            if self.is_handoff_suspended:
+                continue
 
             # 1. Periodic git pull sync if configured
             self._check_git_sync()

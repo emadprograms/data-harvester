@@ -29,7 +29,7 @@ def make_mock_ws():
 
 def test_capital_exclusive_engine_configuration():
     """Verify that by default the StreamingEngine targets Capital.com exclusively and does not enable Binance."""
-    engine = StreamingEngine()
+    engine = StreamingEngine(db_path=":memory:")
     assert engine.enable_binance is False
     assert engine.binance_streamer is None
 
@@ -84,7 +84,7 @@ def test_capital_streamer_update_when_disconnected():
 def test_streaming_engine_reload_symbols():
     """Verify that engine.reload_symbols queries DB and delegates to capital_streamer."""
     async def _test():
-        engine = StreamingEngine()
+        engine = StreamingEngine(db_path=":memory:")
         mock_streamer = AsyncMock()
         mock_streamer.update_subscriptions = AsyncMock(return_value=True)
         engine.capital_streamer = mock_streamer
@@ -107,7 +107,7 @@ def test_streaming_engine_reload_symbols():
 
 def test_streaming_engine_trigger_reload_signal():
     """Verify trigger_reload sets the reload event."""
-    engine = StreamingEngine()
+    engine = StreamingEngine(db_path=":memory:")
     assert not engine.reload_event.is_set()
     engine.trigger_reload()
     assert engine.reload_event.is_set()

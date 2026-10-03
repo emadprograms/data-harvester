@@ -128,7 +128,25 @@ def resolve_tick_lake_root(custom_root: Optional[Union[str, Path]] = None) -> Pa
 
 
 def init_tick_lake(root: Path, schema_version: int = 1, force: bool = False) -> LakeMetadata:
-    """Initialize a tick lake directory hierarchy and write lake.json metadata idempotently."""
+    """Initialize a lake under the shared publisher/maintenance ownership lock."""
+    root = Path(root).resolve()
+    guard_path = root / "_maintenance" / MAINTENANCE_GUARD_FILENAME
+    if guard_path.exists():
+        raise LakeMaintenanceInProgressError(f"Lake maintenance in progress: {guard_path}")
+    # Local import avoids a module-level cycle: publication uses schema/config helpers.
+    from src.storage.publication import LakePublisherLock
+    ownership_lock = LakePublisherLock(root, writer_id="lake-initialization")
+    ownership_lock.acquire(blocking=True, timeout=30.0)
+    try:
+        if guard_path.exists():
+            raise LakeMaintenanceInProgressError(f"Lake maintenance in progress: {guard_path}")
+        return _init_tick_lake_locked(root, schema_version=schema_version, force=force)
+    finally:
+        ownership_lock.release()
+
+
+def _init_tick_lake_locked(root: Path, schema_version: int = 1, force: bool = False) -> LakeMetadata:
+    """Initialize hierarchy/metadata after the shared owner lock is held."""
     root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     for subdir in SUBDIRECTORIES:

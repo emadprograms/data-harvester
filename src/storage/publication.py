@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
@@ -17,7 +18,11 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from src.storage.config import StorageConfigError, encode_symbol
+from src.storage.config import (
+    LakeMaintenanceInProgressError,
+    StorageConfigError,
+    encode_symbol,
+)
 from src.storage.schema import LAKE_SCHEMA_V1, ticks_to_table, validate_schema_v1, validate_table_v1
 
 
@@ -56,6 +61,7 @@ class PublishReceipt:
     file_details: List[FilePublicationReceipt] = field(default_factory=list)
     status: str = "PUBLISHED"  # "PUBLISHED" | "ALREADY_PUBLISHED"
     published_at: str = ""
+    payload_sha256: str = ""
 
 
 @dataclass
@@ -67,6 +73,140 @@ class PublishIntent:
     targets: List[Dict[str, Any]] = field(default_factory=list)
     created_at: str = ""
     state: str = "PENDING"  # "PENDING" | "STAGED" | "COMMITTED"
+    payload_sha256: str = ""
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _canonical_row(row: Dict[str, Any]) -> List[Any]:
+    canonical = []
+    for column in LAKE_SCHEMA_V1.names:
+        value = row.get(column)
+        if column == "timestamp" and value is not None:
+            if value.tzinfo is not None:
+                value = value.astimezone(timezone.utc).replace(tzinfo=None)
+            canonical.append(value.isoformat(timespec="microseconds"))
+        elif column in {"price", "volume", "bid", "ask"} and value is not None:
+            canonical.append(float(value).hex())
+        else:
+            canonical.append(value)
+    return canonical
+
+
+def _payload_fingerprint(rows_or_table: Any) -> str:
+    """Hash canonical logical rows as a multiset; retain duplicate multiplicity."""
+    if isinstance(rows_or_table, pa.Table):
+        rows = rows_or_table.to_pylist()
+    else:
+        rows = list(rows_or_table)
+    canonical_rows = [
+        json.dumps(_canonical_row(row), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        for row in rows
+    ]
+    canonical_rows.sort()
+    payload = json.dumps(
+        {"schema_version": 1, "columns": LAKE_SCHEMA_V1.names, "rows": canonical_rows},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _safe_batch_id(batch_id: str) -> str:
+    if not isinstance(batch_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,180}", batch_id):
+        raise PublishError(f"Invalid batch_id {batch_id!r}; only safe filename characters are allowed")
+    if batch_id in {".", ".."}:
+        raise PublishError(f"Invalid batch_id {batch_id!r}")
+    return batch_id
+
+
+def _verify_receipt_files(root: Path, receipt_data: Dict[str, Any]) -> Tuple[List[FilePublicationReceipt], List[Dict[str, Any]], str]:
+    """Verify receipt-owned files independently and return details, rows and logical digest."""
+    root = Path(root).resolve()
+    raw_details = receipt_data.get("file_details")
+    if not isinstance(raw_details, list):
+        raise PublishError(
+            f"Receipt {receipt_data.get('batch_id', '<unknown>')} has malformed file checksums"
+        )
+    if not raw_details and int(receipt_data.get("row_count", -1)) != 0:
+        raise PublishError(
+            f"Receipt {receipt_data.get('batch_id', '<unknown>')} has no file checksums; integrity cannot be established"
+        )
+
+    details: List[FilePublicationReceipt] = []
+    rows: List[Dict[str, Any]] = []
+    seen_paths = set()
+    for raw in raw_details:
+        try:
+            relative = Path(raw["relative_path"])
+            if relative.is_absolute() or ".." in relative.parts:
+                raise PublishError(f"Receipt path escapes lake: {raw.get('relative_path')!r}")
+            target = (root / relative).resolve()
+            if not target.is_relative_to(root):
+                raise PublishError(f"Receipt path escapes lake: {raw.get('relative_path')!r}")
+            rel_path = relative.as_posix()
+            if rel_path in seen_paths:
+                raise PublishError(f"Receipt references file more than once: {rel_path}")
+            seen_paths.add(rel_path)
+            if not target.is_file():
+                raise PublishError(f"Receipt file is missing: {rel_path}")
+            size = target.stat().st_size
+            digest = _sha256_file(target)
+            if size != int(raw["file_size_bytes"]) or digest != str(raw["sha256"]):
+                raise PublishError(f"Receipt checksum/size mismatch for {rel_path}")
+            # Read the physical file schema without Hive partition columns appended by read_table().
+            table = pq.ParquetFile(target).read()
+            validate_table_v1(table)
+            count = table.num_rows
+            if count != int(raw["row_count"]):
+                raise PublishError(f"Receipt row count mismatch for {rel_path}")
+            table_rows = table.to_pylist()
+            expected_symbol = str(raw["symbol"])
+            expected_date = str(raw["date"])
+            for row in table_rows:
+                if row["symbol"] != expected_symbol:
+                    raise PublishError(f"Receipt symbol mismatch for {rel_path}")
+                if row["timestamp"].date().isoformat() != expected_date:
+                    raise PublishError(f"Receipt date mismatch for {rel_path}")
+            rows.extend(table_rows)
+            details.append(FilePublicationReceipt(
+                relative_path=rel_path,
+                symbol=expected_symbol,
+                date=expected_date,
+                row_count=count,
+                file_size_bytes=size,
+                sha256=digest,
+            ))
+        except PublishError:
+            raise
+        except Exception as exc:
+            label = raw.get("relative_path", "<unknown>") if isinstance(raw, dict) else "<malformed>"
+            raise PublishError(f"Cannot verify receipt file {label}: {exc}") from exc
+
+    raw_paths = receipt_data.get("file_paths")
+    if raw_paths is not None:
+        if (
+            not isinstance(raw_paths, list)
+            or len(raw_paths) != len(seen_paths)
+            or set(map(str, raw_paths)) != seen_paths
+        ):
+            raise PublishError(f"Receipt file_paths do not match its file_details for {receipt_data.get('batch_id')}")
+    expected_rows = int(receipt_data.get("row_count", -1))
+    if expected_rows != len(rows):
+        raise PublishError(
+            f"Receipt row count mismatch for {receipt_data.get('batch_id')}: expected {expected_rows}, found {len(rows)}"
+        )
+    actual_fingerprint = _payload_fingerprint(rows)
+    stored_fingerprint = receipt_data.get("payload_sha256")
+    if stored_fingerprint and stored_fingerprint != actual_fingerprint:
+        raise PublishError(f"Receipt logical payload fingerprint mismatch for {receipt_data.get('batch_id')}")
+    return details, rows, actual_fingerprint
 
 
 class LakePublisherLock:
@@ -80,26 +220,55 @@ class LakePublisherLock:
         self._fd: Optional[int] = None
         self._is_locked: bool = False
 
-    def acquire(self) -> bool:
-        """Acquire an exclusive non-blocking advisory file lock."""
+    def acquire(self, blocking: bool = False, timeout: Optional[float] = None) -> bool:
+        """Acquire the shared exclusive lake-owner lock and honor maintenance fencing.
+
+        Publisher entry points default to fail-fast ownership. Idempotent lake
+        initialization may wait for an in-progress publisher to finish before it
+        inspects or creates metadata.
+        """
         if self._is_locked:
             return True
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must be non-negative")
+
+        guard_path = self.root / "_maintenance" / "in_progress.json"
+        if guard_path.exists():
+            raise LakeMaintenanceInProgressError(f"Lake maintenance in progress: {guard_path}")
 
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(self.lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+        should_block = blocking or timeout is not None
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        while True:
+            try:
+                if sys.platform != "win32":
+                    import fcntl
+                    nonblocking = not should_block or deadline is not None
+                    flags = fcntl.LOCK_EX | fcntl.LOCK_NB if nonblocking else fcntl.LOCK_EX
+                    fcntl.flock(fd, flags)
+                else:
+                    import msvcrt
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                break
+            except (BlockingIOError, OSError, IOError) as exc:
+                if not should_block or (deadline is not None and time.monotonic() >= deadline):
+                    os.close(fd)
+                    raise LakeOwnershipError(
+                        f"Publisher lock already held for lake at {self.root} (file: {self.lock_path})"
+                    ) from exc
+                time.sleep(min(0.01, max(0.0, deadline - time.monotonic())) if deadline is not None else 0.01)
 
-        try:
-            if sys.platform != "win32":
-                import fcntl
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            else:
-                import msvcrt
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-        except (BlockingIOError, OSError, IOError) as exc:
-            os.close(fd)
-            raise LakeOwnershipError(
-                f"Publisher lock already held for lake at {self.root} (file: {self.lock_path})"
-            ) from exc
+        # Recheck after taking ownership: maintenance may have set its marker between
+        # the optimistic precheck and this lock acquisition.
+        if guard_path.exists():
+            try:
+                if sys.platform != "win32":
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
+            finally:
+                raise LakeMaintenanceInProgressError(f"Lake maintenance in progress: {guard_path}")
 
         try:
             os.ftruncate(fd, 0)
@@ -140,6 +309,83 @@ class LakePublisherLock:
         self.release()
 
 
+class LakeMaintenanceLock:
+    """Exclusive offline-maintenance owner sharing the normal publisher lock."""
+
+    def __init__(self, root: Path, operation: str, owner: str = ""):
+        self.root = Path(root).resolve()
+        self.operation = str(operation)
+        self.owner = str(owner or f"pid:{os.getpid()}")
+        self.marker_path = self.root / "_maintenance" / "in_progress.json"
+        self._owner_lock = LakePublisherLock(self.root, writer_id=f"maintenance:{self.operation}")
+        self._is_locked = False
+
+    def acquire(self) -> bool:
+        if self._is_locked:
+            return True
+        if self.marker_path.exists():
+            raise LakeMaintenanceInProgressError(f"Lake maintenance already in progress: {self.marker_path}")
+        self._owner_lock.acquire()
+        try:
+            if self.marker_path.exists():
+                raise LakeMaintenanceInProgressError(f"Lake maintenance already in progress: {self.marker_path}")
+            self.marker_path.parent.mkdir(parents=True, exist_ok=True)
+            marker = {
+                "operation": self.operation,
+                "owner": self.owner,
+                "pid": os.getpid(),
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+            fd = os.open(str(self.marker_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(marker, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                directory_fd = os.open(str(self.marker_path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                pass
+            self._is_locked = True
+            return True
+        except Exception:
+            self._owner_lock.release()
+            raise
+
+    def release(self, successful: bool = False) -> None:
+        if not self._is_locked:
+            self._owner_lock.release()
+            return
+        marker_error = None
+        if successful:
+            try:
+                self.marker_path.unlink(missing_ok=True)
+                try:
+                    directory_fd = os.open(str(self.marker_path.parent), os.O_RDONLY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+                except OSError:
+                    pass
+            except Exception as exc:
+                marker_error = exc
+        self._is_locked = False
+        self._owner_lock.release()
+        if marker_error is not None:
+            raise marker_error
+
+    def __enter__(self) -> "LakeMaintenanceLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.release(successful=exc_type is None)
+
+
 class LakePublisher:
     """Atomic batch publisher for partitioned Parquet tick lake."""
 
@@ -148,25 +394,35 @@ class LakePublisher:
         root: Path,
         writer_id: str = "writer_1",
         compression: str = "snappy",
+        file_namespace: Optional[str] = None,
     ):
         self.root = Path(root).resolve()
         self.writer_id = writer_id
         self.compression = compression
+        if file_namespace is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", file_namespace):
+            raise PublishError(f"Unsafe publication file namespace: {file_namespace!r}")
+        self.file_namespace = file_namespace
+        self._writer_file_token = re.sub(r"[^A-Za-z0-9_-]+", "_", str(writer_id)).strip("_") or "writer"
 
-        # Control directories
+        # Reject an existing maintenance marker before creating control artifacts,
+        # then acquire the shared lock before initialization and publication setup.
+        guard_path = self.root / "_maintenance" / "in_progress.json"
+        if guard_path.exists():
+            raise LakeMaintenanceInProgressError(f"Lake maintenance in progress: {guard_path}")
         self.control_dir = self.root / "_control"
         self.staging_dir = self.root / "_staging"
         self.receipts_dir = self.control_dir / "receipts"
         self.intent_dir = self.control_dir / "intent"
-
-        self.control_dir.mkdir(parents=True, exist_ok=True)
-        self.staging_dir.mkdir(parents=True, exist_ok=True)
-        self.receipts_dir.mkdir(parents=True, exist_ok=True)
-        self.intent_dir.mkdir(parents=True, exist_ok=True)
-
-        # Acquire single-writer lock
         self.lock = LakePublisherLock(root=self.root, writer_id=self.writer_id)
         self.lock.acquire()
+        try:
+            self.control_dir.mkdir(parents=True, exist_ok=True)
+            self.staging_dir.mkdir(parents=True, exist_ok=True)
+            self.receipts_dir.mkdir(parents=True, exist_ok=True)
+            self.intent_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            self.lock.release()
+            raise
 
     def publish_batch(
         self,
@@ -174,36 +430,8 @@ class LakePublisher:
         batch_id: str,
         sequence: int,
     ) -> PublishReceipt:
-        """Publish a batch of records atomically across date/symbol partitions."""
-        receipt_file = self.receipts_dir / f"{batch_id}.json"
-
-        # 1. Idempotency check: if receipt already exists, return ALREADY_PUBLISHED
-        if receipt_file.is_file():
-            with open(receipt_file, "r", encoding="utf-8") as f:
-                rdata = json.load(f)
-            file_details = [
-                FilePublicationReceipt(
-                    relative_path=fd["relative_path"],
-                    symbol=fd["symbol"],
-                    date=fd["date"],
-                    row_count=fd["row_count"],
-                    file_size_bytes=fd["file_size_bytes"],
-                    sha256=fd["sha256"],
-                )
-                for fd in rdata.get("file_details", [])
-            ]
-            return PublishReceipt(
-                batch_id=rdata["batch_id"],
-                writer_id=rdata.get("writer_id", self.writer_id),
-                sequence=rdata.get("sequence", sequence),
-                row_count=rdata.get("row_count", 0),
-                file_paths=rdata.get("file_paths", [fd.relative_path for fd in file_details]),
-                file_details=file_details,
-                status="ALREADY_PUBLISHED",
-                published_at=rdata.get("published_at", ""),
-            )
-
-        # 2. Convert to PyArrow Table and validate
+        """Publish one immutable, payload-identified batch atomically."""
+        batch_id = _safe_batch_id(batch_id)
         if isinstance(records_or_table, pa.Table):
             table = records_or_table
             validate_table_v1(table)
@@ -211,44 +439,117 @@ class LakePublisher:
             table = ticks_to_table(records_or_table, validate=True)
 
         total_row_count = table.num_rows
+        payload_sha256 = _payload_fingerprint(table)
+        receipt_file = self.receipts_dir / f"{batch_id}.json"
+        intent_file = self.intent_dir / f"{batch_id}.json"
+
+        def replay_receipt() -> PublishReceipt:
+            try:
+                with open(receipt_file, "r", encoding="utf-8") as handle:
+                    rdata = json.load(handle)
+            except Exception as exc:
+                raise PublishError(f"Cannot read publication receipt for {batch_id}: {exc}") from exc
+            if rdata.get("batch_id") != batch_id:
+                raise PublishError(f"Receipt identity mismatch for {batch_id}")
+            if rdata.get("writer_id", self.writer_id) != self.writer_id:
+                raise BatchCollisionError(f"Batch {batch_id} was already published by a different writer")
+            if int(rdata.get("sequence", sequence)) != int(sequence):
+                raise BatchCollisionError(f"Batch {batch_id} was already published at a different sequence")
+            if int(rdata.get("row_count", -1)) != total_row_count:
+                raise BatchCollisionError(f"Batch {batch_id} was already published with a different row count")
+            file_details, _, stored_payload_sha256 = _verify_receipt_files(self.root, rdata)
+            if stored_payload_sha256 != payload_sha256:
+                raise BatchCollisionError(f"Batch {batch_id} was already published with a different payload")
+            declared_payload_sha256 = rdata.get("payload_sha256")
+            if declared_payload_sha256 and declared_payload_sha256 != payload_sha256:
+                raise BatchCollisionError(f"Batch {batch_id} was already published with a different payload")
+            file_paths = rdata.get("file_paths", [fd.relative_path for fd in file_details])
+            return PublishReceipt(
+                batch_id=batch_id,
+                writer_id=rdata.get("writer_id", self.writer_id),
+                sequence=int(rdata.get("sequence", sequence)),
+                row_count=int(rdata.get("row_count", 0)),
+                file_paths=list(file_paths),
+                file_details=file_details,
+                status="ALREADY_PUBLISHED",
+                published_at=rdata.get("published_at", ""),
+                payload_sha256=stored_payload_sha256,
+            )
+
+        if receipt_file.is_file():
+            return replay_receipt()
+
+        # Resume a prepared publication instead of silently creating new target names.
+        if intent_file.is_file():
+            try:
+                with open(intent_file, "r", encoding="utf-8") as handle:
+                    pending = json.load(handle)
+            except Exception as exc:
+                raise PublishError(f"Cannot read pending publication intent for {batch_id}: {exc}") from exc
+            if pending.get("batch_id") != batch_id:
+                raise PublishError(f"Pending intent identity mismatch for {batch_id}")
+            if pending.get("writer_id", self.writer_id) != self.writer_id:
+                raise BatchCollisionError(f"Batch {batch_id} has a pending intent owned by another writer")
+            if int(pending.get("sequence", sequence)) != int(sequence):
+                raise BatchCollisionError(f"Batch {batch_id} has a pending intent at a different sequence")
+            prepared_fingerprint = pending.get("payload_sha256")
+            if prepared_fingerprint and prepared_fingerprint != payload_sha256:
+                raise BatchCollisionError(f"Batch {batch_id} has a pending intent for a different payload")
+            recover_pending_publications(self.root, batch_ids={batch_id}, ownership_lock=self.lock)
+            if receipt_file.is_file():
+                return replay_receipt()
+            raise PublishError(
+                f"Batch {batch_id} has an incomplete prepared publication; intent retained for recovery"
+            )
+
+        # An empty batch is still an idempotent publication and receives a payload-bound receipt.
         if total_row_count == 0:
+            published_at = datetime.now(timezone.utc).isoformat()
+            receipt_payload = {
+                "batch_id": batch_id,
+                "writer_id": self.writer_id,
+                "sequence": sequence,
+                "row_count": 0,
+                "file_paths": [],
+                "file_details": [],
+                "payload_sha256": payload_sha256,
+                "status": "PUBLISHED",
+                "published_at": published_at,
+            }
+            tmp_receipt = self.staging_dir / f"tmp_receipt_{uuid.uuid4().hex}.json"
+            with open(tmp_receipt, "w", encoding="utf-8") as handle:
+                json.dump(receipt_payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_receipt, receipt_file)
             return PublishReceipt(
                 batch_id=batch_id,
                 writer_id=self.writer_id,
                 sequence=sequence,
                 row_count=0,
                 status="PUBLISHED",
-                published_at=datetime.now(timezone.utc).isoformat(),
+                published_at=published_at,
+                payload_sha256=payload_sha256,
             )
 
-        # 3. Partition rows by (symbol, UTC date)
+        # Partition rows by (symbol, UTC date).
         symbols = table["symbol"].to_pylist()
         timestamps = table["timestamp"].to_pylist()
-
         partition_groups: Dict[Tuple[str, str], List[int]] = defaultdict(list)
         for idx in range(total_row_count):
-            sym = symbols[idx]
-            ts = timestamps[idx]
-            dt_str = ts.date().isoformat()
-            partition_groups[(sym, dt_str)].append(idx)
+            partition_groups[(symbols[idx], timestamps[idx].date().isoformat())].append(idx)
 
-        # 4. Sort each partition by (timestamp ASC, ingest_id ASC) and write to staging
         staged_targets: List[Dict[str, Any]] = []
         current_staging_file: Optional[Path] = None
         intent_written = False
         try:
-            for (sym, dt_str) in sorted(partition_groups.keys()):
-                indices = partition_groups[(sym, dt_str)]
-                part_table = table.take(indices)
-
-                # Tiebreak sorting: (timestamp ASC, ingest_id ASC)
+            for (symbol, date_str) in sorted(partition_groups):
+                part_table = table.take(partition_groups[(symbol, date_str)])
                 sort_idx = pc.sort_indices(
                     part_table,
                     sort_keys=[("timestamp", "ascending"), ("ingest_id", "ascending")],
                 )
                 sorted_table = pc.take(part_table, sort_idx)
-
-                # Dictionary encode symbol column to ensure compatibility with pyarrow dataset HivePartitioning
                 symbol_dict = pc.dictionary_encode(sorted_table["symbol"])
                 file_table = sorted_table.set_column(
                     sorted_table.schema.get_field_index("symbol"),
@@ -256,137 +557,130 @@ class LakePublisher:
                     symbol_dict,
                 )
 
-                # Paths
-                encoded_sym = encode_symbol(sym)
-                rel_path = f"ticks/symbol={encoded_sym}/date={dt_str}/batch_{self.writer_id}_{sequence:06d}.parquet"
-                staging_fname = f"tmp_{self.writer_id}_{sequence:06d}_{uuid.uuid4().hex}.parquet.tmp"
-                staging_rel_path = f"_staging/{staging_fname}"
-                staging_full_path = self.root / staging_rel_path
+                encoded_symbol = encode_symbol(symbol)
+                sequence_token = f"{sequence:06d}"
+                if self.file_namespace:
+                    filename_token = f"{self._writer_file_token}_{self.file_namespace}_{sequence_token}"
+                else:
+                    filename_token = f"{self._writer_file_token}_{sequence_token}"
+                relative_path = (
+                    f"ticks/symbol={encoded_symbol}/date={date_str}/batch_{filename_token}.parquet"
+                )
+                staging_relative_path = (
+                    f"_staging/tmp_{self._writer_file_token}_{uuid.uuid4().hex}.parquet.tmp"
+                )
+                staging_full_path = self.root / staging_relative_path
                 current_staging_file = staging_full_path
-
-                # Write parquet with compression
                 pq.write_table(file_table, staging_full_path, compression=self.compression)
+                with open(staging_full_path, "rb") as handle:
+                    os.fsync(handle.fileno())
 
-                # Flush and fsync
-                with open(staging_full_path, "a") as f:
-                    f.flush()
-                    os.fsync(f.fileno())
-
-                # Validate staged file: size, footer, row count, schema, SHA256
-                fsize = staging_full_path.stat().st_size
-                assert fsize > 0, f"Staged parquet file {staging_full_path} is empty"
-
-                pf = pq.ParquetFile(staging_full_path)
-                assert pf.metadata.num_rows == sorted_table.num_rows
-                validate_schema_v1(pf.schema_arrow)
-
-                with open(staging_full_path, "rb") as f:
-                    file_sha = hashlib.sha256(f.read()).hexdigest()
+                file_size_bytes = staging_full_path.stat().st_size
+                if file_size_bytes <= 0:
+                    raise PublishError(f"Staged Parquet file {staging_full_path} is empty")
+                parquet_file = pq.ParquetFile(staging_full_path)
+                if parquet_file.metadata.num_rows != sorted_table.num_rows:
+                    raise PublishError(f"Staged Parquet row count mismatch for {staging_full_path}")
+                validate_schema_v1(parquet_file.schema_arrow)
 
                 staged_targets.append({
-                    "relative_path": rel_path,
-                    "staging_path": staging_rel_path,
-                    "symbol": sym,
-                    "date": dt_str,
+                    "relative_path": relative_path,
+                    "staging_path": staging_relative_path,
+                    "symbol": symbol,
+                    "date": date_str,
                     "row_count": sorted_table.num_rows,
-                    "file_size_bytes": fsize,
-                    "sha256": file_sha,
+                    "file_size_bytes": file_size_bytes,
+                    "sha256": _sha256_file(staging_full_path),
                 })
                 current_staging_file = None
 
-            # 5. Write Intent to _control/intent/<batch_id>.json
-            intent_file = self.intent_dir / f"{batch_id}.json"
             intent_payload = {
                 "batch_id": batch_id,
                 "writer_id": self.writer_id,
                 "sequence": sequence,
                 "expected_row_count": total_row_count,
+                "payload_sha256": payload_sha256,
                 "state": "STAGED",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "targets": staged_targets,
             }
             tmp_intent = self.staging_dir / f"tmp_intent_{uuid.uuid4().hex}.json"
-            with open(tmp_intent, "w", encoding="utf-8") as f:
-                json.dump(intent_payload, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
+            with open(tmp_intent, "w", encoding="utf-8") as handle:
+                json.dump(intent_payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp_intent, intent_file)
             intent_written = True
 
-            # 6. Check for destination collisions BEFORE renaming
+            # Reject any pre-existing target before moving any staged file.
             for target in staged_targets:
                 target_dest = self.root / target["relative_path"]
-                if target_dest.is_file():
-                    with open(target_dest, "rb") as f:
-                        dest_sha = hashlib.sha256(f.read()).hexdigest()
-                    if dest_sha != target["sha256"]:
-                        # Collision: target file exists with differing content!
-                        # Clean up staging files and abort
-                        for t in staged_targets:
-                            (self.root / t["staging_path"]).unlink(missing_ok=True)
+                if target_dest.exists():
+                    if not target_dest.is_file() or _sha256_file(target_dest) != target["sha256"]:
+                        for staged in staged_targets:
+                            (self.root / staged["staging_path"]).unlink(missing_ok=True)
                         intent_file.unlink(missing_ok=True)
+                        intent_written = False
                         raise BatchCollisionError(
-                            f"Destination file {target['relative_path']} already exists with differing checksum"
+                            f"Destination file {target['relative_path']} already exists with differing content"
                         )
 
-            # 7. Atomic rename: move staged files to final partition targets
             for target in staged_targets:
                 target_dest = self.root / target["relative_path"]
                 staging_file = self.root / target["staging_path"]
                 if target_dest.is_file():
-                    # Identical checksum already in place, remove duplicate staged file
                     staging_file.unlink(missing_ok=True)
                 else:
                     target_dest.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(staging_file, target_dest)
                     try:
                         dir_fd = os.open(str(target_dest.parent), os.O_RDONLY)
-                        os.fsync(dir_fd)
-                        os.close(dir_fd)
+                        try:
+                            os.fsync(dir_fd)
+                        finally:
+                            os.close(dir_fd)
                     except Exception:
                         pass
 
-            # 8. Write immutable receipt to _control/receipts/<batch_id>.json and delete intent
             published_at = datetime.now(timezone.utc).isoformat()
             file_details = [
                 FilePublicationReceipt(
-                    relative_path=t["relative_path"],
-                    symbol=t["symbol"],
-                    date=t["date"],
-                    row_count=t["row_count"],
-                    file_size_bytes=t["file_size_bytes"],
-                    sha256=t["sha256"],
+                    relative_path=target["relative_path"],
+                    symbol=target["symbol"],
+                    date=target["date"],
+                    row_count=target["row_count"],
+                    file_size_bytes=target["file_size_bytes"],
+                    sha256=target["sha256"],
                 )
-                for t in staged_targets
+                for target in staged_targets
             ]
             receipt_payload = {
                 "batch_id": batch_id,
                 "writer_id": self.writer_id,
                 "sequence": sequence,
                 "row_count": total_row_count,
-                "file_paths": [t["relative_path"] for t in staged_targets],
+                "file_paths": [target["relative_path"] for target in staged_targets],
                 "file_details": [
                     {
-                        "relative_path": fd.relative_path,
-                        "symbol": fd.symbol,
-                        "date": fd.date,
-                        "row_count": fd.row_count,
-                        "file_size_bytes": fd.file_size_bytes,
-                        "sha256": fd.sha256,
+                        "relative_path": detail.relative_path,
+                        "symbol": detail.symbol,
+                        "date": detail.date,
+                        "row_count": detail.row_count,
+                        "file_size_bytes": detail.file_size_bytes,
+                        "sha256": detail.sha256,
                     }
-                    for fd in file_details
+                    for detail in file_details
                 ],
+                "payload_sha256": payload_sha256,
                 "status": "PUBLISHED",
                 "published_at": published_at,
             }
-
             tmp_receipt = self.staging_dir / f"tmp_receipt_{uuid.uuid4().hex}.json"
-            with open(tmp_receipt, "w", encoding="utf-8") as f:
-                json.dump(receipt_payload, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
+            with open(tmp_receipt, "w", encoding="utf-8") as handle:
+                json.dump(receipt_payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp_receipt, receipt_file)
-
             intent_file.unlink(missing_ok=True)
 
             return PublishReceipt(
@@ -394,17 +688,18 @@ class LakePublisher:
                 writer_id=self.writer_id,
                 sequence=sequence,
                 row_count=total_row_count,
-                file_paths=[t["relative_path"] for t in staged_targets],
+                file_paths=[target["relative_path"] for target in staged_targets],
                 file_details=file_details,
                 status="PUBLISHED",
                 published_at=published_at,
+                payload_sha256=payload_sha256,
             )
         except Exception:
             if not intent_written:
                 if current_staging_file is not None and current_staging_file.is_file():
                     current_staging_file.unlink(missing_ok=True)
-                for t in staged_targets:
-                    (self.root / t["staging_path"]).unlink(missing_ok=True)
+                for target in staged_targets:
+                    (self.root / target["staging_path"]).unlink(missing_ok=True)
             raise
 
     def close(self) -> None:
@@ -418,177 +713,250 @@ class LakePublisher:
         self.close()
 
 
-def recover_pending_publications(root: Path) -> List[PublishReceipt]:
-    """Recover uncommitted or unacknowledged publication intents in _control/intent/."""
+def recover_pending_publications(
+    root: Path,
+    batch_ids: Optional[Iterable[str]] = None,
+    ownership_lock: Optional[LakePublisherLock] = None,
+) -> List[PublishReceipt]:
+    """Recover intents under the same exclusive owner lock used by publishers."""
+    root = Path(root).resolve()
+    guard_path = root / "_maintenance" / "in_progress.json"
+    if guard_path.exists():
+        raise LakeMaintenanceInProgressError(f"Lake maintenance in progress: {guard_path}")
+
+    owns_lock = ownership_lock is None
+    lock = ownership_lock or LakePublisherLock(root, writer_id="publication-recovery")
+    if owns_lock:
+        lock.acquire()
+    elif not lock._is_locked or lock.root != root:
+        raise LakeOwnershipError("Recovery requires the active publisher lock for the same lake root")
+    try:
+        if guard_path.exists():
+            raise LakeMaintenanceInProgressError(f"Lake maintenance in progress: {guard_path}")
+        return _recover_pending_publications_locked(root, batch_ids=batch_ids)
+    finally:
+        if owns_lock:
+            lock.release()
+
+
+def _recover_pending_publications_locked(
+    root: Path,
+    batch_ids: Optional[Iterable[str]] = None,
+) -> List[PublishReceipt]:
+    """Recover only intents whose immutable staged/final targets verify completely."""
     root = Path(root).resolve()
     intent_dir = root / "_control" / "intent"
     receipts_dir = root / "_control" / "receipts"
     staging_dir = root / "_staging"
-
     receipts_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir.mkdir(parents=True, exist_ok=True)
     if not intent_dir.is_dir():
         return []
 
+    wanted = set(batch_ids) if batch_ids is not None else None
     recovered_receipts: List[PublishReceipt] = []
 
+    def safe_target(relative_value: Any, label: str) -> Tuple[Path, str]:
+        relative = Path(str(relative_value))
+        if relative.is_absolute() or ".." in relative.parts:
+            raise PublishError(f"Unsafe {label} path in publication intent: {relative_value!r}")
+        target = (root / relative).resolve()
+        if not target.is_relative_to(root):
+            raise PublishError(f"{label} path escapes lake: {relative_value!r}")
+        return target, relative.as_posix()
+
     for intent_file in sorted(intent_dir.glob("*.json")):
+        if wanted is not None and intent_file.stem not in wanted:
+            continue
         try:
-            with open(intent_file, "r", encoding="utf-8") as f:
-                intent_data = json.load(f)
+            with open(intent_file, "r", encoding="utf-8") as handle:
+                intent_data = json.load(handle)
         except Exception:
             continue
-
-        batch_id = intent_data.get("batch_id")
-        writer_id = intent_data.get("writer_id", "writer_1")
-        sequence = intent_data.get("sequence", 0)
-        expected_row_count = intent_data.get("expected_row_count", 0)
-        targets = intent_data.get("targets", [])
-
-        receipt_file = receipts_dir / f"{batch_id}.json"
-        if receipt_file.is_file():
-            # Receipt already exists, intent was just not cleaned up
-            intent_file.unlink(missing_ok=True)
-            with open(receipt_file, "r", encoding="utf-8") as f:
-                rdata = json.load(f)
-            file_details = [
-                FilePublicationReceipt(
-                    relative_path=fd["relative_path"],
-                    symbol=fd["symbol"],
-                    date=fd["date"],
-                    row_count=fd["row_count"],
-                    file_size_bytes=fd["file_size_bytes"],
-                    sha256=fd["sha256"],
-                )
-                for fd in rdata.get("file_details", [])
-            ]
-            recovered_receipts.append(
-                PublishReceipt(
-                    batch_id=rdata["batch_id"],
-                    writer_id=rdata.get("writer_id", writer_id),
-                    sequence=rdata.get("sequence", sequence),
-                    row_count=rdata.get("row_count", expected_row_count),
-                    file_paths=rdata.get("file_paths", [fd.relative_path for fd in file_details]),
-                    file_details=file_details,
-                    status="PUBLISHED",
-                    published_at=rdata.get("published_at", ""),
-                )
-            )
+        if not isinstance(intent_data, dict):
             continue
 
-        # Check each target in intent
+        try:
+            batch_id = _safe_batch_id(intent_data.get("batch_id"))
+        except PublishError:
+            continue
+        if intent_file.name != f"{batch_id}.json":
+            raise PublishError(f"Intent filename does not match batch identity {batch_id}")
+        writer_id = str(intent_data.get("writer_id", "writer_1"))
+        sequence = int(intent_data.get("sequence", 0))
+        expected_row_count = int(intent_data.get("expected_row_count", 0))
+        expected_payload_sha256 = intent_data.get("payload_sha256")
+        receipt_file = receipts_dir / f"{batch_id}.json"
+
+        if receipt_file.is_file():
+            try:
+                with open(receipt_file, "r", encoding="utf-8") as handle:
+                    receipt_data = json.load(handle)
+                if receipt_data.get("batch_id") != batch_id:
+                    raise PublishError(f"Receipt identity mismatch for {batch_id}")
+                details, _, actual_payload_sha256 = _verify_receipt_files(root, receipt_data)
+                if expected_payload_sha256 and expected_payload_sha256 != actual_payload_sha256:
+                    raise PublishError(f"Intent/receipt payload mismatch for {batch_id}")
+                if expected_row_count != int(receipt_data.get("row_count", -1)):
+                    raise PublishError(f"Intent/receipt row-count mismatch for {batch_id}")
+            except PublishError:
+                raise
+            except Exception as exc:
+                raise PublishError(f"Cannot verify receipt for pending intent {batch_id}: {exc}") from exc
+            intent_file.unlink(missing_ok=True)
+            recovered_receipts.append(PublishReceipt(
+                batch_id=batch_id,
+                writer_id=receipt_data.get("writer_id", writer_id),
+                sequence=int(receipt_data.get("sequence", sequence)),
+                row_count=int(receipt_data.get("row_count", expected_row_count)),
+                file_paths=list(receipt_data.get("file_paths", [detail.relative_path for detail in details])),
+                file_details=details,
+                status="PUBLISHED",
+                published_at=receipt_data.get("published_at", ""),
+                payload_sha256=actual_payload_sha256,
+            ))
+            continue
+
+        targets = intent_data.get("targets", [])
+        if not isinstance(targets, list):
+            continue
+        if not targets and expected_row_count != 0:
+            continue
+
         all_targets_ready = True
+        target_candidates: List[Tuple[Dict[str, Any], Path, Path, str, List[Dict[str, Any]]]] = []
         file_details: List[FilePublicationReceipt] = []
-        actual_total_rows = 0
+        all_rows: List[Dict[str, Any]] = []
 
         for target in targets:
-            rel_path = target["relative_path"]
-            target_dest = root / rel_path
-            expected_sha = target.get("sha256")
-            expected_rows = target.get("row_count", 0)
-            expected_bytes = target.get("file_size_bytes", 0)
-            symbol = target.get("symbol", "")
-            date_str = target.get("date", "")
-
-            staging_rel = target.get("staging_path")
-            staging_full = (root / staging_rel) if staging_rel else None
-
-            if target_dest.is_file():
-                # Destination already exists
-                with open(target_dest, "rb") as f:
-                    dest_sha = hashlib.sha256(f.read()).hexdigest()
-                if expected_sha and dest_sha != expected_sha:
-                    all_targets_ready = False
-                    break
-                actual_bytes = target_dest.stat().st_size
-                pf = pq.ParquetFile(target_dest)
-                actual_rows = pf.metadata.num_rows
-                file_details.append(
-                    FilePublicationReceipt(
-                        relative_path=rel_path,
-                        symbol=symbol,
-                        date=date_str,
-                        row_count=actual_rows,
-                        file_size_bytes=actual_bytes,
-                        sha256=dest_sha,
-                    )
-                )
-                actual_total_rows += actual_rows
-                if staging_full and staging_full.is_file():
-                    staging_full.unlink(missing_ok=True)
-            elif staging_full and staging_full.is_file():
-                # Destination does not exist, but staged file is available: move to destination
-                with open(staging_full, "rb") as f:
-                    stg_sha = hashlib.sha256(f.read()).hexdigest()
-                if expected_sha and stg_sha != expected_sha:
-                    all_targets_ready = False
-                    break
-                actual_bytes = staging_full.stat().st_size
-                pf = pq.ParquetFile(staging_full)
-                actual_rows = pf.metadata.num_rows
-
-                target_dest.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(staging_full, target_dest)
-
-                file_details.append(
-                    FilePublicationReceipt(
-                        relative_path=rel_path,
-                        symbol=symbol,
-                        date=date_str,
-                        row_count=actual_rows,
-                        file_size_bytes=actual_bytes,
-                        sha256=stg_sha,
-                    )
-                )
-                actual_total_rows += actual_rows
-            else:
-                # Neither target nor staging file exists
+            if not isinstance(target, dict):
+                all_targets_ready = False
+                break
+            try:
+                target_dest, rel_path = safe_target(target["relative_path"], "target")
+                expected_sha = str(target["sha256"])
+                if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha):
+                    raise PublishError(f"Intent for {batch_id} has no valid checksum for {rel_path}")
+                expected_bytes = int(target["file_size_bytes"])
+                expected_rows = int(target["row_count"])
+                symbol = str(target["symbol"])
+                date_str = str(target["date"])
+                staging_value = target.get("staging_path")
+                staging_full = safe_target(staging_value, "staging")[0] if staging_value else None
+            except (KeyError, TypeError, ValueError, PublishError):
                 all_targets_ready = False
                 break
 
-        if all_targets_ready and file_details:
-            published_at = datetime.now(timezone.utc).isoformat()
-            receipt_payload = {
-                "batch_id": batch_id,
-                "writer_id": writer_id,
-                "sequence": sequence,
-                "row_count": actual_total_rows if actual_total_rows > 0 else expected_row_count,
-                "file_paths": [fd.relative_path for fd in file_details],
-                "file_details": [
-                    {
-                        "relative_path": fd.relative_path,
-                        "symbol": fd.symbol,
-                        "date": fd.date,
-                        "row_count": fd.row_count,
-                        "file_size_bytes": fd.file_size_bytes,
-                        "sha256": fd.sha256,
-                    }
-                    for fd in file_details
-                ],
-                "status": "PUBLISHED",
-                "published_at": published_at,
-            }
+            if target_dest.exists():
+                candidate = target_dest
+                if not candidate.is_file():
+                    all_targets_ready = False
+                    break
+            elif staging_full is not None and staging_full.is_file():
+                candidate = staging_full
+            else:
+                all_targets_ready = False
+                break
 
-            tmp_receipt = staging_dir / f"tmp_rec_{uuid.uuid4().hex}.json"
-            with open(tmp_receipt, "w", encoding="utf-8") as f:
-                json.dump(receipt_payload, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_receipt, receipt_file)
+            try:
+                if candidate.stat().st_size != expected_bytes or _sha256_file(candidate) != expected_sha:
+                    all_targets_ready = False
+                    break
+                # Avoid Hive partition discovery; receipt verification is against file contents only.
+                table = pq.ParquetFile(candidate).read()
+                validate_table_v1(table)
+                if table.num_rows != expected_rows:
+                    all_targets_ready = False
+                    break
+                table_rows = table.to_pylist()
+                if any(
+                    row["symbol"] != symbol or row["timestamp"].date().isoformat() != date_str
+                    for row in table_rows
+                ):
+                    all_targets_ready = False
+                    break
+            except Exception:
+                all_targets_ready = False
+                break
 
-            intent_file.unlink(missing_ok=True)
-
-            recovered_receipts.append(
-                PublishReceipt(
-                    batch_id=batch_id,
-                    writer_id=writer_id,
-                    sequence=sequence,
-                    row_count=actual_total_rows if actual_total_rows > 0 else expected_row_count,
-                    file_paths=[fd.relative_path for fd in file_details],
-                    file_details=file_details,
-                    status="PUBLISHED",
-                    published_at=published_at,
-                )
+            detail = FilePublicationReceipt(
+                relative_path=rel_path,
+                symbol=symbol,
+                date=date_str,
+                row_count=expected_rows,
+                file_size_bytes=expected_bytes,
+                sha256=expected_sha,
             )
+            file_details.append(detail)
+            all_rows.extend(table_rows)
+            target_candidates.append((target, target_dest, candidate, rel_path, table_rows))
+
+        actual_payload_sha256 = _payload_fingerprint(all_rows)
+        if expected_payload_sha256 and expected_payload_sha256 != actual_payload_sha256:
+            all_targets_ready = False
+        actual_total_rows = len(all_rows)
+        if actual_total_rows != expected_row_count:
+            all_targets_ready = False
+
+        if not all_targets_ready:
+            continue
+
+        # Validate every candidate before promoting any staging file. Preserve an existing
+        # destination on collision; recovery must never replace a published object.
+        for target, target_dest, candidate, rel_path, _ in target_candidates:
+            if candidate == target_dest:
+                continue
+            target_dest.parent.mkdir(parents=True, exist_ok=True)
+            if target_dest.exists():
+                if not target_dest.is_file() or _sha256_file(target_dest) != str(target["sha256"]):
+                    all_targets_ready = False
+                    break
+                candidate.unlink(missing_ok=True)
+            else:
+                os.replace(candidate, target_dest)
+        if not all_targets_ready:
+            continue
+
+        published_at = datetime.now(timezone.utc).isoformat()
+        receipt_payload = {
+            "batch_id": batch_id,
+            "writer_id": writer_id,
+            "sequence": sequence,
+            "row_count": actual_total_rows,
+            "file_paths": [detail.relative_path for detail in file_details],
+            "file_details": [
+                {
+                    "relative_path": detail.relative_path,
+                    "symbol": detail.symbol,
+                    "date": detail.date,
+                    "row_count": detail.row_count,
+                    "file_size_bytes": detail.file_size_bytes,
+                    "sha256": detail.sha256,
+                }
+                for detail in file_details
+            ],
+            "payload_sha256": actual_payload_sha256,
+            "status": "PUBLISHED",
+            "published_at": published_at,
+        }
+        tmp_receipt = staging_dir / f"tmp_rec_{uuid.uuid4().hex}.json"
+        with open(tmp_receipt, "w", encoding="utf-8") as handle:
+            json.dump(receipt_payload, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_receipt, receipt_file)
+        intent_file.unlink(missing_ok=True)
+        recovered_receipts.append(PublishReceipt(
+            batch_id=batch_id,
+            writer_id=writer_id,
+            sequence=sequence,
+            row_count=actual_total_rows,
+            file_paths=[detail.relative_path for detail in file_details],
+            file_details=file_details,
+            status="PUBLISHED",
+            published_at=published_at,
+            payload_sha256=actual_payload_sha256,
+        ))
 
     return recovered_receipts
 

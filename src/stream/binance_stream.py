@@ -16,7 +16,7 @@ DEFAULT_BINANCE_SYMBOLS = ["btcusdt", "ethusdt", "paxgusdt"]
 class BinanceStreamer:
     """Consumes real-time tick-by-tick trades from Binance WebSockets."""
     def __init__(self, symbols=None, stream_type="trade", on_tick_callback=None, on_bar_callback=None):
-        self.symbols = [s.lower() for s in (symbols or DEFAULT_BINANCE_SYMBOLS)]
+        self.symbols = [s.lower() for s in (DEFAULT_BINANCE_SYMBOLS if symbols is None else symbols)]
         self.stream_type = stream_type
         self.on_tick_callback = on_tick_callback or on_bar_callback
         self.on_bar_callback = on_bar_callback
@@ -28,6 +28,10 @@ class BinanceStreamer:
         return f"wss://stream.binance.com:9443/stream?streams={'/'.join(streams)}"
 
     async def start(self):
+        if not self.symbols:
+            logger.info("Binance stream not started: no active subscriptions")
+            self.running = False
+            return
         self.running = True
         url = self._build_url()
         backoff = 1
