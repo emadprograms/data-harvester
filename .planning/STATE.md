@@ -1,60 +1,53 @@
 ---
 gsd_state_version: "1.0"
-milestone: v3.0
-status: Awaiting next milestone
-last_updated: "2026-09-26T17:35:40.814Z"
-last_activity: 2026-09-26
-last_activity_desc: Milestone v3.0 completed and archived
-state_head: b6753e3cfc8506d3ca3f22261832d4212033b7e3
+milestone: v4.0
+status: in_progress
+last_updated: "2026-10-03T07:33:00.000Z"
+last_activity: 2026-10-03
+last_activity_desc: "Milestone v4.0 initialized: Partitioned Parquet Tick Lake"
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 5
-  completed_plans: 5
-  percent: 100
-milestone_name: Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard
+  total_phases: 7
+  completed_phases: 0
+  total_plans: 7
+  completed_plans: 0
+  percent: 0
+milestone_name: "Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)"
 ---
 
 # Project State: Data Harvester
 
 ## Current Position
 
-Phase: Milestone v3.0 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-09-26 — Milestone v3.0 completed and archived
+Phase: Phase 15 - Safe Test Isolation & Baseline Characterization (P0)
+Plan: Stage 1 - Researcher Subagent
+Status: in_progress
+Last activity: 2026-10-03 — Initialized Milestone v4.0
 
 ## Milestone Summary
 
-- Milestone: v3.0
-- Goal: Transform the local dashboard into a high-performance Observability Command Center featuring interactive financial candlestick charts, real-time live tick streaming tape and process telemetry, rich per-symbol coverage matrix, market session clock & automation triggers, and context-aware data integrity auditing with comprehensive automated tests.
-- Number of phases: 5 (All 5 complete)
-  - Phase 10: Backend Analytics & High-Performance Data APIs (1/1 plan complete)
-  - Phase 11: Interactive Financial Charting & Data Explorer UI (1/1 plan complete)
-  - Phase 12: Live Stream Tape, Telemetry & Market Operations UI (1/1 plan complete)
-  - Phase 13: Enhanced Symbol Data Matrix & Context-Aware Integrity Engine (1/1 plan complete)
-  - Phase 14: Comprehensive Verification, Testing & Polish (1/1 plan complete)
+- Milestone: v4.0
+- Goal: Decouple live streaming tick writes from analytics/chart/replay reads by replacing the locked `streaming.duckdb` with an append-only partitioned Parquet tick lake.
+- Number of phases: 7
+  - Phase 15: Safe Test Isolation & Baseline Characterization (P0)
+  - Phase 16: Lake Schema, Configuration, Atomic Files & Recovery (P1)
+  - Phase 17: Streaming Parquet Writer & Runner Lifecycle Integration (P2)
+  - Phase 18: Versioned Symbol Registry & Administrative Compatibility (P3)
+  - Phase 19: In-Memory DuckDB Lake Reader & Dashboard Integration (P4)
+  - Phase 20: Zero-Loss Migration Tooling & Rehearsal (P6)
+  - Phase 21: Production Cutover, Concurrency Validation & Handoff (P8)
+
+## Execution Protocol (Strict 4-Stage Subagent Loop)
+
+1. Researcher Subagent: Deep codebase inspection, constraints, technical spec.
+2. Test Writer Subagent (TDD): Unit/integration test suites & failure fixtures written before implementation.
+3. Implementer Subagent: Code implementation to satisfy tests.
+4. Verifier Subagent: Runs tests, validates multi-process edge cases & user workflows.
+   *(Inner remediation loop: Verifier feedback -> Implementer fixes -> Verifier re-checks)*
 
 ## Blockers/Concerns
 
-None. Milestone and quick tasks verified with 272 passed / 0 failed.
-
-### Quick Tasks Completed
-
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 261001-h31 | Organize Windows scripts to tools/windows and add native macOS service management suite | 2026-10-01 | 06a95551 | .planning/quick/261001-h31-all-of-the-scripts-are-for-windows-we-ar |
-
-## Deferred Items
-
-Items acknowledged and deferred at milestone close, most recent first:
-
-| Category | Item | Status | Deferred At | Milestone |
-|----------|------|--------|-------------|-----------|
-| quick_tasks | 260925-wf0-databento-tick-backfill-for-streaming-du | unknown | 2026-09-26 | v3.0 |
-| quick_tasks | 260926-x1a-restructure-tests-into-nested-subfolders | unknown | 2026-09-26 | v3.0 |
-| quick_tasks | 260926-y2k-separate-historical-and-streaming-symbol-maps | unknown | 2026-09-26 | v3.0 |
+None.
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Execute Phase 15 Stage 1: Researcher Subagent

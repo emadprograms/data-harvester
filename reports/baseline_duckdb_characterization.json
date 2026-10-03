@@ -1,0 +1,131 @@
+{
+  "benchmark_version": "1.0",
+  "timestamp": "2026-10-03T04:55:25.944725+00:00",
+  "environment": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "python_version": "3.12.13",
+    "duckdb_version": "1.5.5",
+    "cpu_count": 10,
+    "total_ram_gb": 16.0
+  },
+  "dataset": {
+    "total_ticks": 1000000,
+    "symbol_count": 19,
+    "symbols": [
+      "AAPL",
+      "ADBE",
+      "AMD",
+      "AMZN",
+      "APP",
+      "AVGO",
+      "BABA",
+      "GOOGL",
+      "META",
+      "MSFT",
+      "MU",
+      "NDAQ",
+      "NVDA",
+      "ORCL",
+      "PANW",
+      "QCOM",
+      "SHOP",
+      "TSLA",
+      "TSM"
+    ],
+    "distribution_counts": {
+      "NVDA": 238459,
+      "TSLA": 142679,
+      "AAPL": 95525,
+      "MSFT": 76399,
+      "AMD": 75765,
+      "AMZN": 56917,
+      "META": 57056,
+      "GOOGL": 47927,
+      "AVGO": 38334,
+      "MU": 28352,
+      "BABA": 28356,
+      "TSM": 28196,
+      "QCOM": 19055,
+      "ORCL": 19363,
+      "SHOP": 9484,
+      "ADBE": 9524,
+      "PANW": 9566,
+      "APP": 9581,
+      "NDAQ": 9462
+    }
+  },
+  "writer_metrics": {
+    "total_ticks": 1000000,
+    "batch_size": 100,
+    "batches_committed": 10000,
+    "wall_time_seconds": 14.6002,
+    "cpu_time_seconds": 14.9998,
+    "cpu_seconds_per_1m_ticks": 15.0,
+    "throughput_ticks_per_sec": 68492.4,
+    "rss_before_mb": 417.98,
+    "peak_rss_mb": 500.36,
+    "rss_growth_mb": 82.38
+  },
+  "event_loop_lag_ms": {
+    "heartbeat_interval_ms": 5.0,
+    "sample_count": 52,
+    "min": 0.028,
+    "mean": 1.343,
+    "p50": 0.998,
+    "p90": 2.479,
+    "p95": 2.579,
+    "p99": 2.812,
+    "max": 3.47
+  },
+  "query_latencies_ms": {
+    "tape_query": {
+      "iterations": 30,
+      "min": 5.472,
+      "mean": 6.487,
+      "p50": 5.882,
+      "p90": 8.742,
+      "p95": 11.083,
+      "p99": 11.162,
+      "max": 11.162
+    },
+    "ohlcv_1m": {
+      "iterations": 30,
+      "min": 20.531,
+      "mean": 21.874,
+      "p50": 21.93,
+      "p90": 22.668,
+      "p95": 22.733,
+      "p99": 22.973,
+      "max": 22.973
+    },
+    "ohlcv_5m": {
+      "iterations": 30,
+      "min": 21.016,
+      "mean": 21.928,
+      "p50": 21.97,
+      "p90": 22.57,
+      "p95": 22.777,
+      "p99": 22.817,
+      "max": 22.817
+    },
+    "ohlcv_1d": {
+      "iterations": 30,
+      "min": 19.845,
+      "mean": 20.925,
+      "p50": 20.994,
+      "p90": 21.619,
+      "p95": 21.982,
+      "p99": 22.045,
+      "max": 22.045
+    }
+  },
+  "performance_gates_evaluation": {
+    "cpu_seconds_per_1m_ticks": 15.0,
+    "target_cpu_reduction_gate": "Phase 17 Parquet writer target is >=50% reduction below this baseline",
+    "event_loop_lag_p99_ms": 2.812,
+    "target_event_loop_lag_gate": "Phase 17 PyArrow off-loop worker target is <20.0ms p99",
+    "query_1m_p95_ms": 22.733,
+    "query_5m_p95_ms": 22.777,
+    "target_query_latency_gate": "Phase 19 in-memory DuckDB reader target is <100.0ms p95"
+  }
+}

@@ -119,6 +119,7 @@ class TestLiveWebSocketIngestion:
 
         client.close()
 
+    @pytest.mark.live
     def test_live_binance_public_websocket_connectivity(self):
         """
         Verify live connection to Binance 24/7 public trade WebSocket endpoint.

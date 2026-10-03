@@ -5,6 +5,7 @@
 - ✅ **v1.0 Local DuckDB & 24/7 Live Streaming Engine** — Phases 1–4 (shipped 2026-09-25)
 - ✅ **v2.0 Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard** — Phases 5–9 (shipped 2026-09-25)
 - ✅ **v3.0 Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard** — Phases 10–14 (shipped 2026-09-26)
+- 🟡 **v4.0 Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)** — Phases 15–21 (in progress)
 
 ## Phases
 
@@ -47,3 +48,32 @@ See: [.planning/milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 See: [.planning/milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
 
 </details>
+
+### Active Milestone: v4.0 Partitioned Parquet Tick Lake
+
+- [ ] **Phase 15: Safe Test Isolation & Baseline Characterization (P0)**
+  - Isolate all test suites to `tmp_path`, block production volume mutations.
+  - Build deterministic quote fixtures (repeats, late arrivals, nulls, session boundaries).
+  - Benchmark baseline DuckDB write/query CPU seconds and event-loop lag.
+- [ ] **Phase 16: Lake Schema, Configuration, Atomic Files & Recovery (P1)**
+  - Implement `src/storage/{config, schema, publication}.py`.
+  - Schema v1 with microsecond UTC timestamps and stable unique `ingest_id`.
+  - Atomic `.tmp` staging, final rename, and idempotent publication receipts.
+- [ ] **Phase 17: Streaming Parquet Writer & Runner Lifecycle Integration (P2)**
+  - Implement `TickLakeWriter` with 5s / 5,000 tick thresholds and bounded queue.
+  - Dedicated off-loop PyArrow worker thread preserving <20ms event loop lag.
+  - Wire into `src/stream/runner.py` with graceful shutdown drain.
+- [ ] **Phase 18: Versioned Symbol Registry & Administrative Compatibility (P3)**
+  - Implement `src/storage/registry.py` (atomic JSON registry, version polling).
+  - Dynamic reload without DuckDB file locks; pending-purge state handling.
+- [ ] **Phase 19: In-Memory DuckDB Lake Reader & Dashboard Integration (P4)**
+  - Implement `src/storage/reader.py` (`TickLakeReader` with in-memory DuckDB).
+  - Deterministic OHLCV resampling via `arg_min(price, (timestamp, ingest_id))`.
+  - Update dashboard queries; deliver minimal read contract for Repo B.
+- [ ] **Phase 20: Zero-Loss Migration Tooling & Rehearsal (P6)**
+  - Implement `tools/migrate_streaming_to_parquet.py`.
+  - Chunked export and two-way `EXCEPT ALL` verification against frozen legacy DB.
+- [ ] **Phase 21: Production Cutover, Concurrency Validation & Handoff (P8)**
+  - Freeze legacy writer, switch runner to live Parquet lake, publish historical partitions.
+  - Multi-process concurrency validation (Writer + Dashboard + Repo B simulation).
+

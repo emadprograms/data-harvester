@@ -58,8 +58,31 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - [x] **INTG-05**: Context-aware Gap & Integrity Auditor with market-hours awareness — v3.0
 - [x] **QUAL-04**: Comprehensive automated test suite in `tests/test_dashboard_v3.py` (182 total passing tests) — v3.0
 
-### Active
-*(Ready for next milestone cycle — initialize via `/gsd-new-milestone`)*
+### Active (Milestone v4.0: Partitioned Parquet Tick Lake)
+- [ ] **LAKE-P0-01**: Safe test isolation routing paths to `tmp_path`; block production volume mutations
+- [ ] **LAKE-P0-02**: Deterministic quote fixtures (repeats, identical timestamps, late arrivals, nulls)
+- [ ] **LAKE-P0-03**: Baseline characterization of legacy DuckDB write/query CPU seconds & latency
+- [ ] **LAKE-P1-01**: Lake layout & explicit `TICK_LAKE_ROOT` configuration
+- [ ] **LAKE-P1-02**: Typed Schema v1 with microsecond UTC timestamp and stable unique `ingest_id`
+- [ ] **LAKE-P1-03**: Atomic file staging (`.tmp` -> atomic rename)
+- [ ] **LAKE-P1-04**: Publication state machine & receipts
+- [ ] **LAKE-P2-01**: Micro-batch writer `TickLakeWriter` with 5s / 5,000 tick thresholds
+- [ ] **LAKE-P2-02**: Off-loop PyArrow worker thread preserving <20ms event loop lag
+- [ ] **LAKE-P2-03**: Runner lifecycle integration with cooperative shutdown drain
+- [ ] **LAKE-P3-01**: Atomic JSON symbol registry (`registry.json`)
+- [ ] **LAKE-P3-02**: Cross-process registry version polling & dynamic reload
+- [ ] **LAKE-P3-03**: Pending purge semantics & subscription fencing
+- [ ] **LAKE-P4-01**: In-memory DuckDB `TickLakeReader` engine with Hive partition pruning
+- [ ] **LAKE-P4-02**: Deterministic OHLCV resampling via `arg_min(price, (timestamp, ingest_id))`
+- [ ] **LAKE-P4-03**: Dashboard analytics integration migrated off legacy DuckDB
+- [ ] **LAKE-P4-04**: Minimal Repo B reader contract and usage examples
+- [ ] **LAKE-P6-01**: Migration CLI tool `tools/migrate_streaming_to_parquet.py`
+- [ ] **LAKE-P6-02**: Chunked export & checkpointing of legacy `streaming.duckdb`
+- [ ] **LAKE-P6-03**: Two-way `EXCEPT ALL` reconciliation verifying zero row loss
+- [ ] **LAKE-P8-01**: Coordinated writer cutover from legacy DB to Parquet lake
+- [ ] **LAKE-P8-02**: Multi-process concurrency verification under sustained live streaming
+- [ ] **LAKE-P8-03**: Documentation, service supervisor configs, and operational runbook
+
 
 ### Out of Scope
 - Direct `market-rewind` frontend modifications (deferred per user instruction: focus on data harvesting, storage, and integrity dashboard)
