@@ -29,16 +29,38 @@ logger = logging.getLogger("stream_runner")
 
 
 class StreamingEngine:
-    """Master streaming orchestrator saving pure tick-by-tick data into streaming.duckdb."""
-    def __init__(self, db_path=None, flush_interval=2.0, enable_binance=False):
-        self.db_path = db_path or DEFAULT_STREAMING_DB_PATH
+    """Master streaming orchestrator saving pure tick-by-tick data into partitioned Parquet tick lake or streaming.duckdb."""
+    def __init__(
+        self,
+        db_path=None,
+        flush_interval=2.0,
+        enable_binance=False,
+        lake_root=None,
+        max_queue_size=10000,
+        writer_id="writer_1",
+    ):
+        self.lake_root = lake_root
+        self.max_queue_size = max_queue_size
         self.flush_interval = flush_interval
         self.enable_binance = enable_binance
         self.running = False
-        self.write_queue = asyncio.Queue()
+        self.write_queue = asyncio.Queue(maxsize=max_queue_size)
         self.reload_event = asyncio.Event()
         self.db_conn = None
         self.total_ticks_saved = 0
+        self.writer = None
+
+        if self.lake_root is not None:
+            from src.storage.parquet_writer import TickLakeWriter
+            self.writer = TickLakeWriter(
+                root=self.lake_root,
+                writer_id=writer_id,
+                flush_interval_seconds=flush_interval,
+                max_queue_size=max_queue_size,
+            )
+            self.db_path = None
+        else:
+            self.db_path = db_path or DEFAULT_STREAMING_DB_PATH
 
         self.binance_streamer = None
         self.capital_streamer = None
@@ -128,6 +150,10 @@ class StreamingEngine:
                 buffer.clear()
             except Exception as e:
                 logger.error(f"Error during final buffer flush: {e}")
+
+    async def _lake_writer_worker(self):
+        """Worker that drains the write queue and batches raw tick writes into TickLakeWriter."""
+        raise NotImplementedError("StreamingEngine._lake_writer_worker is not implemented yet.")
 
     def trigger_reload(self):
         """Signals the background watcher to reload symbol subscriptions immediately."""
@@ -255,6 +281,10 @@ class StreamingEngine:
             self.capital_streamer.stop()
         if self.binance_streamer:
             self.binance_streamer.stop()
+
+    async def shutdown(self):
+        """Gracefully drains remaining queued ticks and closes TickLakeWriter."""
+        raise NotImplementedError("StreamingEngine.shutdown is not implemented yet.")
 
 
 def main():

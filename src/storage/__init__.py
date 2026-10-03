@@ -56,6 +56,11 @@ from src.storage.publication import (
     cleanup_orphaned_staging_files,
 )
 
+from src.storage.parquet_writer import (
+    TickLakeWriter,
+    WriterMetrics,
+)
+
 __all__ = [
     # Config & Hierarchy
     "StorageConfigError",
@@ -102,4 +107,7 @@ __all__ = [
     "LakePublisher",
     "recover_pending_publications",
     "cleanup_orphaned_staging_files",
+    # Streaming Parquet Writer
+    "TickLakeWriter",
+    "WriterMetrics",
 ]
