@@ -1,6 +1,12 @@
 # Partitioned Parquet tick lake: implementation and verification plan
 
-Status: proposed implementation plan; no implementation performed.
+> **📌 STATUS: IMPLEMENTED — SHIPPED IN MILESTONE v4.0 (2026-10-03), HARDENED IN v4.1 (2026-10-03).**
+> This document is retained as the historical design record and is **not** a pending work item.
+> For the shipped system, see the [operations guide](../operations/tick_lake_operations_guide.md) and the [Repo B read contract](../contracts/repo_b_tick_lake_contract.md).
+> Deviations from this plan in the shipped code: the lake root resolves to `data/tick_lake` (not `market_data/`), migrated chunks are named `chunk_NNNNNN.parquet`, and migration artifacts live in `_migration/` (`plan.json`, `state.json`, `verification.json`, `staging/`).
+> Remaining unimplemented items from this plan (P5 replay iterator, P7 compaction) are tracked in [.planning/ROADMAP.md](../../.planning/ROADMAP.md) backlog.
+
+Status: ~~proposed implementation plan; no implementation performed.~~ **Implemented** (see banner above).
 Prepared: 2026-10-03. Reviewed and revised: 2026-10-03. Code inspected at commit `d8e40c4c`.
 Scope: this ingestion repository, its dashboard, migration tooling, and a reader contract for Repo B. Repo B was not inspected; its file-level changes require a separate code inventory.
 
