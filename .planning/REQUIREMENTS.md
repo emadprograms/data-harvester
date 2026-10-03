@@ -11,9 +11,9 @@ Replace the locked live DuckDB tick database with an append-only, partitioned Pa
 ## Requirements
 
 ### Phase 15: Safe Test Isolation & Baseline Characterization (P0)
-- [ ] **LAKE-P0-01**: Test isolation - route all default test database/data paths to `tmp_path` before imports; block production volume mutations in automated tests.
-- [ ] **LAKE-P0-02**: Deterministic quote fixtures - generate synthetic test datasets with repeats, identical timestamps, late arrivals, nulls, and session boundary cases.
-- [ ] **LAKE-P0-03**: Baseline characterization - benchmark existing DuckDB write/query CPU seconds, latency percentiles, and event-loop lag to establish pre-migration gates.
+- [x] **LAKE-P0-01**: Test isolation - route all default test database/data paths to `tmp_path` before imports; block production volume mutations in automated tests.
+- [x] **LAKE-P0-02**: Deterministic quote fixtures - generate synthetic test datasets with repeats, identical timestamps, late arrivals, nulls, and session boundary cases.
+- [x] **LAKE-P0-03**: Baseline characterization - benchmark existing DuckDB write/query CPU seconds, latency percentiles, and event-loop lag to establish pre-migration gates.
 
 ### Phase 16: Lake Schema, Configuration, Atomic Files & Recovery (P1)
 - [ ] **LAKE-P1-01**: Lake layout & configuration - implement explicit `TICK_LAKE_ROOT` resolution, format versioning (`lake.json`), and safe symbol encoding.

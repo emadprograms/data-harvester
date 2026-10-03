@@ -59,9 +59,9 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - [x] **QUAL-04**: Comprehensive automated test suite in `tests/test_dashboard_v3.py` (182 total passing tests) — v3.0
 
 ### Active (Milestone v4.0: Partitioned Parquet Tick Lake)
-- [ ] **LAKE-P0-01**: Safe test isolation routing paths to `tmp_path`; block production volume mutations
-- [ ] **LAKE-P0-02**: Deterministic quote fixtures (repeats, identical timestamps, late arrivals, nulls)
-- [ ] **LAKE-P0-03**: Baseline characterization of legacy DuckDB write/query CPU seconds & latency
+- [x] **LAKE-P0-01**: Safe test isolation routing paths to `tmp_path`; block production volume mutations — Phase 15
+- [x] **LAKE-P0-02**: Deterministic quote fixtures (repeats, identical timestamps, late arrivals, nulls) — Phase 15
+- [x] **LAKE-P0-03**: Baseline characterization of legacy DuckDB write/query CPU seconds & latency — Phase 15
 - [ ] **LAKE-P1-01**: Lake layout & explicit `TICK_LAKE_ROOT` configuration
 - [ ] **LAKE-P1-02**: Typed Schema v1 with microsecond UTC timestamp and stable unique `ingest_id`
 - [ ] **LAKE-P1-03**: Atomic file staging (`.tmp` -> atomic rename)

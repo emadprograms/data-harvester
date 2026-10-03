@@ -7,10 +7,10 @@ last_activity: 2026-10-03
 last_activity_desc: "Milestone v4.0 initialized: Partitioned Parquet Tick Lake"
 progress:
   total_phases: 7
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 7
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 14
 milestone_name: "Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)"
 ---
 
@@ -18,18 +18,18 @@ milestone_name: "Partitioned Parquet Tick Lake (Decoupled High-Concurrency Stora
 
 ## Current Position
 
-Phase: Phase 15 - Safe Test Isolation & Baseline Characterization (P0)
+Phase: Phase 16 - Lake Schema, Configuration, Atomic Files & Recovery (P1)
 Plan: Stage 1 - Researcher Subagent
 Status: in_progress
-Last activity: 2026-10-03 — Initialized Milestone v4.0
+Last activity: 2026-10-03 — Completed Phase 15 (P0: Safe Test Isolation & Baseline Characterization)
 
 ## Milestone Summary
 
 - Milestone: v4.0
 - Goal: Decouple live streaming tick writes from analytics/chart/replay reads by replacing the locked `streaming.duckdb` with an append-only partitioned Parquet tick lake.
 - Number of phases: 7
-  - Phase 15: Safe Test Isolation & Baseline Characterization (P0)
-  - Phase 16: Lake Schema, Configuration, Atomic Files & Recovery (P1)
+  - Phase 15: Safe Test Isolation & Baseline Characterization (P0) — COMPLETED
+  - Phase 16: Lake Schema, Configuration, Atomic Files & Recovery (P1) — IN PROGRESS
   - Phase 17: Streaming Parquet Writer & Runner Lifecycle Integration (P2)
   - Phase 18: Versioned Symbol Registry & Administrative Compatibility (P3)
   - Phase 19: In-Memory DuckDB Lake Reader & Dashboard Integration (P4)

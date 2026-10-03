@@ -50,8 +50,7 @@ See: [.planning/milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
 </details>
 
 ### Active Milestone: v4.0 Partitioned Parquet Tick Lake
-
-- [ ] **Phase 15: Safe Test Isolation & Baseline Characterization (P0)**
+- [x] **Phase 15: Safe Test Isolation & Baseline Characterization (P0)** (completed 2026-10-03)
   - Isolate all test suites to `tmp_path`, block production volume mutations.
   - Build deterministic quote fixtures (repeats, late arrivals, nulls, session boundaries).
   - Benchmark baseline DuckDB write/query CPU seconds and event-loop lag.
