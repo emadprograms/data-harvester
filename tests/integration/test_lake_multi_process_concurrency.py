@@ -36,6 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 @pytest.mark.integration
+@pytest.mark.performance
 def test_lake_multi_process_concurrency(tmp_path):
     """
     Executes the full 4-process concurrency benchmark with 6,000 synthetic ticks,
@@ -99,6 +100,7 @@ def test_lake_multi_process_concurrency(tmp_path):
 
 
 @pytest.mark.integration
+@pytest.mark.performance
 def test_validate_concurrency_cli_execution(tmp_path):
     """
     Verifies that the standalone tools/validate_concurrency.py CLI script

@@ -206,7 +206,14 @@ def encode_symbol(symbol: str) -> str:
     if "\\" in symbol:
         raise PathTraversalError("Backslash not allowed in symbol")
 
-    if symbol == "." or symbol == ".." or ".." in symbol or symbol.startswith("./") or "/." in symbol:
+    if (
+        symbol == "."
+        or symbol == ".."
+        or ".." in symbol
+        or symbol.startswith("./")
+        or "/." in symbol
+        or "//" in symbol
+    ):
         raise PathTraversalError("Directory traversal detected in symbol")
 
     encoded_chars: List[str] = []
@@ -247,7 +254,14 @@ def decode_symbol(encoded_symbol: str) -> str:
     if "\\" in decoded:
         raise PathTraversalError("Decoded symbol contains backslash")
 
-    if decoded == "." or decoded == ".." or ".." in decoded or decoded.startswith("./") or "/." in decoded:
+    if (
+        decoded == "."
+        or decoded == ".."
+        or ".." in decoded
+        or decoded.startswith("./")
+        or "/." in decoded
+        or "//" in decoded
+    ):
         raise PathTraversalError("Decoded symbol contains directory traversal")
 
     re_encoded = encode_symbol(decoded)

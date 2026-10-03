@@ -234,6 +234,8 @@ class LakePublisher:
 
         # 4. Sort each partition by (timestamp ASC, ingest_id ASC) and write to staging
         staged_targets: List[Dict[str, Any]] = []
+        current_staging_file: Optional[Path] = None
+        intent_written = False
         try:
             for (sym, dt_str) in sorted(partition_groups.keys()):
                 indices = partition_groups[(sym, dt_str)]
@@ -260,6 +262,7 @@ class LakePublisher:
                 staging_fname = f"tmp_{self.writer_id}_{sequence:06d}_{uuid.uuid4().hex}.parquet.tmp"
                 staging_rel_path = f"_staging/{staging_fname}"
                 staging_full_path = self.root / staging_rel_path
+                current_staging_file = staging_full_path
 
                 # Write parquet with compression
                 pq.write_table(file_table, staging_full_path, compression=self.compression)
@@ -289,6 +292,7 @@ class LakePublisher:
                     "file_size_bytes": fsize,
                     "sha256": file_sha,
                 })
+                current_staging_file = None
 
             # 5. Write Intent to _control/intent/<batch_id>.json
             intent_file = self.intent_dir / f"{batch_id}.json"
@@ -307,6 +311,7 @@ class LakePublisher:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_intent, intent_file)
+            intent_written = True
 
             # 6. Check for destination collisions BEFORE renaming
             for target in staged_targets:
@@ -395,6 +400,11 @@ class LakePublisher:
                 published_at=published_at,
             )
         except Exception:
+            if not intent_written:
+                if current_staging_file is not None and current_staging_file.is_file():
+                    current_staging_file.unlink(missing_ok=True)
+                for t in staged_targets:
+                    (self.root / t["staging_path"]).unlink(missing_ok=True)
             raise
 
     def close(self) -> None:
