@@ -54,7 +54,7 @@ See: [.planning/milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
   - Isolate all test suites to `tmp_path`, block production volume mutations.
   - Build deterministic quote fixtures (repeats, late arrivals, nulls, session boundaries).
   - Benchmark baseline DuckDB write/query CPU seconds and event-loop lag.
-- [ ] **Phase 16: Lake Schema, Configuration, Atomic Files & Recovery (P1)**
+- [x] **Phase 16: Lake Schema, Configuration, Atomic Files & Recovery (P1)** (completed 2026-10-03)
   - Implement `src/storage/{config, schema, publication}.py`.
   - Schema v1 with microsecond UTC timestamps and stable unique `ingest_id`.
   - Atomic `.tmp` staging, final rename, and idempotent publication receipts.

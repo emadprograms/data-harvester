@@ -16,10 +16,10 @@ Replace the locked live DuckDB tick database with an append-only, partitioned Pa
 - [x] **LAKE-P0-03**: Baseline characterization - benchmark existing DuckDB write/query CPU seconds, latency percentiles, and event-loop lag to establish pre-migration gates.
 
 ### Phase 16: Lake Schema, Configuration, Atomic Files & Recovery (P1)
-- [ ] **LAKE-P1-01**: Lake layout & configuration - implement explicit `TICK_LAKE_ROOT` resolution, format versioning (`lake.json`), and safe symbol encoding.
-- [ ] **LAKE-P1-02**: Typed Schema v1 - implement 8-column schema with microsecond timestamp and stable unique `ingest_id` preserving duplicates and nulls.
-- [ ] **LAKE-P1-03**: Atomic file staging - implement staging to `.tmp` files on the same filesystem followed by atomic rename into partition destination.
-- [ ] **LAKE-P1-04**: Publication state machine & receipts - track published batches with idempotent receipts, preventing duplicate visibility or partial footers.
+- [x] **LAKE-P1-01**: Lake layout & configuration - implement explicit `TICK_LAKE_ROOT` resolution, format versioning (`lake.json`), and safe symbol encoding.
+- [x] **LAKE-P1-02**: Typed Schema v1 - implement 8-column schema with microsecond timestamp and stable unique `ingest_id` preserving duplicates and nulls.
+- [x] **LAKE-P1-03**: Atomic file staging - implement staging to `.tmp` files on the same filesystem followed by atomic rename into partition destination.
+- [x] **LAKE-P1-04**: Publication state machine & receipts - track published batches with idempotent receipts, preventing duplicate visibility or partial footers.
 
 ### Phase 17: Streaming Parquet Writer & Runner Lifecycle Integration (P2)
 - [ ] **LAKE-P2-01**: Micro-batch writer - implement `TickLakeWriter` with configurable flush thresholds (default 5s or 5,000 ticks) and bounded queue limits.

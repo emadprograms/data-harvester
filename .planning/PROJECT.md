@@ -62,10 +62,10 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - [x] **LAKE-P0-01**: Safe test isolation routing paths to `tmp_path`; block production volume mutations — Phase 15
 - [x] **LAKE-P0-02**: Deterministic quote fixtures (repeats, identical timestamps, late arrivals, nulls) — Phase 15
 - [x] **LAKE-P0-03**: Baseline characterization of legacy DuckDB write/query CPU seconds & latency — Phase 15
-- [ ] **LAKE-P1-01**: Lake layout & explicit `TICK_LAKE_ROOT` configuration
-- [ ] **LAKE-P1-02**: Typed Schema v1 with microsecond UTC timestamp and stable unique `ingest_id`
-- [ ] **LAKE-P1-03**: Atomic file staging (`.tmp` -> atomic rename)
-- [ ] **LAKE-P1-04**: Publication state machine & receipts
+- [x] **LAKE-P1-01**: Lake layout & explicit `TICK_LAKE_ROOT` configuration — Phase 16
+- [x] **LAKE-P1-02**: Typed Schema v1 with microsecond UTC timestamp and stable unique `ingest_id` — Phase 16
+- [x] **LAKE-P1-03**: Atomic file staging (`.tmp` -> atomic rename) — Phase 16
+- [x] **LAKE-P1-04**: Publication state machine & receipts — Phase 16
 - [ ] **LAKE-P2-01**: Micro-batch writer `TickLakeWriter` with 5s / 5,000 tick thresholds
 - [ ] **LAKE-P2-02**: Off-loop PyArrow worker thread preserving <20ms event loop lag
 - [ ] **LAKE-P2-03**: Runner lifecycle integration with cooperative shutdown drain
