@@ -69,6 +69,50 @@ else
 fi
 
 echo ""
+echo "--- Tick Lake Storage & Writer Status ---"
+"$PYTHON_BIN" -c "
+import json, os
+from pathlib import Path
+repo_root = Path('$REPO_ROOT')
+lake_root = None
+try:
+    from src.storage.config import resolve_tick_lake_root
+    lake_root = resolve_tick_lake_root()
+except Exception:
+    lake_env = os.environ.get('TICK_LAKE_ROOT')
+    lake_root = Path(lake_env).resolve() if lake_env else repo_root / 'data' / 'tick_lake'
+
+if not (lake_root / 'lake.json').exists():
+    print(f'  • Tick Lake: Not found at {lake_root}')
+else:
+    ticks_dir = lake_root / 'ticks'
+    partitions = list(ticks_dir.glob('symbol=*/date=*')) if ticks_dir.exists() else []
+    parquet_files = list(ticks_dir.rglob('*.parquet')) if ticks_dir.exists() else []
+    total_bytes = sum(f.stat().st_size for f in parquet_files)
+    total_mb = total_bytes / (1024 * 1024)
+    symbols = set(p.parent.name.replace('symbol=', '') for p in partitions)
+    print(f'  ✓ Lake Root: {lake_root}')
+    print(f'  ✓ Lake Partitions: {len(partitions)} date partitions across {len(symbols)} symbols')
+    print(f'  ✓ Parquet Files: {len(parquet_files)} files ({total_mb:.2f} MB total)')
+
+    status_file = lake_root / '_control' / 'writer_status.json'
+    if status_file.exists():
+        try:
+            with open(status_file, 'r', encoding='utf-8') as f:
+                st = json.load(f)
+            w_status = st.get('status', 'UNKNOWN')
+            writer_id = st.get('writer_id', 'unknown')
+            rows = st.get('total_rows_written', 0)
+            batches = st.get('batches_published', 0)
+            hb = st.get('updated_at', 'N/A')
+            print(f'  ✓ Writer Status: [{w_status}] ID: {writer_id} | Rows: {rows:,d} | Batches: {batches:,d} | Heartbeat: {hb}')
+        except Exception as e:
+            print(f'  ⚠️ Error reading writer_status.json: {e}')
+    else:
+        print('  • Writer Status: No writer_status.json detected (idle/waiting)')
+"
+
+echo ""
 echo "--- Recent Streamer Log (last 10 lines) ---"
 if [ -f "$REPO_ROOT/logs/streamer.log" ]; then
     tail -n 10 "$REPO_ROOT/logs/streamer.log"

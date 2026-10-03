@@ -76,9 +76,11 @@ else:
     print('  ⚠️ Warning: No active supervisors detected!')
 "
 
+TICK_LAKE_DISPLAY="${TICK_LAKE_ROOT:-$REPO_ROOT/data/tick_lake}"
+
 echo ""
 echo "🚀 Services successfully launched in the background!"
-echo "   - Streamer:  Ingesting live ticks into data/streaming.duckdb"
+echo "   - Streamer:  Ingesting live ticks into Partitioned Parquet Tick Lake ($TICK_LAKE_DISPLAY)"
 echo "   - Dashboard: Running at http://localhost:8420"
 echo "   - Auto-Reload: Watching src/ and git updates"
 echo "   - Logs:      $REPO_ROOT/logs/"

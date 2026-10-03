@@ -35,7 +35,7 @@ echo.
 wscript.exe "%VBS_FILE%"
 
 echo [OK] Services started in the background (hidden):
-echo      - Streamer:  Ingesting live ticks 24/7 into data/streaming.duckdb
+echo      - Streamer:  Ingesting live ticks 24/7 into Partitioned Parquet Tick Lake (data\tick_lake)
 echo      - Dashboard: Running at http://localhost:8420
 echo      - Auto-Update: Detects code changes in src/ and git updates
 echo.

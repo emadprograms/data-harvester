@@ -89,7 +89,8 @@ class ProcessSupervisor:
     def _handle_signal(self, signum, frame):
         self._log(f"Received stop signal ({signum}). Stopping {self.name}...")
         self.running = False
-        self._stop_child()
+        self._stop_child(timeout=15)
+        self._log(f"Child process stopped. Supervisor for {self.name} exiting cleanly.")
         sys.exit(0)
 
     def _log(self, message):
@@ -134,20 +135,24 @@ class ProcessSupervisor:
         )
         self._log(f"Started child process PID={self.process.pid}")
 
-    def _stop_child(self, timeout=6):
+    def _stop_child(self, timeout=15):
         if not self.process:
             return
         pid = self.process.pid
         self._log(f"Stopping child process PID={pid}...")
         try:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=timeout)
-                self._log(f"Child process PID={pid} exited cleanly.")
-            except subprocess.TimeoutExpired:
-                self._log(f"Process PID={pid} did not exit within {timeout}s; sending SIGKILL.")
-                self.process.kill()
-                self.process.wait()
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=timeout)
+                    self._log(f"Child process PID={pid} exited cleanly (exitcode={self.process.returncode}).")
+                except subprocess.TimeoutExpired:
+                    self._log(f"Process PID={pid} did not exit within {timeout}s; sending SIGKILL.")
+                    self.process.kill()
+                    self.process.wait()
+                    self._log(f"Child process PID={pid} killed (exitcode={self.process.returncode}).")
+            else:
+                self._log(f"Child process PID={pid} already exited (exitcode={self.process.returncode}).")
         except Exception as e:
             self._log(f"Error stopping child PID={pid}: {e}")
         finally:

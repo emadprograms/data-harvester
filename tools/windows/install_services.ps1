@@ -83,7 +83,7 @@ Write-Host "============================================================" -Foreg
 Write-Host "  Installation Complete!" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host "Services are now running in the background:"
-Write-Host "  • Streamer:  Ingesting ticks into data/streaming.duckdb"
+Write-Host "  • Streamer:  Ingesting ticks into Partitioned Parquet Tick Lake ($RepoRoot\data\tick_lake)"
 Write-Host "  • Dashboard: Running at http://localhost:8420"
 Write-Host ""
 Write-Host "Logs are located in: $RepoRoot\logs\"

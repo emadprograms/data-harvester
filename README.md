@@ -1,115 +1,210 @@
-# 🚀 Stock Data Harvester & Observability Engine (v3.0)
+# 🚀 Stock Data Harvester & Observability Engine (v4.0)
 
-A high-performance market data harvesting, 24/7 live tick streaming, and telemetry observability engine powered by local **DuckDB** storage, interactive financial charting, and real-time WebSocket ingestion.
+A high-performance market data harvesting, 24/7 live tick streaming, and telemetry observability engine powered by a **Partitioned Parquet Tick Lake**, zero-lock multi-process concurrency, sub-100ms in-memory **DuckDB** analytical resampling, and interactive financial charting.
 
 ---
 
 ## 🏛 Architecture Overview
 
-### 💾 Dual-DuckDB Storage Engine
-- **`data/historical.duckdb`**: Over 7.99 million canonical 1-minute OHLCV candles (spanning Oct 2024 to Jul 2026 across 40 symbols) with composite primary keys (`timestamp`, `symbol`), Source-Tiering quality overrides, and sub-10ms dynamic resampling (`time_bucket()`).
-- **`data/streaming.duckdb`**: 24/7 continuous raw tick quotes captured from Capital.com (`timestamp`, `symbol`, `price`, `volume`, `bid`, `ask`, `source`, `session`). Decoupled from historical storage to eliminate writer lock contention.
-- **UTC Storage Mandate**: every stored timestamp is pure UTC, and every DuckDB connection pins the session `TimeZone` to `UTC`, so query semantics never depend on the host OS timezone. Exchange-local rendering happens only at query/UI time.
+### 🌊 Partitioned Parquet Tick Lake (`TICK_LAKE_ROOT`)
+- **Immutable Hive Partitioning**: Live market ticks are streamed 24/7 and committed into immutable Parquet files organized by Hive two-level partitioning:
+  ```text
+  <TICK_LAKE_ROOT>/ticks/symbol=<SYMBOL>/date=<YYYY-MM-DD>/batch_<WRITER_ID>_<SEQ>.parquet
+  ```
+- **Zero-Lock Concurrency**: Downstream consumers (e.g. Repo B quantitative strategies, analytical runners, dashboard processes) query live market data using isolated in-memory DuckDB connections (`:memory:`). Ingestion writers and concurrent reader processes operate simultaneously with **zero file-lock collisions** (`duckdb.IOException`), zero read latency degradation, and zero Parquet footer corruption.
+- **Sub-100ms Resampling**: In-memory DuckDB vectorized queries resample millions of raw ticks into deterministic OHLCV bars (`1s`, `5s`, `1m`, `5m`, `15m`, `1h`, `1d`) with sub-100ms p95 latency using `time_bucket()` and deterministic tie-breaking via `arg_min(price, (timestamp, ingest_id))` / `arg_max(price, (timestamp, ingest_id))`.
+- **Atomic Two-Phase Publication**: Writers buffer ticks in memory, write staged Parquet files with checksum verification, and atomically promote them via filesystem rename into `ticks/` with fsynced publication receipts in `_control/receipts/`.
+- **Versioned Symbol Registry**: Symbol lifecycle (activation, deactivation, purge fencing) is centrally managed in `_control/registry.json` with monotonic version bumping and cross-process reload signaling (`.stream_reload.signal`).
 
-### 🌐 Observability Command Center Dashboard
-- Zero-dependency local multi-threaded HTTP server (`http://localhost:8420`, configurable via `--port` or `DASHBOARD_PORT`).
-- **TradingView Lightweight Charts** (v4.1.3) with dark-slate UI, multi-timeframe analytical resampling (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`), volume histograms, and session breakdown.
-- **NYSE Exchange-Time Rendering**: chart X-axis ticks, crosshair badge, hover legend, raw candle inspector and CSV export are all labelled in `America/New_York` (EST/EDT), so the 09:30 opening bell — and its volume spike — always render at 09:30 ET no matter which timezone the server or the browser runs in. Candle API contract: `time` is a true UTC epoch, `time_str` is the exchange-local label, `timezone`/`time_epoch_basis` declare it.
-- **Live Stream Tape**: Real-time tick wall with bid/ask/spread, process telemetry, and dynamic symbol reload.
-- **Data Integrity Engine**: Automated 1-minute historical gap detection during US trading hours, stream freshness audits, OHLCV anomaly validation, and cross-database price drift reconciliation.
-- **Harvester Console**: Browser-triggered runs of `main.py` with real-time log streaming.
+### 💾 Canonical Historical Database (`data/historical.duckdb`)
+- Over 8.9 million canonical 1-minute OHLCV candles (spanning Oct 2024 to Sep 2026 across 40 symbols) with composite primary keys (`timestamp`, `symbol`), Source-Tiering quality overrides, and exchange-local alignment.
+- Fully isolated from the live streaming tick engine.
 
----
+### ⏱ UTC Storage Mandate & NYSE Exchange-Time Rendering
+- Every stored timestamp across Parquet files and DuckDB databases is pure UTC with microsecond precision.
+- Every DuckDB connection explicitly sets `SET TimeZone = 'UTC'` to prevent host OS timezone contamination.
+- **NYSE Exchange-Time Rendering**: The web UI, chart axes, crosshair badges, and CSV exports render exchange-local timestamps in `America/New_York` (EST/EDT), guaranteeing the 09:30 AM ET opening bell always renders at 09:30 ET regardless of browser or server location.
 
-## 📁 Repository Structure
-
-```
-data-harvester/
-├── main.py                     # Primary market session harvesting entrypoint
-├── requirements.txt            # Python dependencies (DuckDB, requests, pandas, etc.)
-├── MILESTONES.md               # Historical milestones & delivery log (v1.0, v2.0, v3.0)
-│
-├── src/
-│   ├── api/                    # API clients (Massive/Polygon, Capital.com, Binance, Yahoo)
-│   ├── config.py               # Shared system constants & symbol defaults
-│   ├── credentials.py          # Environment credentials & API keys loader
-│   ├── dashboard/              # Observability Command Center backend & static frontend
-│   │   ├── server.py           # Multi-threaded HTTP server with REST APIs & static handler
-│   │   ├── analytics.py        # High-performance DuckDB analytical candle resampling
-│   │   └── static/             # Frontend UI (HTML, CSS, JavaScript modular controllers)
-│   ├── data/                   # Session harvesters, normalizers & Databento backfillers
-│   ├── database/               # Native DuckDB connection pool, CRUD & resampling engine
-│   ├── stream/                 # 24/7 Capital.com live WebSocket streaming runner
-│   └── utils/                  # Data integrity health engine & audit diagnostics
-│
-└── tests/                      # Comprehensive test suite (262 passing, 5 skipped without API credentials)
-    ├── conftest.py             # Global fixtures & environment mocks
-    ├── api/                    # Tests for src/api/ connectors
-    ├── config/                 # Tests for src/config.py & credentials
-    ├── dashboard/              # Tests for dashboard analytics, REST APIs & static server
-    ├── data/                   # Tests for session harvesting & normalizers
-    ├── database/               # Tests for DuckDB storage, concurrency & resampling
-    ├── stream/                 # Tests for live WebSocket streaming & dynamic reload
-    ├── utils/                  # Tests for data integrity & health engine
-    └── e2e/                    # End-to-end milestone & CLI smoke tests
-```
+### 🌐 Observability Command Center Dashboard (`http://localhost:8420`)
+- Multi-threaded local HTTP server providing interactive TradingView Lightweight Charts (v4.1.3).
+- Real-time tick stream tape with bid, ask, and spread tracking.
+- Automated integrity auditing: 1-minute historical gap detection, stream quiet-interval checks, OHLCV geometric sanity validation, and cross-store price drift reconciliation.
 
 ---
 
-## 🚀 Quickstart & Usage
+## 🔌 Downstream Integration: Repo B Reader Contract
 
-### 🍎 macOS 24/7 Always-On (Zero Config)
-To run the streamer and dashboard on macOS with supervisor auto-reload:
-- **Start Services**: Run `./START_SERVICES.sh` (or `./tools/mac/start_services.sh`)
-- **Check Status & Logs**: Run `./VIEW_STATUS.sh` (or `./tools/mac/status_services.sh`)
-- **Stop Services**: Run `./STOP_SERVICES.sh` (or `./tools/mac/stop_services.sh`)
-- **Install Login Startup (LaunchAgent)**: Run `./tools/mac/install_startup.sh`
-- **Uninstall Login Startup**: Run `./tools/mac/uninstall_startup.sh`
+Downstream consumers (such as Repo B) require **zero imports** from `data-harvester`. You only need standard, publicly available `duckdb >= 1.0.0` or `pyarrow >= 14.0.0`.
 
-### 🪟 Windows 24/7 Always-On (Zero Config)
-All Windows scripts are located in `tools/windows/`:
-- **Install & Start**: Double-click `tools\windows\INSTALL_STARTUP.bat` (or run `tools\windows\install_services.ps1`).
-- **Check Status & Logs**: Double-click `tools\windows\VIEW_STATUS.bat` (or run `tools\windows\status_services.ps1`).
-- **Stop Services**: Double-click `tools\windows\STOP_SERVICES.bat` (or run `tools\windows\stop_services.ps1`).
-- **Remove from Startup**: Double-click `tools\windows\UNINSTALL_STARTUP.bat` (or run `tools\windows\uninstall_services.ps1`).
+### Standalone Python Reader Snippet
 
-### 1. Run Tests
-Run the entire test suite across all nested test packages:
-```bash
-PYTHONPATH=. pytest tests/ -v
+```python
+from datetime import date, datetime
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+import duckdb
+
+
+class RepoBTickReader:
+    """
+    Zero-dependency reader for Partitioned Parquet Tick Lake.
+    Can be copy-pasted directly into Repo B or downstream pipelines.
+    Requires only standard `duckdb`.
+    """
+    def __init__(self, lake_root: str):
+        self.lake_root = Path(lake_root).resolve()
+        self.ticks_dir = self.lake_root / "ticks"
+
+    def _resolve_files(self, symbol: str, start_date: date, end_date: date) -> List[str]:
+        """Prune partitions at filesystem level before passing to DuckDB."""
+        sym_dir = self.ticks_dir / f"symbol={symbol.upper()}"
+        if not sym_dir.is_dir():
+            return []
+
+        matched_files: List[str] = []
+        for date_dir in sym_dir.iterdir():
+            if not date_dir.is_dir() or not date_dir.name.startswith("date="):
+                continue
+            try:
+                dir_date = date.fromisoformat(date_dir.name.split("=")[1])
+                if start_date <= dir_date <= end_date:
+                    for parquet_file in date_dir.glob("*.parquet"):
+                        matched_files.append(str(parquet_file))
+            except ValueError:
+                continue
+
+        return sorted(matched_files)
+
+    def query_candles(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        timeframe: str = "1m",
+    ) -> List[Dict[str, Any]]:
+        """
+        Resample raw ticks into deterministic OHLCV candles using in-memory DuckDB.
+        """
+        files = self._resolve_files(symbol, start_date, end_date)
+        if not files:
+            return []
+
+        interval_map = {
+            "1s": "1 second",
+            "5s": "5 seconds",
+            "1m": "1 minute",
+            "5m": "5 minutes",
+            "15m": "15 minutes",
+            "1h": "1 hour",
+            "1d": "1 day",
+        }
+        interval_str = interval_map.get(timeframe.lower(), "1 minute")
+
+        # Isolated in-memory connection — ZERO lock contention with live writers
+        con = duckdb.connect(":memory:")
+        try:
+            con.execute("SET TimeZone = 'UTC'")
+            query = f"""
+                SELECT
+                    time_bucket(INTERVAL '{interval_str}', timestamp) AS bucket_time,
+                    symbol,
+                    arg_min(price, (timestamp, ingest_id)) AS open,
+                    max(price) AS high,
+                    min(price) AS low,
+                    arg_max(price, (timestamp, ingest_id)) AS close,
+                    sum(coalesce(volume, 1.0)) AS volume,
+                    count(*) AS tick_count
+                FROM read_parquet(?, hive_partitioning=false)
+                GROUP BY bucket_time, symbol
+                ORDER BY bucket_time ASC, symbol ASC
+            """
+            rows = con.execute(query, [files]).fetchall()
+            return [
+                {
+                    "time": row[0],
+                    "symbol": row[1],
+                    "open": float(row[2]),
+                    "high": float(row[3]),
+                    "low": float(row[4]),
+                    "close": float(row[5]),
+                    "volume": float(row[6]),
+                    "tick_count": int(row[7]),
+                }
+                for row in rows
+            ]
+        finally:
+            con.close()
 ```
 
-Or run a targeted sub-suite:
+---
+
+## ⚙️ Configuration & Environment Variables
+
+Configure lake paths and streaming engine parameters in your `.env` file (see `.env.example`):
+
 ```bash
-PYTHONPATH=. pytest tests/database/ -v    # Database & resampling tests
-PYTHONPATH=. pytest tests/stream/ -v      # Live streaming tests
-PYTHONPATH=. pytest tests/dashboard/ -v   # Command Center & API tests
+# Tick Lake Storage Path
+TICK_LAKE_ROOT=data/tick_lake
+
+# Base directory for historical database and default tick_lake parent
+DATA_DIR=data
+
+# Streaming Engine & Ingestion Performance Knobs
+STREAM_FLUSH_INTERVAL=2.0       # Batch flush deadline in seconds (default: 2.0s)
+STREAM_MAX_BATCH_ROWS=1000      # Max rows per atomic parquet batch (default: 1000)
+STREAM_MAX_QUEUE_SIZE=10000     # Max write queue capacity before backpressure (default: 10000)
+
+# Capital.com API Credentials
+CAPITAL_COM_X_CAP_API_KEY=your_key
+CAPITAL_COM_IDENTIFIER=your_identifier
+CAPITAL_COM_PASSWORD=your_password
 ```
 
-### 2. Launch the Observability Command Center
-Start the web dashboard server:
-```bash
-python3 -m src.dashboard.server
-```
-Then navigate to **http://localhost:8420** in your browser (or pass `--port <PORT>` to bind to another port).
+---
 
-### 3. Launch the 24/7 Capital.com Streamer
-Start the continuous live tick ingestion engine:
+## 🚀 Operational Commands & Validation
+
+### 🍎 macOS 24/7 Always-On Services
+- **Start All Services**: `./START_SERVICES.sh` (or `./tools/mac/start_services.sh`)
+- **Check Status & Storage**: `./VIEW_STATUS.sh` (or `./tools/mac/status_services.sh`)
+- **Stop All Services**: `./STOP_SERVICES.sh` (or `./tools/mac/stop_services.sh`)
+- **Start Streamer Only**: `./tools/mac/start_streamer.sh`
+
+### 🪟 Windows 24/7 Always-On Services
+- **Install & Start**: Run `tools\windows\INSTALL_STARTUP.bat` (or `tools\windows\install_services.ps1`)
+- **Check Status**: Run `tools\windows\VIEW_STATUS.bat` (or `tools\windows\status_services.ps1`)
+- **Stop Services**: Run `tools\windows\STOP_SERVICES.bat` (or `tools\windows\stop_services.ps1`)
+
+### ⚡ Concurrency & Multi-Process Validation
+Validate high-concurrency invariants (zero DuckDB file-lock errors, zero Parquet footer corruption, writer event-loop lag < 20ms, dashboard & Repo B p95 latency < 100ms):
 ```bash
-python3 -m src.stream.runner
+python tools/validate_concurrency.py
 ```
 
-### 4. Manual Session Harvest
-Run the primary harvester for the current/most recent market session:
+### 🔍 Data Integrity Audit
+Run full verification of historical databases and the Partitioned Parquet Tick Lake:
 ```bash
-python3 main.py
+# Audits tick lake and historical database
+python tools/audit_database_integrity.py --lake-only
+
+# Or audit with default resolution
+python tools/audit_database_integrity.py
 ```
-Or harvest a specific historical market date:
+
+### 🧪 Running Tests
+Run the entire offline test suite:
 ```bash
-python3 main.py --date 2026-04-15
+pytest tests/ -m "not live and not performance" -v
+```
+Or targeted subsystems:
+```bash
+pytest tests/storage/ -v       # Parquet writer, reader, registry, and publisher tests
+pytest tests/stream/ -v        # 24/7 WebSocket streamer & backpressure tests
+pytest tests/dashboard/ -v     # Dashboard server & analytics tests
+pytest tests/integration/ -v   # Multi-process concurrency integration tests
 ```
 
 ---
 
 ## 📜 Milestones & Roadmap
-Full details on shipped milestones (v1.0, v2.0, v3.0) are tracked in [.planning/MILESTONES.md](.planning/MILESTONES.md).
+Full details on shipped milestones (v1.0, v2.0, v3.0, v4.0) are tracked in [.planning/MILESTONES.md](.planning/MILESTONES.md).

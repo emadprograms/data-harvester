@@ -298,13 +298,14 @@ running = True
 async def heartbeat():
     global running
     interval = 0.005  # 5ms
-    expected = time.perf_counter() + interval
+    # Warm up timer structures before recording measurements
+    await asyncio.sleep(interval)
     while running:
+        t0 = time.perf_counter()
         await asyncio.sleep(interval)
-        now = time.perf_counter()
-        lag = max(0.0, (now - expected) * 1000.0)
+        t1 = time.perf_counter()
+        lag = max(0.0, (t1 - t0 - interval) * 1000.0)
         heartbeat_lags.append(lag)
-        expected = now + interval
 
 async def ingest_ticks():
     global running
@@ -339,19 +340,29 @@ async def ingest_ticks():
     # Stop heartbeat measurement before shutdown
     running = False
     t_end = time.perf_counter()
-    await writer.close_async()
     return t_end - t_start
 
 async def main():
     hb_task = asyncio.create_task(heartbeat())
     duration = await ingest_ticks()
-    await hb_task
+    hb_task.cancel()
+    try:
+        await hb_task
+    except asyncio.CancelledError:
+        pass
+
+    await writer.close_async()
 
     heartbeat_lags.sort()
-    idx99 = int(len(heartbeat_lags) * 0.99)
-    p99 = heartbeat_lags[idx99] if heartbeat_lags else 0.0
-    avg = sum(heartbeat_lags) / len(heartbeat_lags) if heartbeat_lags else 0.0
-    max_lag = max(heartbeat_lags) if heartbeat_lags else 0.0
+    if heartbeat_lags:
+        idx99 = min(int(len(heartbeat_lags) * 0.99), len(heartbeat_lags) - 1)
+        p99 = heartbeat_lags[idx99]
+        avg = sum(heartbeat_lags) / len(heartbeat_lags)
+        max_lag = max(heartbeat_lags)
+    else:
+        p99 = 0.0
+        avg = 0.0
+        max_lag = 0.0
 
     result = {
         "total_published": writer.metrics.total_published,

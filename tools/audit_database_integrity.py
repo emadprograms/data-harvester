@@ -14,8 +14,10 @@ Audits 100% of data/streaming.duckdb and data/historical.duckdb:
 
 import sys
 import os
+import json
+from pathlib import Path
 from datetime import datetime, date, timedelta
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional, Union
 
 import duckdb
 
@@ -433,16 +435,225 @@ def audit_historical_db(db_path: str = "data/historical.duckdb") -> bool:
     return all_passed
 
 
+def audit_tick_lake(lake_root: Optional[Union[str, Path]] = None) -> bool:
+    print_header("AUDITING PARTITIONED PARQUET TICK LAKE")
+    all_passed = True
+
+    # 1. Resolve root
+    if lake_root is not None:
+        lake_path = Path(lake_root).resolve()
+    else:
+        env_root = os.environ.get("TICK_LAKE_ROOT")
+        if env_root:
+            lake_path = Path(env_root).resolve()
+        else:
+            try:
+                from src.storage.config import resolve_tick_lake_root
+                lake_path = resolve_tick_lake_root()
+            except Exception:
+                repo_root = Path(__file__).resolve().parent.parent
+                lake_path = (repo_root / "data" / "tick_lake").resolve()
+
+    print(f"Lake Root: {lake_path}")
+    if not lake_path.exists():
+        print_check("Lake directory exists", False, f"Directory not found: {lake_path}")
+        return False
+
+    # 2. Read lake.json metadata
+    lake_json_path = lake_path / "lake.json"
+    if not lake_json_path.is_file():
+        print_check("Lake metadata file (lake.json) exists", False, f"Not found at {lake_json_path}")
+        return False
+
+    try:
+        with open(lake_json_path, "r", encoding="utf-8") as f:
+            lake_meta = json.load(f)
+        p_meta = lake_meta.get("format") == "tick_lake" and "lake_id" in lake_meta
+        print_check(
+            "Lake metadata file (lake.json) valid",
+            p_meta,
+            f"ID: {lake_meta.get('lake_id')}, Schema Version: {lake_meta.get('schema_version')}, Layout: {lake_meta.get('partition_layout')}"
+        )
+        all_passed = all_passed and p_meta
+    except Exception as e:
+        print_check("Lake metadata file (lake.json) readable", False, str(e))
+        return False
+
+    # 3. Scan ticks/ partitions
+    ticks_dir = lake_path / "ticks"
+    if not ticks_dir.exists():
+        print_check("ticks/ partition directory exists", False, f"Not found at {ticks_dir}")
+        return False
+
+    parquet_files = sorted(list(ticks_dir.rglob("*.parquet")))
+    partitions = [p for p in ticks_dir.glob("symbol=*/date=*") if p.is_dir()]
+    total_bytes = sum(f.stat().st_size for f in parquet_files)
+    total_mb = total_bytes / (1024 * 1024)
+
+    has_files = len(parquet_files) > 0
+    print_check(
+        "Tick lake contains Parquet partition files",
+        has_files,
+        f"{len(parquet_files)} files across {len(partitions)} date partitions ({total_mb:.2f} MB)"
+    )
+    all_passed = all_passed and has_files
+
+    if not has_files:
+        return all_passed
+
+    # 4. Symbol alignment with _control/registry.json
+    active_reg_symbols = set()
+    reg_file = lake_path / "_control" / "registry.json"
+    if not reg_file.exists():
+        reg_file = lake_path / "registry.json"
+    if reg_file.exists():
+        try:
+            with open(reg_file, "r", encoding="utf-8") as f:
+                reg_data = json.load(f)
+            for sym, s_info in reg_data.get("symbols", {}).items():
+                if s_info.get("status") == "ACTIVE" and s_info.get("active", True):
+                    active_reg_symbols.add(s_info.get("symbol", sym).upper())
+            print_check(
+                "SymbolRegistry metadata accessible",
+                True,
+                f"{len(active_reg_symbols)} active symbols registered (version {reg_data.get('version', 1)})"
+            )
+        except Exception as e:
+            print_check("SymbolRegistry metadata readable", False, str(e))
+            all_passed = False
+    else:
+        print_check("SymbolRegistry file (_control/registry.json)", True, "No registry file found (optional)")
+
+    # 5. In-memory DuckDB audit on Parquet rows
+    con = duckdb.connect(":memory:")
+    pin_session_utc(con)
+
+    file_paths = [str(f) for f in parquet_files]
+    try:
+        con.execute("CREATE VIEW lake_ticks AS SELECT * FROM read_parquet(?)", [file_paths])
+        total_ticks = con.execute("SELECT COUNT(*) FROM lake_ticks").fetchone()[0]
+        print(f"\nTotal Ticks Ingested in Lake: {total_ticks:,d}")
+
+        has_ticks = total_ticks > 0
+        print_check("Parquet lake contains data rows", has_ticks, f"{total_ticks:,d} rows")
+        all_passed = all_passed and has_ticks
+
+        if total_ticks > 0:
+            null_sanity = con.execute("""
+                SELECT 
+                    COUNT(*) FILTER (WHERE timestamp IS NULL) as null_ts,
+                    COUNT(*) FILTER (WHERE symbol IS NULL OR symbol = '') as null_sym,
+                    COUNT(*) FILTER (WHERE price IS NULL OR price <= 0 OR isnan(price) OR isinf(price)) as invalid_price,
+                    COUNT(*) FILTER (WHERE volume IS NULL OR volume < 0 OR isnan(volume) OR isinf(volume)) as invalid_vol,
+                    COUNT(*) FILTER (WHERE bid IS NOT NULL AND (bid < 0 OR isnan(bid) OR isinf(bid))) as negative_bid,
+                    COUNT(*) FILTER (WHERE ask IS NOT NULL AND (ask < 0 OR isnan(ask) OR isinf(ask))) as negative_ask,
+                    COUNT(*) FILTER (WHERE bid IS NOT NULL AND ask IS NOT NULL AND bid > ask * 1.05) as crossed_quotes
+                FROM lake_ticks
+            """).fetchone()
+
+            p_null_ts = (null_sanity[0] == 0)
+            print_check("Zero NULL timestamps in Parquet", p_null_ts, f"{null_sanity[0]} found")
+            all_passed = all_passed and p_null_ts
+
+            p_null_sym = (null_sanity[1] == 0)
+            print_check("Zero NULL symbols in Parquet", p_null_sym, f"{null_sanity[1]} found")
+            all_passed = all_passed and p_null_sym
+
+            p_inv_px = (null_sanity[2] == 0)
+            print_check("Zero invalid or <= 0 prices in Parquet", p_inv_px, f"{null_sanity[2]} found")
+            all_passed = all_passed and p_inv_px
+
+            p_inv_vol = (null_sanity[3] == 0)
+            print_check("Zero negative volumes in Parquet", p_inv_vol, f"{null_sanity[3]} found")
+            all_passed = all_passed and p_inv_vol
+
+            p_neg_quotes = (null_sanity[4] == 0 and null_sanity[5] == 0)
+            print_check("Zero negative bids/asks in Parquet", p_neg_quotes, f"{null_sanity[4] + null_sanity[5]} found")
+            all_passed = all_passed and p_neg_quotes
+
+            p_cross = (null_sanity[6] == 0)
+            print_check("Zero severely crossed quotes (bid > ask*1.05)", p_cross, f"{null_sanity[6]} found")
+            all_passed = all_passed and p_cross
+
+            # Symbol alignment check
+            lake_syms = {r[0] for r in con.execute("SELECT DISTINCT symbol FROM lake_ticks").fetchall() if r[0]}
+            print(f"Symbols found in lake ({len(lake_syms)}): {sorted(list(lake_syms))[:10]}...")
+            if active_reg_symbols:
+                unknown_symbols = lake_syms - active_reg_symbols
+                p_sym_align = (len(unknown_symbols) == 0)
+                print_check(
+                    "Lake symbols align with active Registry entries",
+                    p_sym_align,
+                    f"{len(lake_syms)} symbols present in ticks (unregistered: {unknown_symbols or 'None'})"
+                )
+                all_passed = all_passed and p_sym_align
+
+            # Source distribution
+            sources = con.execute("SELECT source, COUNT(*) FROM lake_ticks GROUP BY source ORDER BY COUNT(*) DESC").fetchall()
+            for src, count in sources:
+                print(f"  • Source '{src}': {count:,d} ticks ({count/total_ticks*100:.2f}%)")
+
+            # Vectorized candle resampling check
+            try:
+                sample_resample = con.execute("""
+                    SELECT 
+                        time_bucket(INTERVAL '1 minute', timestamp) AS bar,
+                        FIRST(price ORDER BY timestamp) AS o,
+                        MAX(price) AS h,
+                        MIN(price) AS l,
+                        LAST(price ORDER BY timestamp) AS c,
+                        SUM(volume) AS v,
+                        COUNT(*) as ticks
+                    FROM lake_ticks
+                    GROUP BY bar
+                    ORDER BY bar DESC
+                    LIMIT 5
+                """).fetchall()
+                p_resample = len(sample_resample) > 0
+                print_check("Vectorized Parquet Resampling Test", p_resample, f"Generated {len(sample_resample)} test 1m candles successfully")
+                all_passed = all_passed and p_resample
+            except Exception as e:
+                print_check("Vectorized Parquet Resampling Test", False, str(e))
+                all_passed = False
+
+    except Exception as e:
+        print_check("DuckDB Parquet queries executed cleanly", False, str(e))
+        all_passed = False
+    finally:
+        con.close()
+
+    return all_passed
+
+
 def main():
-    streaming_ok = audit_streaming_db("data/streaming.duckdb")
-    historical_ok = audit_historical_db("data/historical.duckdb")
+    import argparse
+    parser = argparse.ArgumentParser(description="Comprehensive Data Integrity Audit Tool")
+    parser.add_argument("--lake-root", default=None, help="Root path of tick lake")
+    parser.add_argument("--streaming-db", default="data/streaming.duckdb", help="Path to streaming.duckdb")
+    parser.add_argument("--historical-db", default="data/historical.duckdb", help="Path to historical.duckdb")
+    parser.add_argument("--lake-only", action="store_true", help="Force tick lake audit")
+    args = parser.parse_args()
+
+    use_tick_lake = bool(
+        args.lake_only
+        or args.lake_root
+        or os.environ.get("TICK_LAKE_ROOT")
+        or not os.path.exists(args.streaming_db)
+    )
+
+    if use_tick_lake:
+        stream_ok = audit_tick_lake(args.lake_root)
+    else:
+        stream_ok = audit_streaming_db(args.streaming_db)
+
+    historical_ok = audit_historical_db(args.historical_db)
 
     print_header("FINAL DATA INTEGRITY VERDICT")
-    if streaming_ok and historical_ok:
+    if stream_ok and historical_ok:
         print("\033[92m🎉 ALL SYSTEMS 100% HEALTHY - DATA INTEGRITY VERIFIED WITHOUT ERRORS.\033[0m\n")
         sys.exit(0)
     else:
-        print("\033[91m❌ INTEGRITY FAILURES DETECTED IN ONE OR MORE DATABASES.\033[0m\n")
+        print("\033[91m❌ INTEGRITY FAILURES DETECTED IN ONE OR MORE DATA STORES.\033[0m\n")
         sys.exit(1)
 
 

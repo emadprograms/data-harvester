@@ -43,8 +43,8 @@ else:
         except Exception:
             pass
 
-    # Wait up to 4s for graceful shutdown
-    gone, alive = psutil.wait_procs(targets, timeout=4)
+    # Wait up to 15s for graceful queue drain and shutdown
+    gone, alive = psutil.wait_procs(targets, timeout=15)
     for p in alive:
         try:
             print(f'  Force killing lingering PID {p.pid}...')

@@ -34,7 +34,11 @@ for p in psutil.process_iter(['name', 'cmdline']):
 " 2>/dev/null || true
 sleep 1
 
+TICK_LAKE_PATH="${TICK_LAKE_ROOT:-$REPO_ROOT/data/tick_lake}"
+echo "Tick Lake: $TICK_LAKE_PATH"
+
 echo "Starting Streamer supervisor (Capital.com 24/7 tick engine)..."
 nohup "$PYTHON_BIN" "$REPO_ROOT/tools/service_supervisor.py" --name streamer --module src.stream.runner >/dev/null 2>&1 &
 disown -h $! 2>/dev/null || true
-echo "✓ Streamer started. Logs: $REPO_ROOT/logs/streamer.log"
+echo "✓ Streamer started (Partitioned Parquet Tick Lake: $TICK_LAKE_PATH)"
+echo "  Logs: $REPO_ROOT/logs/streamer.log"

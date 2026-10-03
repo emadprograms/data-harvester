@@ -4,6 +4,8 @@ Provides comprehensive verification, gap detection, quiet interval detection,
 OHLCV anomaly validation, and cross-database price drift reconciliation.
 """
 import os
+import json
+from pathlib import Path
 import hashlib
 import time
 import pandas as pd
@@ -336,10 +338,10 @@ def validate_ohlcv_anomalies(symbol: str = None, limit: int = 10000, client=None
 
 # --- Cross-Database Drift Reconciliation (INTG-04) ---
 
-def analyze_price_drift(symbol: str, tolerance: float = 0.50, client=None, hist_path=None, stream_path=None) -> dict:
+def analyze_price_drift(symbol: str, tolerance: float = 0.50, client=None, hist_path=None, stream_path=None, lake_root=None) -> dict:
     """
-    Compares 1-minute candles from historical.duckdb against resampled ticks in streaming.duckdb
-    for overlapping time windows to verify data accuracy and price fidelity.
+    Compares 1-minute candles from historical.duckdb against resampled ticks in tick lake
+    or streaming.duckdb for overlapping time windows to verify data accuracy and price fidelity.
     """
     hp = hist_path or DEFAULT_HISTORICAL_DB_PATH
     sp = stream_path or DEFAULT_STREAMING_DB_PATH
@@ -350,32 +352,93 @@ def analyze_price_drift(symbol: str, tolerance: float = 0.50, client=None, hist_
         own_client = True
 
     try:
-        client.attach(hp, "hist", read_only=True)
-        client.attach(sp, "live", read_only=True)
+        resolved_lake = None
+        if lake_root is not None:
+            resolved_lake = Path(lake_root).resolve()
+        elif os.environ.get("TICK_LAKE_ROOT"):
+            resolved_lake = Path(os.environ["TICK_LAKE_ROOT"]).resolve()
+        elif not (stream_path and os.path.exists(stream_path)):
+            try:
+                from src.storage.config import resolve_tick_lake_root
+                resolved_lake = resolve_tick_lake_root()
+            except Exception:
+                repo_root = Path(__file__).resolve().parent.parent.parent
+                cand = repo_root / "data" / "tick_lake"
+                if (cand / "lake.json").exists():
+                    resolved_lake = cand.resolve()
 
-        query = f"""
-            WITH stream_1m AS (
+        is_lake = bool(resolved_lake and (resolved_lake / "lake.json").exists())
+
+        if is_lake:
+            from src.storage.reader import get_tick_lake_reader
+            reader = get_tick_lake_reader(resolved_lake)
+            stream_candles = reader.query_candles(symbol=symbol, timeframe="1m")
+            if not stream_candles:
+                return {
+                    "symbol": symbol,
+                    "overlapping_bars": 0,
+                    "mean_absolute_drift": 0.0,
+                    "max_drift": 0.0,
+                    "max_drift_timestamp": None,
+                    "passed": True,
+                    "note": "No overlapping timestamps between REST and Tick Lake."
+                }
+
+            client.attach(hp, "hist", read_only=True)
+            stream_df = pd.DataFrame([
+                {
+                    "time": pd.to_datetime(c["timestamp"]),
+                    "symbol": c["symbol"],
+                    "close_stream": float(c["close"]),
+                }
+                for c in stream_candles
+            ])
+            if hasattr(client, "conn"):
+                client.conn.register("stream_1m", stream_df)
+            elif hasattr(client, "register"):
+                client.register("stream_1m", stream_df)
+
+            query = """
                 SELECT 
-                    time_bucket(INTERVAL '1 minute', timestamp::TIMESTAMP) AS time,
-                    symbol,
-                    last(price ORDER BY timestamp) AS close_stream
-                FROM live.tick_data
-                WHERE symbol = ?
-                GROUP BY time, symbol
-            )
-            SELECT 
-                h.timestamp,
-                h.symbol,
-                h.close AS rest_close,
-                s.close_stream AS stream_close,
-                ABS(h.close - s.close_stream) AS drift
-            FROM hist.minute_data h
-            JOIN stream_1m s ON h.symbol = s.symbol AND h.timestamp::TIMESTAMP = s.time
-            WHERE h.symbol = ?
-            ORDER BY h.timestamp ASC
-        """
-        res = client.execute(query, [symbol, symbol])
-        rows = res.rows
+                    h.timestamp,
+                    h.symbol,
+                    h.close AS rest_close,
+                    s.close_stream AS stream_close,
+                    ABS(h.close - s.close_stream) AS drift
+                FROM hist.minute_data h
+                JOIN stream_1m s ON h.symbol = s.symbol AND h.timestamp::TIMESTAMP = s.time::TIMESTAMP
+                WHERE h.symbol = ?
+                ORDER BY h.timestamp ASC
+            """
+            res = client.execute(query, [symbol])
+            rows = res.rows
+        else:
+            client.attach(hp, "hist", read_only=True)
+            client.attach(sp, "live", read_only=True)
+
+            query = f"""
+                WITH stream_1m AS (
+                    SELECT 
+                        time_bucket(INTERVAL '1 minute', timestamp::TIMESTAMP) AS time,
+                        symbol,
+                        last(price ORDER BY timestamp) AS close_stream
+                    FROM live.tick_data
+                    WHERE symbol = ?
+                    GROUP BY time, symbol
+                )
+                SELECT 
+                    h.timestamp,
+                    h.symbol,
+                    h.close AS rest_close,
+                    s.close_stream AS stream_close,
+                    ABS(h.close - s.close_stream) AS drift
+                FROM hist.minute_data h
+                JOIN stream_1m s ON h.symbol = s.symbol AND h.timestamp::TIMESTAMP = s.time
+                WHERE h.symbol = ?
+                ORDER BY h.timestamp ASC
+            """
+            res = client.execute(query, [symbol, symbol])
+            rows = res.rows
 
         if not rows:
             return {
@@ -418,10 +481,11 @@ def analyze_price_drift(symbol: str, tolerance: float = 0.50, client=None, hist_
 
 # --- Database Health Overview (DASH-01 / Health) ---
 
-def get_database_health_report(historical_path=None, streaming_path=None) -> dict:
+def get_database_health_report(historical_path=None, streaming_path=None, lake_root=None) -> dict:
     """
-    Generates a full operational health report across both DuckDB databases:
-    file sizes, total rows, active tables, min/max timestamps, and overall status.
+    Generates a full operational health report across DuckDB databases and the Tick Lake:
+    file sizes, total rows, active tables, min/max timestamps, tick lake partition footprint,
+    and overall status.
     """
     hp = historical_path or DEFAULT_HISTORICAL_DB_PATH
     sp = streaming_path or DEFAULT_STREAMING_DB_PATH
@@ -431,6 +495,7 @@ def get_database_health_report(historical_path=None, streaming_path=None) -> dic
         "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC'),
         "historical": {},
         "streaming": {},
+        "tick_lake": {},
         "issues": []
     }
 
@@ -495,5 +560,107 @@ def get_database_health_report(historical_path=None, streaming_path=None) -> dic
             report["status"] = "DEGRADED" if report["status"] != "CRITICAL" else "CRITICAL"
     else:
         report["streaming"] = {"exists": False, "path": sp, "note": "Streaming DB file not created yet"}
+
+    # 3. Tick Lake check
+    resolved_lake_root = None
+    if lake_root is not None:
+        resolved_lake_root = Path(lake_root).resolve()
+    else:
+        env_lake = os.environ.get("TICK_LAKE_ROOT")
+        if env_lake:
+            resolved_lake_root = Path(env_lake).resolve()
+        else:
+            try:
+                from src.storage.config import resolve_tick_lake_root
+                resolved_lake_root = resolve_tick_lake_root()
+            except Exception:
+                pass
+
+    if resolved_lake_root is None or not (resolved_lake_root / "lake.json").exists():
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        cand = repo_root / "data" / "tick_lake"
+        if (cand / "lake.json").exists():
+            resolved_lake_root = cand.resolve()
+
+    if resolved_lake_root and (resolved_lake_root / "lake.json").exists():
+        try:
+            with open(resolved_lake_root / "lake.json", "r", encoding="utf-8") as f:
+                lake_meta = json.load(f)
+
+            ticks_dir = resolved_lake_root / "ticks"
+            parquet_files = list(ticks_dir.rglob("*.parquet")) if ticks_dir.exists() else []
+            total_bytes = sum(f.stat().st_size for f in parquet_files)
+            total_mb = round(total_bytes / (1024 * 1024), 2)
+            partitions = list(ticks_dir.glob("symbol=*/date=*")) if ticks_dir.exists() else []
+
+            active_symbol_count = 0
+            try:
+                from src.storage.registry import SymbolRegistry
+                reg = SymbolRegistry(root=resolved_lake_root)
+                active_symbol_count = len(reg.get_active_symbols())
+            except Exception:
+                reg_file = resolved_lake_root / "_control" / "registry.json"
+                if not reg_file.exists():
+                    reg_file = resolved_lake_root / "registry.json"
+                if reg_file.exists():
+                    try:
+                        with open(reg_file, "r", encoding="utf-8") as f:
+                            reg_data = json.load(f)
+                        active_symbol_count = sum(
+                            1 for s in reg_data.get("symbols", {}).values()
+                            if s.get("status") == "ACTIVE" and s.get("active", True)
+                        )
+                    except Exception:
+                        pass
+
+            last_heartbeat = None
+            writer_status_info = {}
+            status_file = resolved_lake_root / "_control" / "writer_status.json"
+            if status_file.exists():
+                try:
+                    with open(status_file, "r", encoding="utf-8") as f:
+                        w_status = json.load(f)
+                    last_heartbeat = w_status.get("updated_at") or w_status.get("heartbeat_utc") or w_status.get("last_publish_time")
+                    writer_status_info = {
+                        "writer_id": w_status.get("writer_id"),
+                        "status": w_status.get("status"),
+                        "total_rows_written": w_status.get("total_rows_written", 0),
+                        "batches_published": w_status.get("batches_published", 0),
+                        "pid": w_status.get("pid"),
+                    }
+                except Exception:
+                    pass
+
+            report["tick_lake"] = {
+                "exists": True,
+                "path": str(resolved_lake_root),
+                "lake_id": lake_meta.get("lake_id"),
+                "schema_version": lake_meta.get("schema_version"),
+                "total_parquet_files": len(parquet_files),
+                "total_bytes": total_bytes,
+                "size_mb": total_mb,
+                "partitions_count": len(partitions),
+                "active_symbol_count": active_symbol_count,
+                "active_symbols_count": active_symbol_count,
+                "last_heartbeat": last_heartbeat,
+                "writer_status": writer_status_info,
+            }
+
+            # If tick lake is valid and historical DB is healthy, report status HEALTHY
+            if report.get("historical", {}).get("exists") and not any("Historical" in iss for iss in report["issues"]):
+                report["status"] = "HEALTHY"
+        except Exception as e:
+            report["tick_lake"] = {
+                "exists": True,
+                "path": str(resolved_lake_root),
+                "error": str(e)
+            }
+            report["issues"].append(f"Tick lake introspection error: {e}")
+    else:
+        report["tick_lake"] = {
+            "exists": False,
+            "path": str(resolved_lake_root) if resolved_lake_root else None,
+            "note": "Tick lake not initialized"
+        }
 
     return report

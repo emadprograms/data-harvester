@@ -398,24 +398,35 @@ class StreamingEngine:
             if init_conn:
                 init_conn.close()
 
-        # Discover symbols from streaming_database_symbols
-        s_map = get_streaming_database_symbols_from_db()
-
+        # Discover symbols: when self.registry is configured, read active symbols directly via self.registry.get_active_symbols() bypassing DuckDB calls entirely
+        self._subscriptions_initialized = True
         capital_symbols = []
         self.active_streaming_symbols = set()
         self.epic_to_display = {}
+        s_map = None
 
-        if s_map:
-            for display_name, tickers in s_map.items():
-                if tickers.get("is_active", True):
-                    self.active_streaming_symbols.add(display_name)
-                    c_ticker = tickers.get("capital_ticker")
-                    if c_ticker:
-                        capital_symbols.append(c_ticker)
-                        self.active_streaming_symbols.add(c_ticker)
-                        self.epic_to_display[c_ticker] = display_name
-                    else:
-                        self.epic_to_display[display_name] = display_name
+        if self.registry is not None:
+            active_entries = self.registry.get_active_symbols()
+            for entry in active_entries:
+                sym = entry.symbol
+                self.active_streaming_symbols.add(sym)
+                c_ticker = entry.capital_ticker or sym
+                self.active_streaming_symbols.add(c_ticker)
+                capital_symbols.append(c_ticker)
+                self.epic_to_display[c_ticker] = sym
+        else:
+            s_map = get_streaming_database_symbols_from_db()
+            if s_map:
+                for display_name, tickers in s_map.items():
+                    if tickers.get("is_active", True):
+                        self.active_streaming_symbols.add(display_name)
+                        c_ticker = tickers.get("capital_ticker")
+                        if c_ticker:
+                            capital_symbols.append(c_ticker)
+                            self.active_streaming_symbols.add(c_ticker)
+                            self.epic_to_display[c_ticker] = display_name
+                        else:
+                            self.epic_to_display[display_name] = display_name
 
         if not capital_symbols:
             capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
@@ -441,10 +452,18 @@ class StreamingEngine:
 
         # Optional Binance streamer (disabled by default per user specification)
         if self.enable_binance:
-            binance_symbols = [
-                tickers.get("binance_ticker") for display_name, tickers in (s_map or {}).items()
-                if tickers.get("binance_ticker")
-            ] or ["btcusdt", "ethusdt"]
+            binance_symbols = []
+            if self.registry is not None:
+                for entry in self.registry.get_active_symbols():
+                    if entry.binance_ticker:
+                        binance_symbols.append(entry.binance_ticker)
+            elif s_map:
+                binance_symbols = [
+                    tickers.get("binance_ticker") for display_name, tickers in s_map.items()
+                    if tickers.get("binance_ticker")
+                ]
+            if not binance_symbols:
+                binance_symbols = ["btcusdt", "ethusdt"]
             self.binance_streamer = BinanceStreamer(
                 symbols=binance_symbols,
                 stream_type="trade",
