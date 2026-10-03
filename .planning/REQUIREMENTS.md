@@ -31,9 +31,9 @@ Harden and stress-test the partitioned Parquet tick lake architecture across ext
 - [x] **TEST-P25-03**: Reverse-chronological tape pagination with high offsets and non-existent symbol pruning (`src/storage/reader.py`).
 
 ### Phase 26: Migration Tooling Rehearsal & Fuzz Tests
-- [ ] **TEST-P26-01**: Migration of corrupt / partial legacy DuckDB tables and schema drift (`tools/migrate_streaming_to_parquet.py`).
-- [ ] **TEST-P26-02**: Simulated crash interruption across all migration modes (`plan`, `export`, `verify`, `publish`) (`tools/migrate_streaming_to_parquet.py`).
-- [ ] **TEST-P26-03**: Two-way `EXCEPT ALL` fuzz testing with synthetic data corruption and precision mismatch detection (`tools/migrate_streaming_to_parquet.py`).
+- [x] **TEST-P26-01**: Migration of corrupt / partial legacy DuckDB tables and schema drift (`tools/migrate_streaming_to_parquet.py`).
+- [x] **TEST-P26-02**: Simulated crash interruption across all migration modes (`plan`, `export`, `verify`, `publish`) (`tools/migrate_streaming_to_parquet.py`).
+- [x] **TEST-P26-03**: Two-way `EXCEPT ALL` fuzz testing with synthetic data corruption and precision mismatch detection (`tools/migrate_streaming_to_parquet.py`).
 
 ### Phase 27: Multi-Process Long-Running Soak & Chaos Tests
 - [ ] **TEST-P27-01**: Multi-process soak testing under continuous ingestion and continuous analytical reading (`tools/service_supervisor.py`, `tools/validate_concurrency.py`).

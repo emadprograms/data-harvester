@@ -83,7 +83,7 @@ See: [.planning/milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
   - Multi-threaded in-memory DuckDB connection scaling (30+ concurrent readers) without memory leaks.
   - Vectorized resampling edge cases: sparse partitions, multi-day roll-overs, DST shifts, leap years.
   - Reverse-chronological tape pagination with high offsets and non-existent symbol pruning.
-- [ ] **Phase 26: Migration Tooling Rehearsal & Fuzz Tests** (`tools/migrate_streaming_to_parquet.py`)
+- [x] **Phase 26: Migration Tooling Rehearsal & Fuzz Tests** (`tools/migrate_streaming_to_parquet.py`) — completed 2026-10-03 (commit 56ab82a6, 32/32 tests passing)
   - Migration of corrupt / partial legacy DuckDB tables and schema drift.
   - Simulated crash interruption across all migration modes (`plan`, `export`, `verify`, `publish`).
   - Two-way `EXCEPT ALL` fuzz testing with synthetic data corruption and precision mismatch detection.
