@@ -245,8 +245,12 @@ def get_historical_candles(symbol: str, timeframe: str = "1m", start: str = None
 
 def _get_lake_reader():
     """Select lake when configured; propagate selected-lake integrity failures."""
-    from src.storage.config import StorageConfigError, load_lake_metadata
-    from src.storage.reader import get_tick_lake_reader
+    from src.storage.config import StorageConfigError
+    from src.storage.reader import (
+        LakeReaderError,
+        LakeUnavailableError,
+        get_tick_lake_reader,
+    )
 
     explicitly_selected = bool(os.environ.get("TICK_LAKE_ROOT") or os.environ.get("DATA_DIR"))
     try:
@@ -258,18 +262,18 @@ def _get_lake_reader():
 
     if explicitly_selected:
         if reader is None or reader.root is None:
-            raise StorageConfigError("A lake backend was explicitly selected but its root could not be resolved")
+            raise LakeUnavailableError("A lake backend was explicitly selected but its root could not be resolved")
         # Configuration is not allowed to turn a missing/corrupt lake into an empty
         # legacy fallback. Validate metadata before choosing the reader.
-        load_lake_metadata(reader.root)
+        reader.validate_lake()
         return reader
 
     if reader and reader.root:
-        ticks_dir = reader.root / "ticks"
-        status_file = reader.root / "_control" / "writer_status.json"
-        lake_json = reader.root / "lake.json"
-        if ticks_dir.is_dir() or status_file.is_file() or lake_json.is_file():
+        try:
+            reader.validate_lake()
             return reader
+        except (LakeReaderError, StorageConfigError):
+            return None
     return None
 
 

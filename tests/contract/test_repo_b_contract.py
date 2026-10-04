@@ -31,11 +31,19 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
+from zoneinfo import ZoneInfo
+
 from src.storage.config import LakeMaintenanceInProgressError
 from src.storage.parquet_writer import TickLakeWriter
 from src.storage.publication import recover_pending_publications
 from src.storage.config import LakeNotFoundError
-from src.storage.reader import TickLakeReader
+from src.storage.reader import (
+    LakeCorruptedMetadataError,
+    LakeIncompatibleSchemaError,
+    LakeReaderError,
+    LakeUnavailableError,
+    TickLakeReader,
+)
 from tests.contract.lake_fixture import (
     ALL_TICKS,
     EDGE_CASE_TICKS,
@@ -750,14 +758,14 @@ def test_missing_lake_root_behaves_as_documented(tmp_path):
     assert reader.query_candles(SYMBOL, START_DATE, END_DATE, "1m") == []
     assert namespace["query_tape"](missing, SYMBOL, limit=5) == []
 
-    # The shipped reader does NOT fail fast on a missing root: query_candles
-    # returns [] as soon as partition resolution finds nothing. Earlier revisions
-    # of the contract claimed otherwise; §7.1 now states the real behaviour, and
-    # this test holds the documentation to it.
+    # The shipped reader fails fast with LakeUnavailableError on a missing root
     shipped = TickLakeReader(root=missing)
-    assert shipped.query_candles(SYMBOL, "1m") == [], (
-        "the shipped reader changed its missing-root behaviour; §7.1 must be updated"
-    )
+    with pytest.raises(LakeUnavailableError):
+        shipped.query_candles(SYMBOL, "1m")
+
+    # Also fails fast when initialized with validate_root=True
+    with pytest.raises(LakeUnavailableError):
+        TickLakeReader(root=missing, validate_root=True)
 
 
 def test_maintenance_guard_pauses_the_reader_and_resumes_afterwards(lake):
@@ -778,22 +786,18 @@ def test_maintenance_guard_pauses_the_reader_and_resumes_afterwards(lake):
     assert candles, "the reader did not resume after maintenance finished"
 
 
-def test_a_file_removed_between_resolve_and_query_is_silently_partial(lake):
-    """Documented hazard (§7.3): a vanished file yields fewer rows, not an error.
+def test_file_removed_before_resolution_returns_discovered_files_cleanly(lake):
+    """Experiment 1 (Before resolution): Vanished file before discovery.
 
-    DuckDB does not raise when one of the explicitly listed files has been
-    removed — it returns results computed from what is left. A consumer that
-    treats "no exception" as "complete" will silently under-report. This test
-    pins that behaviour so the documented remedy (re-resolve and retry, plus a
-    row-count sanity check) cannot quietly become stale advice.
+    When a file is removed before resolution occurs, partition discovery simply
+    identifies the remaining files. DuckDB executes cleanly over the discovered
+    subset without error, returning fewer rows corresponding only to discovered data.
     """
     namespace = load_contract_namespace()
-    complete = namespace["RepoBTickReader"](str(lake)).query_candles(
-        SYMBOL, START_DATE, END_DATE, "1m"
-    )
+    reader = namespace["RepoBTickReader"](str(lake))
+    complete = reader.query_candles(SYMBOL, START_DATE, END_DATE, "1m")
     assert len(complete) > 1
 
-    reader = namespace["RepoBTickReader"](str(lake))
     resolved = reader._resolve_files(SYMBOL, START_DATE, END_DATE)
     assert len(resolved) > 1
 
@@ -801,16 +805,299 @@ def test_a_file_removed_between_resolve_and_query_is_silently_partial(lake):
     backup = victim.with_suffix(".parquet.bak")
     victim.rename(backup)
     try:
+        # File was removed before query_candles called _resolve_files
         partial = reader.query_candles(SYMBOL, START_DATE, END_DATE, "1m")
         assert len(partial) < len(complete), (
-            "expected a partial result after removing a resolved file; "
-            f"got {len(partial)} candles vs {len(complete)}"
+            f"expected fewer candles after pre-resolution file removal: {len(partial)} vs {len(complete)}"
         )
     finally:
         backup.rename(victim)
 
-    # Re-resolving clears the stale snapshot and restores the full result.
-    reread = namespace["RepoBTickReader"](str(lake)).query_candles(
-        SYMBOL, START_DATE, END_DATE, "1m"
+    restored = reader.query_candles(SYMBOL, START_DATE, END_DATE, "1m")
+    assert len(restored) == len(complete), "restoring the file did not restore the full result"
+
+
+def test_barrier_snapshot_race_file_removed_after_resolution_raises_io_error(lake):
+    """Experiment 2 (After resolution with barrier): True snapshot race.
+
+    Capture the exact resolved file list passed to read_parquet(...).
+    Block at a barrier immediately before DuckDB executes read_parquet(files).
+    In another thread, remove one of the captured files from disk.
+    Release the barrier to execute the query.
+    Assert that DuckDB raises an explicit duckdb.IOException (file not found),
+    and NEVER returns silent partial results.
+    """
+    import duckdb
+
+    namespace = load_contract_namespace()
+    reader = namespace["RepoBTickReader"](str(lake))
+    resolved = reader._resolve_files(SYMBOL, START_DATE, END_DATE)
+    assert len(resolved) > 1
+
+    victim = Path(resolved[0])
+    backup = victim.with_suffix(".parquet.bak")
+
+    barrier_before_query = threading.Event()
+    barrier_file_removed = threading.Event()
+    thread_result = {"candles": None, "error": None}
+
+    orig_connect = duckdb.connect
+
+    class HookedConnection:
+        def __init__(self, con):
+            self._con = con
+
+        def execute(self, sql, *args, **kwargs):
+            if "read_parquet" in sql:
+                barrier_before_query.set()
+                if not barrier_file_removed.wait(timeout=10.0):
+                    raise TimeoutError("Barrier timeout waiting for victim file removal")
+            return self._con.execute(sql, *args, **kwargs)
+
+        def close(self):
+            return self._con.close()
+
+        def __getattr__(self, name):
+            return getattr(self._con, name)
+
+    def hooked_connect(*args, **kwargs):
+        return HookedConnection(orig_connect(*args, **kwargs))
+
+    def reader_worker():
+        try:
+            candles = reader.query_candles(SYMBOL, START_DATE, END_DATE, "1m")
+            thread_result["candles"] = candles
+        except Exception as exc:
+            thread_result["error"] = exc
+
+    duckdb.connect = hooked_connect
+    t = threading.Thread(target=reader_worker)
+    try:
+        t.start()
+        assert barrier_before_query.wait(timeout=5.0), "Reader worker did not reach execution barrier"
+
+        victim.rename(backup)
+        barrier_file_removed.set()
+
+        t.join(timeout=10.0)
+        assert not t.is_alive(), "Reader worker thread hung"
+    finally:
+        duckdb.connect = orig_connect
+        if backup.exists() and not victim.exists():
+            backup.rename(victim)
+
+    # Assert DuckDB raises an explicit IO error and NEVER returns silent partial results
+    assert thread_result["candles"] is None, (
+        f"DuckDB silently returned partial results ({len(thread_result['candles'])} candles) instead of raising error!"
     )
-    assert len(reread) == len(complete), "re-resolving did not restore the full result"
+    err = thread_result["error"]
+    assert err is not None, "Expected an error but reader completed without exception"
+    assert isinstance(err, duckdb.IOException) or "IO Error" in str(err) or "No files found" in str(err), (
+        f"Expected duckdb.IOException or file not found error, got {type(err)}: {err}"
+    )
+
+
+def test_shipped_reader_barrier_snapshot_race_raises_io_error(lake):
+    """Verify shipped TickLakeReader also fails fast with IOException when a file vanishes after resolution."""
+    import duckdb
+
+    reader = TickLakeReader(root=lake)
+    files = reader.resolve_partition_files(SYMBOL)
+    assert len(files) > 1
+
+    victim = Path(files[0])
+    backup = victim.with_suffix(".parquet.bak")
+
+    barrier_before_query = threading.Event()
+    barrier_file_removed = threading.Event()
+    thread_result = {"candles": None, "error": None}
+
+    orig_connect = duckdb.connect
+
+    class HookedConnection:
+        def __init__(self, con):
+            self._con = con
+
+        def execute(self, sql, *args, **kwargs):
+            if "read_parquet" in sql:
+                barrier_before_query.set()
+                if not barrier_file_removed.wait(timeout=10.0):
+                    raise TimeoutError("Barrier timeout waiting for victim file removal")
+            return self._con.execute(sql, *args, **kwargs)
+
+        def close(self):
+            return self._con.close()
+
+        def __getattr__(self, name):
+            return getattr(self._con, name)
+
+    def hooked_connect(*args, **kwargs):
+        return HookedConnection(orig_connect(*args, **kwargs))
+
+    def reader_worker():
+        try:
+            candles = reader.query_candles(SYMBOL, "1m")
+            thread_result["candles"] = candles
+        except Exception as exc:
+            thread_result["error"] = exc
+
+    duckdb.connect = hooked_connect
+    t = threading.Thread(target=reader_worker)
+    try:
+        t.start()
+        assert barrier_before_query.wait(timeout=5.0), "Reader worker did not reach execution barrier"
+
+        victim.rename(backup)
+        barrier_file_removed.set()
+
+        t.join(timeout=10.0)
+        assert not t.is_alive(), "Reader worker thread hung"
+    finally:
+        duckdb.connect = orig_connect
+        if backup.exists() and not victim.exists():
+            backup.rename(victim)
+
+    assert thread_result["candles"] is None
+    err = thread_result["error"]
+    assert err is not None
+    assert isinstance(err, duckdb.IOException) or "IO Error" in str(err) or "No files found" in str(err)
+
+
+def test_aware_datetimes_versus_utc_strings_produce_identical_results(lake):
+    """READ-04: Aware datetimes (in any timezone) vs UTC strings produce identical candle queries."""
+    reader = TickLakeReader(root=lake)
+
+    # 1. Using tz-aware datetime in US/Eastern (EDT is UTC-4 on 2026-10-02)
+    start_et = datetime(2026, 10, 2, 8, 0, tzinfo=ZoneInfo("America/New_York"))
+    end_et = datetime(2026, 10, 2, 8, 5, tzinfo=ZoneInfo("America/New_York"))
+    candles_et = reader.query_candles(SYMBOL, "1m", start=start_et, end=end_et)
+
+    # 2. Using tz-aware datetime in UTC (equivalent instant: 12:00 to 12:05 UTC)
+    start_utc = datetime(2026, 10, 2, 12, 0, tzinfo=ZoneInfo("UTC"))
+    end_utc = datetime(2026, 10, 2, 12, 5, tzinfo=ZoneInfo("UTC"))
+    candles_utc = reader.query_candles(SYMBOL, "1m", start=start_utc, end=end_utc)
+
+    # 3. Using ISO UTC string with Z
+    start_str_z = "2026-10-02T12:00:00Z"
+    end_str_z = "2026-10-02T12:05:00Z"
+    candles_str_z = reader.query_candles(SYMBOL, "1m", start=start_str_z, end=end_str_z)
+
+    # 4. Using naive string formatted as UTC
+    start_str_naive = "2026-10-02 12:00:00"
+    end_str_naive = "2026-10-02 12:05:00"
+    candles_str_naive = reader.query_candles(SYMBOL, "1m", start=start_str_naive, end=end_str_naive)
+
+    assert len(candles_et) > 0, "No candles returned for valid session range"
+    assert len(candles_et) == len(candles_utc) == len(candles_str_z) == len(candles_str_naive), (
+        f"Mismatch in candle counts: ET={len(candles_et)}, UTC={len(candles_utc)}, "
+        f"str_z={len(candles_str_z)}, str_naive={len(candles_str_naive)}"
+    )
+
+    for i in range(len(candles_et)):
+        assert candles_et[i] == candles_utc[i] == candles_str_z[i] == candles_str_naive[i], (
+            f"Candle mismatch at index {i}: {candles_et[i]} vs {candles_utc[i]}"
+        )
+
+
+def test_half_open_intervals_support(lake):
+    """READ-04: Verify inclusive_end=True vs inclusive_end=False (half-open [start, end))."""
+    reader = TickLakeReader(root=lake)
+
+    # Retrieve ticks for AAPL on 2026-10-02 between 12:00:00 and 12:05:00
+    all_ticks = reader.query_ticks(SYMBOL, start="2026-10-02 12:00:00", end="2026-10-02 12:05:00")
+    assert len(all_ticks) >= 5, f"Expected at least 5 ticks, got {len(all_ticks)}"
+
+    # Pick the timestamp of the 5th tick (12:02:00) as the cutoff
+    cutoff_ts_str = all_ticks[4]["timestamp"]
+
+    # Inclusive end: includes the tick exactly at cutoff_ts_str
+    ticks_inclusive = reader.query_ticks(
+        SYMBOL,
+        start="2026-10-02 12:00:00",
+        end=cutoff_ts_str,
+        inclusive_end=True,
+    )
+    # Exclusive end: excludes the tick exactly at cutoff_ts_str
+    ticks_exclusive = reader.query_ticks(
+        SYMBOL,
+        start="2026-10-02 12:00:00",
+        end=cutoff_ts_str,
+        inclusive_end=False,
+    )
+
+    assert len(ticks_inclusive) == 5
+    assert len(ticks_exclusive) == 4
+    assert cutoff_ts_str not in [t["timestamp"] for t in ticks_exclusive]
+    assert any(t["timestamp"] == cutoff_ts_str for t in ticks_inclusive)
+
+
+def test_reader_root_validation_matrix(tmp_path):
+    """READ-01: Verify structured exceptions for unavailable, corrupt, and uninitialized roots."""
+    # 1. Nonexistent directory -> LakeUnavailableError
+    missing_dir = tmp_path / "does_not_exist"
+    reader_missing = TickLakeReader(root=missing_dir)
+    with pytest.raises(LakeUnavailableError):
+        reader_missing.query_candles(SYMBOL, "1m")
+    with pytest.raises(LakeUnavailableError):
+        reader_missing.connect()
+    with pytest.raises(LakeUnavailableError):
+        reader_missing.get_lake_health_report()
+    with pytest.raises(LakeUnavailableError):
+        TickLakeReader(root=missing_dir, validate_root=True)
+
+    # 2. Path is a file, not a directory -> LakeUnavailableError
+    file_not_dir = tmp_path / "a_file.txt"
+    file_not_dir.write_text("hello", encoding="utf-8")
+    reader_file = TickLakeReader(root=file_not_dir)
+    with pytest.raises(LakeUnavailableError):
+        reader_file.validate_lake()
+
+    # 3. Missing lake.json -> LakeCorruptedMetadataError
+    empty_uninit = tmp_path / "empty_dir"
+    empty_uninit.mkdir()
+    reader_uninit = TickLakeReader(root=empty_uninit)
+    with pytest.raises(LakeCorruptedMetadataError):
+        reader_uninit.query_candles(SYMBOL, "1m")
+    with pytest.raises(LakeCorruptedMetadataError):
+        reader_uninit.validate_lake()
+
+    # 4. Invalid JSON in lake.json -> LakeCorruptedMetadataError
+    bad_json_dir = tmp_path / "bad_json"
+    bad_json_dir.mkdir()
+    (bad_json_dir / "lake.json").write_text("{corrupt: json syntax}", encoding="utf-8")
+    reader_bad_json = TickLakeReader(root=bad_json_dir)
+    with pytest.raises(LakeCorruptedMetadataError):
+        reader_bad_json.query_candles(SYMBOL, "1m")
+
+    # 5. Unsupported schema version -> LakeIncompatibleSchemaError
+    bad_ver_dir = tmp_path / "bad_version"
+    bad_ver_dir.mkdir()
+    bad_meta = {
+        "lake_id": "lake_test",
+        "created_at": "2026-10-04T00:00:00Z",
+        "format": "tick_lake",
+        "schema_version": 999,
+        "compatible_versions": [999],
+    }
+    (bad_ver_dir / "lake.json").write_text(json.dumps(bad_meta), encoding="utf-8")
+    reader_bad_ver = TickLakeReader(root=bad_ver_dir)
+    with pytest.raises(LakeIncompatibleSchemaError):
+        reader_bad_ver.query_candles(SYMBOL, "1m")
+
+    # 6. Validly initialized lake with no ticks -> returns legitimate empty results without error
+    valid_empty = tmp_path / "valid_empty"
+    valid_meta = {
+        "lake_id": "lake_empty",
+        "created_at": "2026-10-04T00:00:00Z",
+        "format": "tick_lake",
+        "schema_version": 1,
+        "compatible_versions": [1],
+    }
+    valid_empty.mkdir()
+    (valid_empty / "lake.json").write_text(json.dumps(valid_meta), encoding="utf-8")
+    reader_valid_empty = TickLakeReader(root=valid_empty)
+    assert reader_valid_empty.query_candles(SYMBOL, "1m") == []
+    assert reader_valid_empty.query_ticks(SYMBOL) == []
+    assert reader_valid_empty.get_tape(SYMBOL)["ticks"] == []
+    assert reader_valid_empty.get_candles(SYMBOL)["candles"] == []
+    assert reader_valid_empty.get_lake_health_report()["status"] == "empty"

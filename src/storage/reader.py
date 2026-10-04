@@ -20,12 +20,36 @@ import psutil
 import pyarrow.parquet as pq
 
 from src.storage.config import (
+    IncompatibleSchemaError,
     LakeMaintenanceInProgressError,
+    LakeNotFoundError,
+    StorageConfigError,
     decode_symbol,
     encode_symbol,
     resolve_tick_lake_root,
 )
 from src.storage.schema import LAKE_SCHEMA_V1
+
+
+class LakeReaderError(StorageConfigError):
+    """Base error for lake reader operations."""
+    pass
+
+
+class LakeUnavailableError(LakeReaderError):
+    """Raised when configured root directory does not exist, is not a directory, or lost mount."""
+    pass
+
+
+class LakeCorruptedMetadataError(LakeReaderError, LakeNotFoundError):
+    """Raised when lake.json is missing, unreadable, or invalid JSON."""
+    pass
+
+
+class LakeIncompatibleSchemaError(LakeReaderError, IncompatibleSchemaError):
+    """Raised when schema version is unsupported."""
+    pass
+
 
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
@@ -92,6 +116,41 @@ def _safe_float(val: Any, decimals: Optional[int] = None) -> Optional[float]:
         return None
 
 
+def _normalize_datetime_bound(
+    val: Optional[Union[str, date, datetime]],
+) -> Optional[datetime]:
+    """
+    Normalizes a datetime bound to naive UTC datetime.
+    Supports timezone-aware datetimes, naive datetimes (assumed UTC),
+    dates, and ISO format strings with Z or offsets.
+    """
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        if val.tzinfo is not None:
+            return val.astimezone(timezone.utc).replace(tzinfo=None)
+        return val
+    if isinstance(val, date):
+        return datetime.combine(val, datetime.min.time())
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return None
+        try:
+            clean_s = s.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(clean_s)
+            if dt.tzinfo is not None:
+                return dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
+        except Exception:
+            try:
+                d = date.fromisoformat(s[:10])
+                return datetime.combine(d, datetime.min.time())
+            except Exception:
+                return None
+    return None
+
+
 class TickLakeReader:
     """
     Reader interface for Partitioned Parquet Tick Lake.
@@ -106,6 +165,7 @@ class TickLakeReader:
         memory_limit: str = "2GB",
         max_memory: Optional[str] = None,
         check_maintenance: bool = True,
+        validate_root: bool = False,
     ):
         if root is not None:
             self.root = Path(root).resolve()
@@ -119,6 +179,50 @@ class TickLakeReader:
         self.max_memory = str(max_memory or memory_limit or "2GB")
         self.memory_limit = self.max_memory
         self.check_maintenance = check_maintenance
+        if validate_root:
+            self.validate_lake()
+
+    def validate_lake(self) -> None:
+        """
+        Validate that the configured lake root exists and contains valid metadata.
+        Raises:
+            LakeUnavailableError: if root is None, does not exist, or is not a directory.
+            LakeCorruptedMetadataError: if lake.json is missing, unreadable, or invalid JSON.
+            LakeIncompatibleSchemaError: if lake schema/format is unsupported.
+        """
+        if self.root is None:
+            raise LakeUnavailableError("Tick lake root is not configured or resolved")
+
+        if not self.root.exists():
+            raise LakeUnavailableError(f"Tick lake root does not exist: {self.root}")
+
+        if not self.root.is_dir():
+            raise LakeUnavailableError(f"Tick lake root is not a directory: {self.root}")
+
+        lake_json = self.root / "lake.json"
+        if not lake_json.exists():
+            raise LakeCorruptedMetadataError(f"Lake metadata file missing at {lake_json}")
+        if not lake_json.is_file():
+            raise LakeCorruptedMetadataError(f"Lake metadata is not a regular file: {lake_json}")
+
+        try:
+            with open(lake_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as exc:
+            raise LakeCorruptedMetadataError(f"Lake metadata at {lake_json} is invalid JSON: {exc}") from exc
+        except OSError as exc:
+            raise LakeUnavailableError(f"Cannot read lake metadata at {lake_json}: {exc}") from exc
+
+        if not isinstance(data, dict):
+            raise LakeCorruptedMetadataError(f"Lake metadata at {lake_json} must be a JSON object")
+
+        if data.get("format") != "tick_lake":
+            raise LakeIncompatibleSchemaError(f"Unsupported lake format: {data.get('format')}")
+
+        compatible_versions = data.get("compatible_versions", [1])
+        schema_version = data.get("schema_version", 1)
+        if 1 not in compatible_versions and schema_version != 1:
+            raise LakeIncompatibleSchemaError(f"Incompatible schema version: {schema_version}")
 
     def _check_maintenance(self) -> None:
         """Raise LakeMaintenanceInProgressError if maintenance lock file is present."""
@@ -132,6 +236,7 @@ class TickLakeReader:
         Creates an isolated in-memory DuckDB connection configured for UTC and resource limits.
         Must be closed in a finally block by callers.
         """
+        self.validate_lake()
         self._check_maintenance()
         con = duckdb.connect(":memory:")
         con.execute("SET TimeZone = 'UTC'")
@@ -149,13 +254,14 @@ class TickLakeReader:
         Resolve candidate partition files for a symbol and date range before query.
         Prunes at the filesystem directory level and never returns non-existent paths.
         """
+        self.validate_lake()
         self._check_maintenance()
-        if self.root is None:
-            return []
 
         ticks_dir = self.root / "ticks"
-        if not ticks_dir.is_dir():
+        if not ticks_dir.exists():
             return []
+        if not ticks_dir.is_dir():
+            raise LakeUnavailableError(f"ticks path is not a directory: {ticks_dir}")
 
         sym_dirs: List[Path] = []
         if symbol is not None:
@@ -171,59 +277,51 @@ class TickLakeReader:
                     raw_path = ticks_dir / f"symbol={raw_enc}"
                     if raw_path.is_dir():
                         sym_dirs.append(raw_path)
-            except Exception:
+            except (ValueError, PathTraversalError):
                 return []
             if not sym_dirs:
                 return []
         else:
             try:
                 sym_dirs = [d for d in ticks_dir.iterdir() if d.is_dir() and d.name.startswith("symbol=")]
-            except Exception:
+            except (FileNotFoundError, NotADirectoryError):
                 return []
+            except OSError as exc:
+                raise LakeUnavailableError(f"Cannot read ticks directory at {ticks_dir}: {exc}") from exc
 
-        s_date: Optional[date] = None
-        if start_date is not None:
-            if isinstance(start_date, datetime):
-                s_date = start_date.date()
-            elif isinstance(start_date, date):
-                s_date = start_date
-            elif isinstance(start_date, str) and len(start_date) >= 10:
-                try:
-                    s_date = date.fromisoformat(start_date[:10])
-                except ValueError:
-                    s_date = None
+        s_dt = _normalize_datetime_bound(start_date)
+        s_date = s_dt.date() if s_dt else None
 
-        e_date: Optional[date] = None
-        if end_date is not None:
-            if isinstance(end_date, datetime):
-                e_date = end_date.date()
-            elif isinstance(end_date, date):
-                e_date = end_date
-            elif isinstance(end_date, str) and len(end_date) >= 10:
-                try:
-                    e_date = date.fromisoformat(end_date[:10])
-                except ValueError:
-                    e_date = None
+        e_dt = _normalize_datetime_bound(end_date)
+        e_date = e_dt.date() if e_dt else None
 
         matched_files: List[Path] = []
         for s_dir in sym_dirs:
             try:
-                for d_dir in s_dir.iterdir():
-                    if not d_dir.is_dir() or not d_dir.name.startswith("date="):
-                        continue
-                    try:
-                        d_val = date.fromisoformat(d_dir.name.split("=")[1])
-                    except ValueError:
-                        continue
-                    if s_date is not None and d_val < s_date:
-                        continue
-                    if e_date is not None and d_val > e_date:
-                        continue
-                    for f in d_dir.glob("*.parquet"):
-                        if f.is_file():
-                            matched_files.append(f)
-            except Exception:
+                d_entries = list(s_dir.iterdir())
+            except (FileNotFoundError, NotADirectoryError):
                 continue
+            except OSError as exc:
+                raise LakeUnavailableError(f"Cannot read symbol partition directory at {s_dir}: {exc}") from exc
+
+            for d_dir in d_entries:
+                if not d_dir.is_dir() or not d_dir.name.startswith("date="):
+                    continue
+                try:
+                    d_val = date.fromisoformat(d_dir.name.split("=")[1])
+                except ValueError:
+                    continue
+                if s_date is not None and d_val < s_date:
+                    continue
+                if e_date is not None and d_val > e_date:
+                    continue
+                try:
+                    p_files = list(d_dir.glob("*.parquet"))
+                except OSError as exc:
+                    raise LakeUnavailableError(f"Cannot list files in date partition at {d_dir}: {exc}") from exc
+                for f in p_files:
+                    if f.is_file():
+                        matched_files.append(f)
 
         return sorted(matched_files)
 
@@ -231,39 +329,18 @@ class TickLakeReader:
         self,
         symbol: str,
         timeframe: str = "1m",
-        start: Optional[Union[str, datetime]] = None,
-        end: Optional[Union[str, datetime]] = None,
+        start: Optional[Union[str, date, datetime]] = None,
+        end: Optional[Union[str, date, datetime]] = None,
         limit: Optional[int] = None,
+        inclusive_end: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Deterministic OHLCV candle query using arg_min / arg_max on (timestamp, ingest_id).
         Returns list of candle dictionaries strictly matching calculate_expected_candles oracle.
+        Supports tz-aware datetimes, ISO strings with Z/offset, and half-open intervals (inclusive_end=False).
         """
-        start_dt: Optional[datetime] = None
-        if start is not None:
-            if isinstance(start, datetime):
-                start_dt = start
-            elif isinstance(start, str):
-                try:
-                    clean_s = start.replace("Z", "+00:00")
-                    start_dt = datetime.fromisoformat(clean_s)
-                    if start_dt.tzinfo is not None:
-                        start_dt = start_dt.astimezone(timezone.utc).replace(tzinfo=None)
-                except Exception:
-                    start_dt = None
-
-        end_dt: Optional[datetime] = None
-        if end is not None:
-            if isinstance(end, datetime):
-                end_dt = end
-            elif isinstance(end, str):
-                try:
-                    clean_e = end.replace("Z", "+00:00")
-                    end_dt = datetime.fromisoformat(clean_e)
-                    if end_dt.tzinfo is not None:
-                        end_dt = end_dt.astimezone(timezone.utc).replace(tzinfo=None)
-                except Exception:
-                    end_dt = None
+        start_dt = _normalize_datetime_bound(start)
+        end_dt = _normalize_datetime_bound(end)
 
         s_date = start_dt.date() if start_dt else None
         e_date = end_dt.date() if end_dt else None
@@ -282,7 +359,8 @@ class TickLakeReader:
             where_clauses.append("timestamp >= ?::TIMESTAMP")
             params.append(start_dt.strftime("%Y-%m-%d %H:%M:%S.%f"))
         if end_dt is not None:
-            where_clauses.append("timestamp <= ?::TIMESTAMP")
+            op = "<=" if inclusive_end else "<"
+            where_clauses.append(f"timestamp {op} ?::TIMESTAMP")
             params.append(end_dt.strftime("%Y-%m-%d %H:%M:%S.%f"))
 
         where_sql = " AND ".join(where_clauses)
@@ -665,36 +743,23 @@ class TickLakeReader:
     def query_ticks(
         self,
         symbol: Optional[str] = None,
-        start: Optional[Union[str, datetime]] = None,
-        end: Optional[Union[str, datetime]] = None,
+        start: Optional[Union[str, date, datetime]] = None,
+        end: Optional[Union[str, date, datetime]] = None,
         limit: int = 10000,
         offset: int = 0,
         direction: str = "asc",
+        inclusive_end: bool = True,
     ) -> List[Dict[str, Any]]:
-        """Bounded tick inspection query with limit and offset support."""
+        """Bounded tick inspection query with limit, offset, and interval support."""
         limit = min(max(1, int(limit or 10000)), 100000)
         offset = max(0, int(offset or 0))
         dir_sql = "DESC" if str(direction).lower() == "desc" else "ASC"
 
-        s_date = None
-        if start is not None:
-            if isinstance(start, (date, datetime)):
-                s_date = start.date() if isinstance(start, datetime) else start
-            elif isinstance(start, str) and len(start) >= 10:
-                try:
-                    s_date = date.fromisoformat(start[:10])
-                except Exception:
-                    pass
+        start_dt = _normalize_datetime_bound(start)
+        end_dt = _normalize_datetime_bound(end)
 
-        e_date = None
-        if end is not None:
-            if isinstance(end, (date, datetime)):
-                e_date = end.date() if isinstance(end, datetime) else end
-            elif isinstance(end, str) and len(end) >= 10:
-                try:
-                    e_date = date.fromisoformat(end[:10])
-                except Exception:
-                    pass
+        s_date = start_dt.date() if start_dt else None
+        e_date = end_dt.date() if end_dt else None
 
         files = self.resolve_partition_files(symbol=symbol, start_date=s_date, end_date=e_date)
         if not files:
@@ -707,12 +772,13 @@ class TickLakeReader:
         if symbol:
             where_clauses.append("symbol = ?")
             params.append(symbol.strip().upper())
-        if start:
+        if start_dt is not None:
             where_clauses.append("timestamp >= ?::TIMESTAMP")
-            params.append(str(start).strip())
-        if end:
-            where_clauses.append("timestamp <= ?::TIMESTAMP")
-            params.append(str(end).strip())
+            params.append(start_dt.strftime("%Y-%m-%d %H:%M:%S.%f"))
+        if end_dt is not None:
+            op = "<=" if inclusive_end else "<"
+            where_clauses.append(f"timestamp {op} ?::TIMESTAMP")
+            params.append(end_dt.strftime("%Y-%m-%d %H:%M:%S.%f"))
 
         where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
         query = f"""
@@ -858,6 +924,8 @@ class TickLakeReader:
 
     def get_stream_status(self) -> Dict[str, Any]:
         """Read streamer status from _control/writer_status.json."""
+        self.validate_lake()
+        self._check_maintenance()
         if self.root:
             status_file = self.root / "_control" / "writer_status.json"
             if status_file.is_file():
@@ -897,7 +965,7 @@ class TickLakeReader:
                         "seconds_since_last_tick": seconds_ago,
                         "ticks_last_minute": data.get("last_batch_rows", 0),
                     }
-                except Exception:
+                except (json.JSONDecodeError, OSError):
                     pass
 
             return {
@@ -934,27 +1002,31 @@ class TickLakeReader:
 
     def discover_available_weeks(self) -> List[Dict[str, Any]]:
         """Discover available trading weeks from lake partitions grouped Mon-Fri."""
-        if self.root is None:
-            return []
+        self.validate_lake()
+        self._check_maintenance()
 
         ticks_dir = self.root / "ticks"
-        if not ticks_dir.is_dir():
+        if not ticks_dir.exists():
             return []
+        if not ticks_dir.is_dir():
+            raise LakeUnavailableError(f"ticks path is not a directory: {ticks_dir}")
 
         unique_dates = set()
         try:
-            for date_dir in ticks_dir.glob("symbol=*/date=*"):
-                if date_dir.is_dir():
-                    d_name = date_dir.name
-                    if d_name.startswith("date="):
-                        try:
-                            d = date.fromisoformat(d_name.split("=")[1])
-                            if d.weekday() < 5:
-                                unique_dates.add(d)
-                        except ValueError:
-                            pass
-        except Exception:
-            return []
+            date_dirs = list(ticks_dir.glob("symbol=*/date=*"))
+        except OSError as exc:
+            raise LakeUnavailableError(f"Cannot read ticks partition directories at {ticks_dir}: {exc}") from exc
+
+        for date_dir in date_dirs:
+            if date_dir.is_dir():
+                d_name = date_dir.name
+                if d_name.startswith("date="):
+                    try:
+                        d = date.fromisoformat(d_name.split("=")[1])
+                        if d.weekday() < 5:
+                            unique_dates.add(d)
+                    except ValueError:
+                        pass
 
         if not unique_dates:
             return []
@@ -1409,6 +1481,7 @@ class TickLakeReader:
     ) -> Any:
         """Create an immutable query snapshot over active partition files."""
         import pyarrow.dataset as ds
+        self.validate_lake()
         self._check_maintenance()
         files: List[Path] = []
         if symbols:
@@ -1432,29 +1505,39 @@ class TickLakeReader:
 
     def get_lake_health_report(self) -> Dict[str, Any]:
         """Computes active files count, total size, row count, status."""
-        if self.root is None or not (self.root / "ticks").is_dir():
+        self.validate_lake()
+        self._check_maintenance()
+        ticks_dir = self.root / "ticks"
+        if not ticks_dir.exists() or not ticks_dir.is_dir():
             return {
                 "status": "empty",
-                "root": str(self.root) if self.root else None,
+                "root": str(self.root),
                 "total_files": 0,
                 "total_size_bytes": 0,
                 "active_symbols": 0,
                 "healthy": True,
             }
 
-        ticks_dir = self.root / "ticks"
         total_files = 0
         total_size = 0
         active_symbols = set()
-        for f in ticks_dir.glob("symbol=*/date=*/*.parquet"):
+        try:
+            p_files = list(ticks_dir.glob("symbol=*/date=*/*.parquet"))
+        except OSError as exc:
+            raise LakeUnavailableError(f"Cannot scan ticks directory at {ticks_dir}: {exc}") from exc
+
+        for f in p_files:
             if f.is_file():
                 total_files += 1
-                total_size += f.stat().st_size
+                try:
+                    total_size += f.stat().st_size
+                except OSError:
+                    pass
                 try:
                     sym_part = f.parent.parent.name
                     if sym_part.startswith("symbol="):
                         active_symbols.add(decode_symbol(sym_part.split("=")[1]))
-                except Exception:
+                except (ValueError, PathTraversalError):
                     pass
 
         return {

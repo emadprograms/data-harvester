@@ -1,12 +1,14 @@
 # Repo B Tick Lake Read Contract
 
-**Document Version:** 1.2.0
-**Phase / Milestone:** Originally Phase 19 (P4) / Milestone v4.0 — reviewed and hardened in Milestone v4.1 (Phases 22–27)
+**Document Version:** 1.3.0
+**Phase / Milestone:** Originally Phase 19 (P4) / Milestone v4.0 — reviewed and hardened in Milestone v4.1 (Phases 22–27) & Milestone v4.3 (Finding C43-07)
 **Last reviewed:** 2026-10-04
 **Target Audience:** Repo B engineers, quantitative research teams, backtesting & simulation consumers.
 **Dependencies on `data-harvester`:** **NONE** (zero library imports required; uses standard `duckdb` and `pyarrow`).
 
-**Changes in 1.2.0 (Milestone v4.2, Phase 33):** corrected three defects found by executing these examples against a real lake — (1) the symbol safe set is `[A-Za-z0-9_-]` and the period **is** encoded (`BRK.B` -> `BRK%2EB`), so the example reader now encodes symbols and encoded symbols are actually reachable; (2) `symbol` is physically dictionary-encoded, not plain `string`; (3) the PyArrow example no longer infers Hive partitioning, which collided with the physical `symbol` column and raised `ArrowTypeError`. Added §7.3 (snapshot semantics, including the silent-partial-result hazard).
+**Changes in 1.3.0 (Milestone v4.3, Finding C43-07):** (1) Retracted §7.3 claim that DuckDB silently ignores removed files; verified and documented that DuckDB raises `duckdb.IOException` when an explicit file list contains a missing file. (2) Updated §7.1 with fail-fast root state validation and structured reader exceptions (`LakeUnavailableError`, `LakeCorruptedMetadataError`, `LakeIncompatibleSchemaError`). (3) Documented support for timezone-aware datetimes and half-open intervals (`inclusive_end`).
+
+**Changes in 1.2.0 (Milestone v4.2, Phase 33):** corrected three defects found by executing these examples against a real lake — (1) the symbol safe set is `[A-Za-z0-9_-]` and the period **is** encoded (`BRK.B` -> `BRK%2EB`), so the example reader now encodes symbols and encoded symbols are actually reachable; (2) `symbol` is physically dictionary-encoded, not plain `string`; (3) the PyArrow example no longer infers Hive partitioning, which collided with the physical `symbol` column and raised `ArrowTypeError`. Added §7.3 (snapshot semantics).
 
 **Changes in 1.1.0:** corrected the control-plane filenames (`_control/registry.json`, plus intents and the reload signal), corrected migrated-chunk filenames, documented lake-root resolution and `lake.json` metadata, and added §7 (v4.1 hardening guarantees for readers).
 
@@ -404,14 +406,20 @@ Milestone v4.1 (Phases 22–27) added 122 adversarial tests over the v4.0 lake i
 5. **Tape pagination correctness:** Reverse-chronological tape reads remain stable at high offsets and return empty results (rather than errors) for non-existent symbols or partitions (`tests/storage/test_lake_reader_stress.py`).
 6. **No hidden writer coupling:** Readers continue to operate while the live writer ingests and while the supervisor restarts children under chaos conditions (`tests/integration/test_supervisor_chaos_soak.py`).
 
-### 7.1 Lake Metadata Contract
+### 7.1 Lake Metadata Contract & Reader Exceptions
 
 `lake.json` declares `format = "tick_lake"`, `schema_version = 1`, and `compatible_versions = [1]`.
 
-The behaviour of the shipped reader (`src/storage/reader.py`) was verified against a real lake in v4.2 Phase 33, and is narrower than earlier revisions of this document claimed:
+The behaviour of the shipped reader (`src/storage/reader.py`) in Milestone v4.3 adheres to strict fail-fast validation:
 
-- **It does not fail fast on a missing or foreign root.** `query_candles` returns `[]` as soon as partition resolution finds no files; neither `LakeNotFoundError` nor `IncompatibleSchemaError` is raised on the query path. Pointing a reader at the wrong directory therefore produces **empty results, not an error**. Consumers who need fail-fast must inspect `lake.json` themselves — the three fields above are the whole check.
-- **It does refuse to run during maintenance.** While `_maintenance/in_progress.json` exists, `LakeMaintenanceInProgressError` is raised when a query opens a connection (at query time, not at construction).
+- **Root State Validation & Structured Exceptions:** Rather than silently returning empty results on missing, misconfigured, or corrupt roots, the reader performs upfront validation (`validate_lake()`):
+  - Missing path or non-directory root raises `LakeUnavailableError`.
+  - Missing, unreadable, or invalid JSON `lake.json` raises `LakeCorruptedMetadataError`.
+  - Incompatible `schema_version` (or unrecognized format) raises `LakeIncompatibleSchemaError`.
+  - All lake reader exceptions inherit from `LakeReaderError` (which in turn inherits from `DataHarvesterError` and `StorageError`), allowing callers to catch them selectively or as a group.
+- **Distinguishing Legitimate Empty Results from Errors:** When the lake root exists and contains a valid `lake.json` but has no data partitions or ticks for a requested symbol/date range, queries return legitimate empty results (`[]`) without error.
+- **Maintenance Guard:** While `_maintenance/in_progress.json` exists, queries fail fast with `LakeMaintenanceInProgressError`.
+- **Query Range Flexibility:** The reader normalizes datetime inputs across timezone-aware datetimes (converting to UTC naive), naive datetimes, `date` objects, and ISO strings, and supports half-open `[start, end)` intervals via `inclusive_end=False` (defaulting to `inclusive_end=True`).
 
 ### 7.2 Verification Commands
 
@@ -420,6 +428,7 @@ pytest tests/storage/test_lake_reader_stress.py -v     # concurrent readers, res
 pytest tests/storage/test_migration_stress.py -v       # zero-loss + fuzz reconciliation
 pytest tests/storage/test_storage_edge_cases.py -v     # publication/collision/recovery edges
 pytest tests/integration/ -v                           # multi-process concurrency, soak, chaos
+pytest tests/contract/ -v                              # contract examples, isolation, barrier snapshot race
 ```
 
 ### 7.3 Snapshot Semantics and Stale Resolutions
@@ -432,13 +441,14 @@ atomic rename and never rewritten in place. The consequences for consumers are:
    resolution is invisible to the in-flight request and visible to the next one.
    There is no need to invalidate anything: create a new reader or re-resolve.
 2. **Never cache a resolved file list.** Resolve immediately before querying.
-3. **A file removed between resolve and query can be silently skipped.** If
-   maintenance, compaction or retention removes a file after resolution, DuckDB's
-   `read_parquet` may return results computed from the remaining files **without
-   raising**. This was measured on a three-file partition set: removing one file
-   returned 3 candles instead of 10, with no exception and no warning.
-   The remedy is a re-resolve-and-retry loop, and a row-count sanity check for
-   any query whose completeness matters. Do not treat "no error" as "complete".
+3. **A file removed between resolve and query raises `duckdb.IOException` (Retraction of v1.2.0 claim).**
+   In v1.2.0, it was hypothesized that DuckDB silently ignored files removed after resolution.
+   Rigorous barrier-synchronized testing reveals that when DuckDB's `read_parquet` is passed an
+   explicit list of resolved file paths, missing files are **never** silently skipped; DuckDB
+   raises `duckdb.IOException` (e.g. `No files found that match the pattern "..."`).
+   Readers will not silently produce partial results. If compaction or maintenance removes
+   a resolved file before query execution, the operation fails fast with `duckdb.IOException`
+   (or `LakeReaderError`), signalling the reader to re-resolve partition files and retry.
 4. **Staging, migration and retired artifacts are never part of a snapshot.**
    `_staging/`, `_migration/` and `_maintenance/` are outside `ticks/` and are
    excluded by construction, not by filter.
@@ -454,3 +464,4 @@ atomic rename and never rewritten in place. The consequences for consumers are:
 | 1.0.0 | 2026-10-03 | v4.0 (P4) | Initial read contract for downstream consumers. |
 | 1.1.0 | 2026-10-03 | v4.1 | Corrected control-plane filenames and chunk naming; documented lake root resolution and `lake.json`; added hardening guarantees (§7). |
 | 1.2.0 | 2026-10-04 | v4.2 (Phase 33) | Fixed symbol encoding rule and example, corrected the physical `symbol` type, fixed the PyArrow example, and documented snapshot semantics (§7.3). |
+| 1.3.0 | 2026-10-04 | v4.3 (C43-07) | Retracted §7.3 silent-partial claim (documented duckdb.IOException on missing files), updated §7.1 fail-fast root validation contract, and documented timezone-aware / half-open interval semantics. |
