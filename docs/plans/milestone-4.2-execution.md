@@ -2,7 +2,8 @@
 
 **Milestone:** v4.2 Tick Lake Qualification & Scoped Signoff (Phases 28–36)
 **Started:** 2026-10-04
-**Status:** In progress — Phase 28 complete pending hosted CI; Phases 29+ in progress
+**Status:** In progress — Phase 28 complete (hosted CI green), Phase 29 complete; Phases 30–36 in progress
+**Release candidate:** `6706e5f` · **PR:** [#8](https://github.com/emadprograms/data-harvester/pull/8)
 **Source plan:** [`milestone-4.2-signoff-and-verification.md`](milestone-4.2-signoff-and-verification.md)
 **Traceability matrix:** [`milestone-4.2-traceability.md`](milestone-4.2-traceability.md)
 
@@ -116,14 +117,76 @@ failed tests, non-passing status on a required gate, an empty test selection, a
 test count with no named nodes, duplicate gate IDs, an invalid status value, and
 inconsistent pass/fail/skip counts. Non-required gates may carry `DEFERRED`.
 
-## 6. Gate status
+## 6. Independent oracle proof (Phase 29, ISOL-04)
+
+Tests: `tests/support/test_lake_assertions_oracle.py` (7 tests)
+
+The oracle (`tests/support/lake_assertions.py`) was already a Counter-based
+full-row multiset reading Parquet through PyArrow, never through the application
+reader — but nothing proved it fails when it should. It now does, on all three
+corruption classes:
+
+| Injected defect | Detected | Why a weaker oracle would miss it |
+|---|---|---|
+| One changed price value | Yes | A row count still matches |
+| One of two identical rows removed | Yes | A set comparison still matches; only multiplicity catches it |
+| One extra phantom row added | Yes | A row count would differ, but a "contains" check would pass |
+
+A static test also asserts the oracle module never imports `src.storage.reader`,
+keeping it independent of the code it verifies.
+
+## 7. Deterministic generator contract (Phase 29, ISOL-03)
+
+Tests: `tests/fixtures/test_deterministic_quotes.py` (28 tests)
+
+`tests/fixtures/deterministic_quotes.py` was verified rather than assumed. Pinned
+per scenario generator: reproducibility across calls, stable unique `ingest_id`
+values, schema v1 validity, and UTC-naive timestamps. Per-scenario content
+assertions confirm the dataset really contains what the lake must preserve —
+duplicate pairs and one triplet, microsecond-distinct burst timestamps,
+out-of-order late arrivals, null volume and null bid observations, a UTC date
+rollover spanning two dates, and PRE/REG/POST session boundaries.
+
+**Finding (not a defect):** no single generator combines all edge cases; each
+lives in its own scenario function, and `generate_multisymbol_distribution`
+produces no duplicates, nulls, or non-regular sessions. A combined, seeded,
+scalable generator is therefore a prerequisite for the Q03 large-dataset work.
+
+## 8. Hosted CI evidence (Phase 28, EVID-01)
+
+The workflow only triggers on `pull_request` and pushes to `main`, so PR #8 was
+opened to produce candidate-specific evidence.
+
+| Run | Candidate SHA | Conclusion | URL |
+|---|---|---|---|
+| 37181864550 | `15f98b0` | success | https://github.com/emadprograms/data-harvester/actions/runs/37181864550 |
+| 37182035819 | `3132e20` | **failure** | https://github.com/emadprograms/data-harvester/actions/runs/37182035819 |
+| 37182614963 | `6706e5f` | success | https://github.com/emadprograms/data-harvester/actions/runs/37182614963 |
+
+Local suite on Linux for the same commit set: **823 passed, 11 deselected in
+298.17s**.
+
+**Unexplained transient, recorded not dismissed.** Run 37182035819 failed while
+the identical tests pass locally (823 passed) and passed on the subsequent run
+37182614963, whose only workflow change was adding log capture. The CI log and
+artifact could not be retrieved from this environment — log and artifact egress
+is blocked — so the cause is **not** established. It is recorded as an
+unexplained transient rather than written off, and re-appearing failures must be
+investigated against the artifact before any signoff. This is also why the
+workflow now uploads `pytest.log` and JUnit XML on every run.
+
+## 9. Gate status
 
 | Gate | Phase | Status | Evidence |
 |---|---|---|---|
+| EVID-01 (hosted CI for candidate SHA) | 28 | PASS | Runs 37181864550 / 37182614963 green; run 37182035819 failed, cause unknown (see §8) |
 | EVID-02 (traceability matrix) | 28 | PASS | `milestone-4.2-traceability.md`, 8 tests in `tests/planning/test_requirement_traceability.py` |
 | EVID-03 (release report validator) | 28 | PASS | 21 tests, one per rejection rule |
-| EVID-01 (hosted CI for candidate SHA) | 28 | Pending | Requires a PR to trigger `.github/workflows/offline-tests.yml`; recorded when the run completes |
+| ISOL-03 (deterministic generator) | 29 | PASS | 28 contract tests |
+| ISOL-04 (independent oracle) | 29 | PASS | 7 tests proving detection of all three corruption classes |
 | ISOL-05 / ENDR-05 (deterministic barriers) | 29/31 | PASS (partial) | Defect D1 fixed and covered by 6 unit tests |
+| ISOL-01/02 (isolation of new tools/processes) | 29 | Not started | — |
+| PERF-01..08 (production-scale performance) | 30 | Not started | Blocked on a combined scalable generator (§7) |
 | ENDR-01..04 (24h endurance) | 31 | DEFERRED | User instruction: defer the 24-hour run |
 | PERF-07 (historical benchmarks) | 30 | DEFERRED | Requires production historical database, absent here |
 | MIGR-01/02/04 (operational migration) | 34 | DEFERRED | Requires production inventory, absent here |

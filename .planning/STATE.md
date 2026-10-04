@@ -4,10 +4,10 @@ milestone: v4.2
 status: planning
 last_updated: "2026-10-04T00:00:00.000Z"
 last_activity: 2026-10-04
-last_activity_desc: "Milestone v4.2 initialized from docs/plans/milestone-4.2-signoff-and-verification.md: 45 requirements across 9 phases (28-36)."
+last_activity_desc: "Phase 28 complete (hosted CI green on 6706e5f) and Phase 29 complete (oracle proven, generator contract pinned). Phase 30 next: needs a combined scalable generator."
 progress:
   total_phases: 9
-  completed_phases: 0
+  completed_phases: 2
   total_plans: 0
   completed_plans: 0
   percent: 0
@@ -25,12 +25,12 @@ See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-04)
 
 ## Current Position
 
-Phase: 28 of 36 (CI Evidence & Requirement Traceability)
+Phase: 30 of 36 (Production-Scale Performance Qualification)
 Plan: — (not yet planned)
 Status: Ready to plan
-Last activity: 2026-10-04 — Initialized v4.2 from the signoff plan; REQUIREMENTS.md and ROADMAP.md written; Q01–Q09 mapped to Phases 28–36; Q10 deferred to v4.3.
+Last activity: 2026-10-04 — Phase 28 complete: hosted CI green (runs 37181864550, 37182614963), traceability matrix (51 reqs, 48 mapped, 3 declared gaps), release report validator (21 tests). Defect D1 fixed (arbitrary sleep raced crash detection). Phase 29 complete: oracle proven to detect corruption/removed duplicates/phantoms; generator contract pinned (28 tests). Local Linux suite now 823 passed, 11 deselected.
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 22%
 
 ## Accumulated Context
 

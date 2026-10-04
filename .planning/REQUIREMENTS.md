@@ -12,17 +12,17 @@
 
 ### Evidence & Traceability (Q01)
 
-- [ ] **EVID-01**: Operator can point to a hosted CI run for the exact release-candidate SHA with a green offline workflow (`.github/workflows/offline-tests.yml`), recorded as run URL + SHA
-- [ ] **EVID-02**: Operator can read a requirement-to-evidence matrix mapping every `LAKE-*`, `TEST-P22-*` through `TEST-P27-*`, and F01–F11 item to an assertion-bearing test node
-- [ ] **EVID-03**: Release report validator rejects a gate whose artifact is missing, whose code SHA mismatches, whose metrics are absent or zero, which skipped a required test, or whose status is not passing — each rejection unit-tested
+- [x] **EVID-01**: Operator can point to a hosted CI run for the exact release-candidate SHA with a green offline workflow (`.github/workflows/offline-tests.yml`), recorded as run URL + SHA
+- [x] **EVID-02**: Operator can read a requirement-to-evidence matrix mapping every `LAKE-*`, `TEST-P22-*` through `TEST-P27-*`, and F01–F11 item to an assertion-bearing test node
+- [x] **EVID-03**: Release report validator rejects a gate whose artifact is missing, whose code SHA mismatches, whose metrics are absent or zero, which skipped a required test, or whose status is not passing — each rejection unit-tested
 
 ### Test Isolation & Independent Oracles (Q02)
 
 - [ ] **ISOL-01**: New fixture and benchmark tools write only inside a designated scratch directory; an inherited production `DATA_DIR` / `TICK_LAKE_ROOT`, symlink alias, or unsafe output path fails before any write
 - [ ] **ISOL-02**: Every spawned process receives explicit isolated configuration and cannot fall back to the production database or external lake
-- [ ] **ISOL-03**: Deterministic generator produces stable IDs, timestamp ties, duplicate observations, null/zero volume, late arrivals, encoded symbols, and session boundaries
-- [ ] **ISOL-04**: Independent oracle detects a corrupted value, a removed duplicate, and a phantom row while preserving duplicate multiplicity
-- [ ] **ISOL-05**: Barrier timeouts, child failures, cancellation, and test exceptions clean up processes, threads, temporary ports, and file handles; a child exit before readiness fails the parent
+- [x] **ISOL-03**: Deterministic generator produces stable IDs, timestamp ties, duplicate observations, null/zero volume, late arrivals, encoded symbols, and session boundaries
+- [x] **ISOL-04**: Independent oracle detects a corrupted value, a removed duplicate, and a phantom row while preserving duplicate multiplicity
+- [x] **ISOL-05**: Barrier timeouts, child failures, cancellation, and test exceptions clean up processes, threads, temporary ports, and file handles; a child exit before readiness fails the parent
 
 ### Production-Scale Performance (Q03)
 
@@ -117,14 +117,14 @@ Deferred from v4.2 by design (Q10). Tracked, not in the current roadmap, and **e
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EVID-01 | Phase 28 | Pending |
-| EVID-02 | Phase 28 | Pending |
-| EVID-03 | Phase 28 | Pending |
+| EVID-01 | Phase 28 | Complete |
+| EVID-02 | Phase 28 | Complete |
+| EVID-03 | Phase 28 | Complete |
 | ISOL-01 | Phase 29 | Pending |
 | ISOL-02 | Phase 29 | Pending |
-| ISOL-03 | Phase 29 | Pending |
-| ISOL-04 | Phase 29 | Pending |
-| ISOL-05 | Phase 29 | Pending |
+| ISOL-03 | Phase 29 | Complete |
+| ISOL-04 | Phase 29 | Complete |
+| ISOL-05 | Phase 29 | Complete |
 | PERF-01 | Phase 30 | Pending |
 | PERF-02 | Phase 30 | Pending |
 | PERF-03 | Phase 30 | Pending |
@@ -171,4 +171,5 @@ Deferred from v4.2 by design (Q10). Tracked, not in the current roadmap, and **e
 
 ---
 *Requirements defined: 2026-10-04*
+*Last updated: 2026-10-04 after Phase 28 and Phase 29 execution*
 *Derived from: docs/plans/milestone-4.2-signoff-and-verification.md (Q01–Q10)*

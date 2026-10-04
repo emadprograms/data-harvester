@@ -2,11 +2,40 @@
 
 _Newest first. Each entry is a shipped, verified milestone._
 
+- [ ] **v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (**in progress**, started 2026-10-04)
 - [x] **v4.1 Partitioned Parquet Lake Deep Testing & Hardening** — Phases 22–27 (shipped 2026-10-03)
 - [x] **v4.0 Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)** — Phases 15–21 (shipped 2026-10-03)
 - [x] **v3.0 Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard** — Phases 10–14 (shipped 2026-09-26)
 - [x] **v2.0 Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard** — Phases 5–9 (shipped 2026-09-25)
 - [x] **v1.0 Local DuckDB & 24/7 Live Streaming Engine** — Phases 1–4 (shipped 2026-09-25)
+
+---
+
+## v4.2 Tick Lake Qualification & Scoped Signoff (In progress: started 2026-10-04)
+
+**Goal:** produce reproducible evidence for the v4.0/v4.1 requirements, resolve what that verification uncovers, and issue an explicitly scoped append-only release signoff. This milestone produces evidence, not features.
+
+**Status:** Phases 28–29 complete, Phase 30 in progress. Release candidate `6706e5f`, PR [#8](https://github.com/emadprograms/data-harvester/pull/8).
+
+**Completed:**
+- **Phase 28 — CI evidence & traceability.** Hosted CI green on two candidate SHAs. Requirement matrix maps 51 archived requirement IDs to executable nodes (48 mapped, 3 gaps declared rather than assumed passing). Release report validator refuses gates with missing artifacts, stale SHAs, null metrics, skipped required tests, or an empty test selection.
+- **Phase 29 — Isolation & independent oracles.** The multiset oracle is now *proven* to detect a corrupted value, a removed duplicate, and a phantom row. The deterministic generator's contract is pinned (reproducibility, stable IDs, and the presence of ties, duplicates, nulls, late arrivals, UTC rollover, and session boundaries).
+
+**Defects found and fixed:**
+- **D1** — `test_chaos_port_conflict_backoff_and_recovery` slept a fixed 0.8s and asserted crash detection, but the child needs ~0.615s to fail with EADDRINUSE; detection raced the assertion and the test failed on Linux. Replaced with a deterministic bounded poll. Failing before, passing after.
+
+**Deferred (cannot be executed in this environment):**
+- 24-hour endurance run (Q04) — deferred by user instruction
+- Historical resampling benchmarks (PERF-07) — needs the production historical database
+- Operational migration and restore rehearsal (MIGR-01/02/04) — needs the production inventory
+- Real capacity model (CAPA-01) — needs the production lake
+- A named external "Repo B" repository (REPB-03) — the contract is verified for any third-party consumer instead
+
+**Excluded by instruction:** Q10a replay/rewind (RPLY-01–05) and Q10b offline compaction/purge (COMP-01–05), deferred to v4.3.
+
+**Current suite:** 823 passed, 11 deselected on Linux (was 745 passed / 1 failed at milestone start).
+
+**Evidence:** [Execution report](../../docs/plans/milestone-4.2-execution.md) · [Traceability matrix](../../docs/plans/milestone-4.2-traceability.md) · [Requirements](REQUIREMENTS.md) · [Roadmap](ROADMAP.md)
 
 ---
 
