@@ -152,7 +152,7 @@ for size in (50_000_000, 200_000_000, 800_000_000):
 
     def _run():
         try:
-            con.execute("SELECT count(*) FROM range(?)", [size]).fetchall()
+            con.execute("SELECT sum(hash(range)) FROM range(?)", [size]).fetchall()
         except Exception as exc:  # noqa: BLE001 - reporting the type is the point
             errors.append(type(exc).__name__)
         finally:

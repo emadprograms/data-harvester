@@ -41,6 +41,15 @@ import psutil
 
 logger = logging.getLogger("validate_concurrency")
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.utils.write_guard import (
+    assert_safe_write_path,
+    get_run_artifacts_dir,
+    is_production_path,
+    ProductionAccessBlockedError,
+)
 
 SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"]
 
@@ -429,10 +438,13 @@ def run_concurrency_validation(
     """
     temp_dir_obj = None
     if lake_root is None:
-        temp_dir_obj = tempfile.TemporaryDirectory(prefix="tick_lake_bench_")
-        lake_root = Path(temp_dir_obj.name) / "market_data"
+        if os.environ.get("DATA_HARVESTER_RUN_DIR"):
+            lake_root = get_run_artifacts_dir() / "market_data"
+        else:
+            temp_dir_obj = tempfile.TemporaryDirectory(prefix="tick_lake_bench_")
+            lake_root = Path(temp_dir_obj.name) / "market_data"
 
-    lake_root = lake_root.resolve()
+    lake_root = assert_safe_write_path(lake_root, operation="concurrency benchmark lake root")
     lake_root.mkdir(parents=True, exist_ok=True)
 
     # Initialize lake hierarchy
@@ -813,6 +825,20 @@ def main():
     args = parser.parse_args()
 
     lake_path = Path(args.lake_root) if args.lake_root else None
+    if lake_path:
+        try:
+            lake_path = assert_safe_write_path(lake_path, operation="concurrency benchmark lake root")
+        except ProductionAccessBlockedError as err:
+            print(f"❌ SAFETY REFUSAL: {err}", file=sys.stderr)
+            sys.exit(1)
+
+    if args.output_json:
+        try:
+            assert_safe_write_path(args.output_json, operation="concurrency benchmark output json")
+        except ProductionAccessBlockedError as err:
+            print(f"❌ SAFETY REFUSAL: {err}", file=sys.stderr)
+            sys.exit(1)
+
     summary = run_concurrency_validation(
         lake_root=lake_path,
         total_ticks=args.ticks,

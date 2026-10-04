@@ -33,14 +33,20 @@ MICRON_DATA_DIR = "/Volumes/Micron-E 0256 A/data-harvester/data"
 
 _SESSION_TEMP_DIR = tempfile.mkdtemp(prefix="pytest_data_harvest_")
 _SESSION_LAKE_ROOT = os.path.join(_SESSION_TEMP_DIR, "tick_lake")
+_SESSION_RUN_DIR = os.path.join(_SESSION_TEMP_DIR, "run")
+os.makedirs(_SESSION_RUN_DIR, exist_ok=True)
 # Explicitly override inherited values before importing any application module.
 # load_dotenv() uses override=False, so a repository .env cannot replace these.
 os.environ["DATA_DIR"] = _SESSION_TEMP_DIR
 os.environ["TICK_LAKE_ROOT"] = _SESSION_LAKE_ROOT
+if "DATA_HARVESTER_RUN_DIR" not in os.environ:
+    os.environ["DATA_HARVESTER_RUN_DIR"] = _SESSION_RUN_DIR
 
 # The fake protected roots are added only by a fixture that tests the guard.
 _PROTECTED_TEST_ROOTS = set()
 _PROTECTED_ROOTS_LOCK = threading.RLock()
+
+from src.utils.write_guard import register_protected_root, unregister_protected_root
 
 from src.config import US_EASTERN, UTC
 
@@ -464,11 +470,21 @@ def protected_temp_dir(tmp_path):
     protected_root = tmp_path / "fake-protected-root"
     with _PROTECTED_ROOTS_LOCK:
         _PROTECTED_TEST_ROOTS.add(str(protected_root))
+    register_protected_root(str(protected_root))
+    prev_env = os.environ.get("DATA_HARVESTER_PROTECTED_ROOTS")
+    os.environ["DATA_HARVESTER_PROTECTED_ROOTS"] = (
+        f"{prev_env}:{protected_root}" if prev_env else str(protected_root)
+    )
     try:
         yield protected_root
     finally:
         with _PROTECTED_ROOTS_LOCK:
             _PROTECTED_TEST_ROOTS.discard(str(protected_root))
+        unregister_protected_root(str(protected_root))
+        if prev_env is not None:
+            os.environ["DATA_HARVESTER_PROTECTED_ROOTS"] = prev_env
+        else:
+            os.environ.pop("DATA_HARVESTER_PROTECTED_ROOTS", None)
 
 
 @pytest.fixture(autouse=True)

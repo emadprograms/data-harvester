@@ -44,7 +44,7 @@ SEED = int(os.environ.get("GSD_LAKE_BENCH_SEED", "20261004"))
 BATCH_SIZE = int(os.environ.get("GSD_LAKE_BENCH_BATCH", "5000"))
 WARM_QUERIES = int(os.environ.get("GSD_LAKE_BENCH_QUERIES", "25"))
 
-ARTIFACTS = Path(__file__).resolve().parents[2] / ".planning" / "artifacts"
+from src.utils.write_guard import get_run_artifacts_dir
 
 
 def _percentile(samples, pct):
@@ -61,8 +61,9 @@ def _percentile(samples, pct):
 
 
 def _write_metrics(name, payload):
-    ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    target = ARTIFACTS / name
+    out_dir = get_run_artifacts_dir("benchmarks")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / name
     target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return target
 

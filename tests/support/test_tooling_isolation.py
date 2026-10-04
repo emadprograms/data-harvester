@@ -38,7 +38,13 @@ def production_shaped_env(tmp_path, monkeypatch):
     (fake_production / "tick_lake").mkdir(parents=True)
     monkeypatch.setenv("DATA_DIR", str(fake_production))
     monkeypatch.setenv("TICK_LAKE_ROOT", str(fake_production / "tick_lake"))
-    return fake_production
+    monkeypatch.setenv("DATA_HARVESTER_PROTECTED_ROOTS", str(fake_production))
+    from src.utils.write_guard import register_protected_root, unregister_protected_root
+    register_protected_root(fake_production)
+    try:
+        yield fake_production
+    finally:
+        unregister_protected_root(fake_production)
 
 
 def test_deterministic_dataset_writes_only_inside_scratch(tmp_path, production_shaped_env):
@@ -172,3 +178,167 @@ def test_spawned_processes_receive_explicit_isolated_configuration(tmp_path, pro
     assert str(production_shaped_env) not in resolved, (
         "the spawned process fell back to the inherited production directory"
     )
+
+
+def test_benchmark_baseline_subprocess_rejects_unsafe_destination(tmp_path, production_shaped_env):
+    """VALD-01: tools/benchmark_baseline.py rejects output targeting protected roots."""
+    before = snapshot_tree(production_shaped_env)
+    unsafe_out = production_shaped_env / "leak_report.json"
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+    env["DATA_HARVESTER_PROTECTED_ROOTS"] = str(production_shaped_env)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "tools/benchmark_baseline.py",
+            "--ticks", "10",
+            "--lag-ticks", "10",
+            "--query-iterations", "1",
+            "--output", str(unsafe_out),
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "SAFETY REFUSAL" in proc.stderr
+    assert not unsafe_out.exists()
+    assert snapshot_tree(production_shaped_env) == before
+
+
+def test_benchmark_baseline_subprocess_rejects_symlink_alias(tmp_path, production_shaped_env):
+    """VALD-01: tools/benchmark_baseline.py detects and rejects symlink aliases to protected paths."""
+    before = snapshot_tree(production_shaped_env)
+    symlink_dir = tmp_path / "symlink_to_prod"
+    symlink_dir.symlink_to(production_shaped_env, target_is_directory=True)
+    unsafe_out = symlink_dir / "symlink_report.json"
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+    env["DATA_HARVESTER_PROTECTED_ROOTS"] = str(production_shaped_env)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "tools/benchmark_baseline.py",
+            "--ticks", "10",
+            "--lag-ticks", "10",
+            "--query-iterations", "1",
+            "--output", str(unsafe_out),
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "SAFETY REFUSAL" in proc.stderr
+    assert not (production_shaped_env / "symlink_report.json").exists()
+    assert snapshot_tree(production_shaped_env) == before
+
+
+def test_validate_concurrency_subprocess_rejects_unsafe_lake_root(tmp_path, production_shaped_env):
+    """VALD-01: tools/validate_concurrency.py rejects lake roots resolving to protected paths."""
+    before = snapshot_tree(production_shaped_env)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+    env["DATA_HARVESTER_PROTECTED_ROOTS"] = str(production_shaped_env)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "tools/validate_concurrency.py",
+            "--lake-root", str(production_shaped_env / "tick_lake"),
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "SAFETY REFUSAL" in proc.stderr
+    assert snapshot_tree(production_shaped_env) == before
+
+
+def test_validate_concurrency_subprocess_rejects_symlink_alias(tmp_path, production_shaped_env):
+    """VALD-01: tools/validate_concurrency.py rejects symlink aliases to protected lake roots."""
+    before = snapshot_tree(production_shaped_env)
+    symlink_dir = tmp_path / "symlink_lake"
+    symlink_dir.symlink_to(production_shaped_env / "tick_lake", target_is_directory=True)
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+    env["DATA_HARVESTER_PROTECTED_ROOTS"] = str(production_shaped_env)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "tools/validate_concurrency.py",
+            "--lake-root", str(symlink_dir),
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "SAFETY REFUSAL" in proc.stderr
+    assert snapshot_tree(production_shaped_env) == before
+
+
+def test_validate_release_report_subprocess_rejects_unsafe_output(tmp_path, production_shaped_env):
+    """VALD-01: tools/validate_release_report.py rejects output targeting protected roots."""
+    before = snapshot_tree(production_shaped_env)
+    dummy_report = tmp_path / "rep.json"
+    dummy_report.write_text(json.dumps({"candidate_sha": "abc1234", "gates": []}), encoding="utf-8")
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+    env["DATA_HARVESTER_PROTECTED_ROOTS"] = str(production_shaped_env)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "tools/validate_release_report.py",
+            str(dummy_report),
+            "--json", str(production_shaped_env / "leak.json"),
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert not (production_shaped_env / "leak.json").exists()
+    assert snapshot_tree(production_shaped_env) == before
+
+
+def test_data_harvester_run_dir_isolation_and_safety(tmp_path, monkeypatch, production_shaped_env):
+    """VALD-01: get_run_artifacts_dir routes to safe scratch and fails closed on protected roots."""
+    from src.utils.write_guard import (
+        ProductionAccessBlockedError,
+        assert_safe_write_path,
+        get_run_artifacts_dir,
+    )
+
+    # 1. Custom safe run dir is honored
+    safe_scratch = tmp_path / "safe_run_dir"
+    monkeypatch.setenv("DATA_HARVESTER_RUN_DIR", str(safe_scratch))
+    run_dir = get_run_artifacts_dir()
+    assert run_dir == safe_scratch.resolve()
+    assert run_dir.is_dir()
+
+    # 2. Protected destination as run dir is strictly rejected
+    monkeypatch.setenv("DATA_HARVESTER_RUN_DIR", str(production_shaped_env))
+    with pytest.raises(ProductionAccessBlockedError):
+        get_run_artifacts_dir()
+
+    # 3. Symlink alias to protected destination is strictly rejected
+    symlink_dir = tmp_path / "symlink_alias_run_dir"
+    symlink_dir.symlink_to(production_shaped_env, target_is_directory=True)
+    monkeypatch.setenv("DATA_HARVESTER_RUN_DIR", str(symlink_dir))
+    with pytest.raises(ProductionAccessBlockedError):
+        get_run_artifacts_dir()

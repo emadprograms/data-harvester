@@ -108,6 +108,27 @@ class TestFilesystemWriteIsolationGuard:
         assert root.is_relative_to(temp_root)
         assert Path(os.environ["DATA_DIR"]).resolve().is_relative_to(temp_root)
 
+    def test_symlink_alias_to_protected_root_blocks_mutations(self, protected_temp_dir, tmp_path):
+        symlink_dir = tmp_path / "symlink_protected"
+        symlink_dir.symlink_to(protected_temp_dir, target_is_directory=True)
+        symlink_file = symlink_dir / "target.bin"
+
+        assert is_protected_path(symlink_dir)
+        assert is_protected_path(symlink_file)
+
+        with pytest.raises(ProductionAccessBlockedError):
+            open(symlink_file, "wb")
+        with pytest.raises(ProductionAccessBlockedError):
+            symlink_file.write_bytes(b"should fail")
+
+    def test_session_run_dir_is_outside_tracked_artifacts(self):
+        from src.utils.write_guard import get_run_artifacts_dir
+        run_dir = get_run_artifacts_dir()
+        repo_root = Path(__file__).resolve().parents[1]
+        tracked_artifacts = (repo_root / ".planning" / "artifacts").resolve()
+        assert run_dir.resolve() != tracked_artifacts
+        assert not run_dir.resolve().is_relative_to(tracked_artifacts)
+
 
 class TestNetworkIsolationGuard:
     """Verifies that tests without @pytest.mark.live cannot open external network sockets."""

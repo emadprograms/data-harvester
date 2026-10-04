@@ -40,6 +40,14 @@ import src.database.connection as conn_mod
 import src.dashboard.analytics as ana_mod
 
 
+from src.utils.write_guard import (
+    assert_safe_write_path,
+    get_run_artifacts_dir,
+    is_production_path,
+    ProductionAccessBlockedError,
+)
+
+
 # ============================================================================
 # SAFETY GUARDS
 # ============================================================================
@@ -49,23 +57,10 @@ def verify_safety_guards(target_dir: str):
     Strictly verifies that target_dir is NOT pointing to production storage
     (/Volumes/Micron-E... or repo data symlink).
     """
-    abs_dir = os.path.abspath(target_dir)
-    real_dir = os.path.realpath(target_dir)
-    repo_data = os.path.join(REPO_ROOT, "data")
-    repo_data_real = os.path.realpath(repo_data)
-
-    if "/Volumes/Micron-E" in abs_dir or "/Volumes/Micron-E" in real_dir:
-        print(f"❌ SAFETY REFUSAL: Target directory '{target_dir}' resolves to production Micron volume ({real_dir}).", file=sys.stderr)
-        print("   Benchmarks must use isolated temporary storage. Aborting.", file=sys.stderr)
-        sys.exit(1)
-
-    if abs_dir == repo_data or abs_dir.startswith(repo_data + os.sep):
-        print(f"❌ SAFETY REFUSAL: Target directory '{target_dir}' points to repository data directory ({abs_dir}).", file=sys.stderr)
-        print("   Benchmarks must use isolated temporary storage. Aborting.", file=sys.stderr)
-        sys.exit(1)
-
-    if real_dir == repo_data_real or real_dir.startswith(repo_data_real + os.sep):
-        print(f"❌ SAFETY REFUSAL: Target directory '{target_dir}' resolves to repo data symlink target ({real_dir}).", file=sys.stderr)
+    try:
+        assert_safe_write_path(target_dir, operation="benchmark database access")
+    except ProductionAccessBlockedError as err:
+        print(f"❌ SAFETY REFUSAL: {err}", file=sys.stderr)
         print("   Benchmarks must use isolated temporary storage. Aborting.", file=sys.stderr)
         sys.exit(1)
 
@@ -362,6 +357,13 @@ def run_benchmark(
     print("📊 DUCKDB STORAGE BASELINE CHARACTERIZATION BENCHMARK (PHASE 15)")
     print("=" * 72)
 
+    # 0. Safety verification of output destination
+    try:
+        assert_safe_write_path(output_path, operation="benchmark report write")
+    except ProductionAccessBlockedError as err:
+        print(f"❌ SAFETY REFUSAL: {err}", file=sys.stderr)
+        sys.exit(1)
+
     # 1. Setup isolated database directory
     if custom_db_dir:
         verify_safety_guards(custom_db_dir)
@@ -470,7 +472,12 @@ def run_benchmark(
         }
 
         # 8. Save report JSON
-        abs_output = os.path.abspath(output_path)
+        try:
+            abs_output = str(assert_safe_write_path(output_path, operation="benchmark report write"))
+        except ProductionAccessBlockedError as err:
+            print(f"❌ SAFETY REFUSAL: {err}", file=sys.stderr)
+            sys.exit(1)
+
         os.makedirs(os.path.dirname(abs_output), exist_ok=True)
         with open(abs_output, "w") as f:
             json.dump(report, f, indent=2)
@@ -534,12 +541,16 @@ def main():
 
     args = parser.parse_args()
 
+    out_path = args.output
+    if args.output == "reports/baseline_duckdb_characterization.json" and os.environ.get("DATA_HARVESTER_RUN_DIR"):
+        out_path = str(get_run_artifacts_dir() / "baseline_duckdb_characterization.json")
+
     run_benchmark(
         ticks_count=args.ticks,
         lag_ticks_count=args.lag_ticks,
         batch_size=args.batch_size,
         query_iterations=args.query_iterations,
-        output_path=args.output,
+        output_path=out_path,
         custom_db_dir=args.db_dir,
         keep_db=args.keep_db,
     )

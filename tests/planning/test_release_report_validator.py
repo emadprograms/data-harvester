@@ -44,9 +44,35 @@ def make_gate(**overrides):
     return gate
 
 
+def make_all_required_gates():
+    gates = []
+    for gid in ("Q01", "Q02", "Q03", "Q04", "Q05", "Q06", "Q07", "Q08", "Q09"):
+        metric_name = "p95_ms" if gid == "Q03" else "collected_nodes"
+        metric_val = 50.0 if gid == "Q03" else 771
+        metric_unit = "ms" if gid == "Q03" else "nodes"
+        gates.append(
+            make_gate(
+                id=gid,
+                title=f"Gate {gid}",
+                metrics=[{"name": metric_name, "value": metric_val, "unit": metric_unit}],
+            )
+        )
+    return gates
+
+
 def make_report(**overrides):
-    report = {"candidate_sha": CANDIDATE_SHA, "gates": [make_gate()]}
-    report.update(overrides)
+    if "gates" in overrides and overrides["gates"] == []:
+        report = {"candidate_sha": CANDIDATE_SHA, "gates": []}
+    elif "gates" in overrides:
+        gates_map = {g["id"]: g for g in make_all_required_gates()}
+        for g in overrides["gates"]:
+            gates_map[g["id"]] = g
+        report = {"candidate_sha": CANDIDATE_SHA, "gates": list(gates_map.values())}
+    else:
+        report = {"candidate_sha": CANDIDATE_SHA, "gates": make_all_required_gates()}
+    for k, v in overrides.items():
+        if k != "gates":
+            report[k] = v
     return report
 
 
@@ -145,7 +171,7 @@ def test_rejects_invalid_status_value():
 
 
 def test_rejects_duplicate_gate_ids():
-    report = make_report(gates=[make_gate(), make_gate()])
+    report = {"candidate_sha": CANDIDATE_SHA, "gates": make_all_required_gates() + [make_gate(id="Q01")]}
     assert "duplicate_gate" in codes(validate_report(report, PROJECT_ROOT))
 
 
@@ -156,7 +182,8 @@ def test_rejects_inconsistent_counts():
 
 
 def test_non_required_gate_may_be_deferred():
-    report = make_report(gates=[make_gate(status="DEFERRED", required=False)])
+    report = make_report()
+    report["gates"].append(make_gate(id="OPT01", status="DEFERRED", required=False))
     assert validate_report(report, PROJECT_ROOT) == []
 
 

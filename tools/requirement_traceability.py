@@ -29,6 +29,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.utils.write_guard import assert_safe_write_path
 
 # (id, description, nodes, granularity)
 REQUIREMENTS: List[Dict[str, object]] = [
@@ -507,12 +511,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     report = validate(nodes)
 
     if args.markdown:
-        out = Path(args.markdown)
+        out = assert_safe_write_path(args.markdown, operation="traceability markdown output")
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(render_markdown(report, nodes), encoding="utf-8")
         print(f"wrote {out}")
     if args.json_path:
-        out = Path(args.json_path)
+        out = assert_safe_write_path(args.json_path, operation="traceability json output")
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(f"wrote {out}")
