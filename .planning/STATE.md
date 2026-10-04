@@ -7,10 +7,10 @@ last_activity: 2026-10-04
 last_activity_desc: "Milestone 4.3 initialized: final tick-lake implementation and verification across Phases 37-45."
 progress:
   total_phases: 9
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 11
+  completed_phases: 2
+  total_plans: 2
+  completed_plans: 2
+  percent: 22
 milestone_name: "v4.3 Final Tick-Lake Implementation and Verification"
 ---
 
@@ -21,16 +21,16 @@ milestone_name: "v4.3 Final Tick-Lake Implementation and Verification"
 See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-04)
 
 **Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage.
-**Current focus:** Phase 38 — Migration Overlap Protection & Provenance-Scoped Verification (Package B)
+**Current focus:** Phase 39 — Reader Root Correctness & Portable Executable Contract (Package C)
 
 ## Current Position
 
-Phase: 38 of 45 (Migration Overlap Protection & Provenance-Scoped Verification)
+Phase: 39 of 45 (Reader Root Correctness & Portable Executable Contract)
 Plan: — (not yet planned)
 Status: Ready to plan
-Last activity: 2026-10-04 — Phase 37 verified and completed (commit `a975647a`). Preflight environment characterization, safe isolation write guards, fail-closed release report validator, and C43-06 mutation tests all verified. Advanced to Phase 38.
+Last activity: 2026-10-04 — Phase 38 verified and completed (commit `0b76bad1`). Migration source-coverage ledger, provenance-scoped bidirectional EXCEPT ALL verification, whole-lake integrity audit, and cutover/rollback rehearsal verified with 0 xfails. Advanced to Phase 39.
 
-Progress: [█░░░░░░░░░] 11%
+Progress: [██░░░░░░░░] 22%
 
 ## Accumulated Context
 
@@ -40,13 +40,14 @@ Progress: [█░░░░░░░░░] 11%
 - **Phases and Packages**: 9 phases (Phases 37–45) covering Packages A through I.
 - **Execution Flow**: `Phase 37 -> 38 -> 39 -> 40 -> 43 (Pass 1) -> 41 -> 42 (Decision: Yes -> implement replay -> 43 Pass 2; No -> 43 Pass 2) -> 44 -> 45`.
 - **Phase 37 Complete (Package A)**: All safe isolation write guards, preflight capability probes, fail-closed report validator, and C43-06 table-driven mutation tests passed. Production paths fail-closed.
+- **Phase 38 Complete (Package B)**: Source-coverage ledger at `<lake_root>/_migration/coverage.json` prevents duplicate partition and row creation across overlapping or broader filters (C43-01 resolved). Provenance-scoped final verification checks migration-owned receipts using bidirectional EXCEPT ALL without false rejections from legitimate live writer batches; whole-lake audit catches unowned additions (C43-02 resolved). Zero xfails remain.
 - **Phase 43 (Pass 1 before Phase 41)**: Corrected benchmarks at >=19 symbols / 1M/10M scale with continuous peak RSS/CPU sampling run first to inform Phase 41 offline compaction SLA requirements.
 - **Phase 42 Decision Gate**: Market Rewind inclusion is evaluated; if YES, implement and qualify replay iterator; if NO, route directly to Pass 2 qualification.
 - **Durability Guarantee Boundary**: RAM loss boundary is guaranteed and documented honestly; durable inbox/disk spooling is an optional extension.
 
 ### Pending Todos
 
-- Plan Phase 38 (`/gsd-plan-phase 38`)
+- Plan Phase 39 (`/gsd-plan-phase 39`)
 
 ### Blockers/Concerns
 
@@ -56,5 +57,5 @@ Progress: [█░░░░░░░░░] 11%
 ## Session Continuity
 
 Last session: 2026-10-04
-Stopped at: Phase 37 verified and completed; Phase 38 ready to plan.
+Stopped at: Phase 38 verified and completed; Phase 39 ready to plan.
 Resume file: None

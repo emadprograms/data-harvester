@@ -158,8 +158,9 @@ flowchart TD
 
 ---
 
-#### Phase 38: Migration Overlap Protection & Provenance-Scoped Verification (Package B)
+#### Phase 38: Migration Overlap Protection & Provenance-Scoped Verification (Package B) [x]
 
+**Status**: Completed 2026-10-04 (commit `0b76bad1`)
 **Goal**: Implement source-coverage idempotence independent of run scope, replace the staging-only verification xfail with provenance-scoped final verification, and prove real coordinator cutover/rollback.
 **Depends on**: Phase 37
 **Requirements**: [MIGR-01, MIGR-02, MIGR-03, MIGR-04]
@@ -169,7 +170,7 @@ flowchart TD
   3. A separate complete-inventory audit detects foreign, unowned, or corrupted files across all lake namespaces.
   4. Cutover and rollback rehearsals pass through `MigrationHandoffCoordinator` and `ProcessSupervisor` with injected stalled drain and restart failures, preserving live post-cutover data.
 
-**Plans**: 0 plans (run `/gsd-plan-phase 38` to break down)
+**Plans**: 1 plan complete (commit `0b76bad1`)
 
 ---
 

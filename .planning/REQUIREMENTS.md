@@ -21,10 +21,10 @@
 
 ### Phase 38: Migration Overlap Protection & Provenance-Scoped Verification (Package B)
 
-- [ ] **MIGR-01**: Source-coverage ledger operates independently of run scope or query filters, preventing duplicate row publication on overlapping or subset/superset runs without payload deduplication (resolving C43-01).
-- [ ] **MIGR-02**: Final publication verification inspects the published Parquet inventory against the frozen source using bidirectional `EXCEPT ALL`, scoped strictly to migration-owned inventory so legitimate concurrent live rows do not trigger verification failure (resolving C43-02 without xfail).
-- [ ] **MIGR-03**: Complete-inventory integrity audit and whole-lake audit detect unowned, foreign, corrupted, or forged-provenance files across all lake namespaces.
-- [ ] **MIGR-04**: Production cutover and rollback rehearsal executes through `MigrationHandoffCoordinator` and `ProcessSupervisor` under injected stalled drain, stopped supervisor, snapshot mismatch, publication failure, and post-cutover live data preservation.
+- [x] **MIGR-01**: Source-coverage ledger operates independently of run scope or query filters, preventing duplicate row publication on overlapping or subset/superset runs without payload deduplication (resolving C43-01).
+- [x] **MIGR-02**: Final publication verification inspects the published Parquet inventory against the frozen source using bidirectional `EXCEPT ALL`, scoped strictly to migration-owned inventory so legitimate concurrent live rows do not trigger verification failure (resolving C43-02 without xfail).
+- [x] **MIGR-03**: Complete-inventory integrity audit and whole-lake audit detect unowned, foreign, corrupted, or forged-provenance files across all lake namespaces.
+- [x] **MIGR-04**: Production cutover and rollback rehearsal executes through `MigrationHandoffCoordinator` and `ProcessSupervisor` under injected stalled drain, stopped supervisor, snapshot mismatch, publication failure, and post-cutover live data preservation.
 
 ### Phase 39: Reader Root Correctness & Portable Executable Contract (Package C)
 
@@ -98,10 +98,10 @@
 | VALD-02 | Phase 37 | Complete |
 | VALD-03 | Phase 37 | Complete |
 | VALD-04 | Phase 37 | Complete |
-| MIGR-01 | Phase 38 | Pending |
-| MIGR-02 | Phase 38 | Pending |
-| MIGR-03 | Phase 38 | Pending |
-| MIGR-04 | Phase 38 | Pending |
+| MIGR-01 | Phase 38 | Complete |
+| MIGR-02 | Phase 38 | Complete |
+| MIGR-03 | Phase 38 | Complete |
+| MIGR-04 | Phase 38 | Complete |
 | READ-01 | Phase 39 | Pending |
 | READ-02 | Phase 39 | Pending |
 | READ-03 | Phase 39 | Pending |
