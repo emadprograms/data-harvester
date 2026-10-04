@@ -1,0 +1,29 @@
+{
+  "total_requirements": 51,
+  "mapped_requirements": 48,
+  "declared_gaps": [
+    {
+      "id": "LAKE-P0-03",
+      "gap": "No automated node. Only the manual script tools/benchmark_baseline.py exists; no test asserts baseline CPU/latency numbers.",
+      "planned_phase": null
+    },
+    {
+      "id": "LAKE-P4-04",
+      "gap": "No executable node. The contract is documentation only; Phase 33 (REPB-01) adds executable contract tests.",
+      "planned_phase": 33
+    },
+    {
+      "id": "LAKE-P8-03",
+      "gap": "Documentation-only requirement; no automated node. Phase 36 (DOCS-01..03) verifies docs against code.",
+      "planned_phase": 36
+    }
+  ],
+  "missing_nodes": {},
+  "by_granularity": {
+    "module": 37,
+    "none": 3,
+    "test": 11
+  },
+  "collected_nodes": 771,
+  "ok": true
+}
