@@ -6,7 +6,7 @@
     {
       "number": "37",
       "name": "Preflight, Test Isolation & Fail-Closed Validator",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "38",
@@ -50,9 +50,9 @@
     }
   ],
   "next": {
-    "command": "/gsd-plan-phase 37",
-    "label": "Plan Phase 37",
-    "reason": "Phase 37 is the entry phase of Milestone 4.3 and is ready to plan"
+    "command": "/gsd-plan-phase 38",
+    "label": "Plan Phase 38",
+    "reason": "Phase 37 verified and completed; Phase 38 is next in roadmap"
   },
   "updated_at": "2026-10-04T00:00:00.000Z"
 }

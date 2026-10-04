@@ -142,8 +142,9 @@ flowchart TD
 
 ---
 
-#### Phase 37: Preflight, Test Isolation & Fail-Closed Validator (Package A)
+#### Phase 37: Preflight, Test Isolation & Fail-Closed Validator (Package A) [x]
 
+**Status**: Completed 2026-10-04 (commit `a975647a`)
 **Goal**: Establish safe test and benchmark execution outside tracked artifacts, enforce write guards, harden the release report validator against invalid evidence/omissions, and implement table-driven mutation tests.
 **Depends on**: Nothing (entry phase of Milestone 4.3)
 **Requirements**: [VALD-01, VALD-02, VALD-03, VALD-04]
@@ -153,7 +154,7 @@ flowchart TD
   3. `--allow-deferred` waiver option strictly rejects FAIL or BLOCKED gates and never blesses an incomplete report for release.
   4. Table-driven report mutation tests demonstrate that the validator detects missing artifacts, directory inputs, zero latency, count mismatches, and mutated metrics (resolving C43-06).
 
-**Plans**: 0 plans (run `/gsd-plan-phase 37` to break down)
+**Plans**: 1 plan complete (commit `a975647a`)
 
 ---
 
@@ -285,7 +286,7 @@ flowchart TD
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 37. Preflight, Isolation & Fail-Closed Validator | v4.3 | 0/TBD | Not started | - |
+| 37. Preflight, Isolation & Fail-Closed Validator | v4.3 | 1/1 | Complete | 2026-10-04 |
 | 38. Migration Overlap & Provenance Verification | v4.3 | 0/TBD | Not started | - |
 | 39. Reader Root Correctness & Executable Contract | v4.3 | 0/TBD | Not started | - |
 | 40. Durability Boundaries & Provider Gap Ledger | v4.3 | 0/TBD | Not started | - |

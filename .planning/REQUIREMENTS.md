@@ -14,10 +14,10 @@
 
 ### Phase 37: Preflight, Test Isolation & Fail-Closed Validator (Package A)
 
-- [ ] **VALD-01**: New fixtures, logs, and benchmark tools write only inside designated safe run directories outside tracked historical artifacts; an inherited production `DATA_DIR` / `TICK_LAKE_ROOT`, symlink alias, or unsafe output path fails closed before any write.
-- [ ] **VALD-02**: The release report validator consumes an authoritative, independently declared required-gate inventory, rejecting `--allow-deferred` waivers on required FAIL or BLOCKED gates; missing, incomplete, or failing gates strictly fail closed.
-- [ ] **VALD-03**: Table-driven report mutation tests demonstrate that the validator detects missing artifacts, directory inputs instead of files, zero latency, test count conservation errors, malformed schemas, and mutated metrics (resolving C43-06).
-- [ ] **VALD-04**: Preflight environment characterization records candidate commit SHA, clean/dirty working tree, dependency versions, OS, hardware, filesystem, and explicit capability probes (local socket binding, subprocess lifecycle, process metrics, Node availability, public network).
+- [x] **VALD-01**: New fixtures, logs, and benchmark tools write only inside designated safe run directories outside tracked historical artifacts; an inherited production `DATA_DIR` / `TICK_LAKE_ROOT`, symlink alias, or unsafe output path fails closed before any write.
+- [x] **VALD-02**: The release report validator consumes an authoritative, independently declared required-gate inventory, rejecting `--allow-deferred` waivers on required FAIL or BLOCKED gates; missing, incomplete, or failing gates strictly fail closed.
+- [x] **VALD-03**: Table-driven report mutation tests demonstrate that the validator detects missing artifacts, directory inputs instead of files, zero latency, test count conservation errors, malformed schemas, and mutated metrics (resolving C43-06).
+- [x] **VALD-04**: Preflight environment characterization records candidate commit SHA, clean/dirty working tree, dependency versions, OS, hardware, filesystem, and explicit capability probes (local socket binding, subprocess lifecycle, process metrics, Node availability, public network).
 
 ### Phase 38: Migration Overlap Protection & Provenance-Scoped Verification (Package B)
 
@@ -94,10 +94,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| VALD-01 | Phase 37 | Pending |
-| VALD-02 | Phase 37 | Pending |
-| VALD-03 | Phase 37 | Pending |
-| VALD-04 | Phase 37 | Pending |
+| VALD-01 | Phase 37 | Complete |
+| VALD-02 | Phase 37 | Complete |
+| VALD-03 | Phase 37 | Complete |
+| VALD-04 | Phase 37 | Complete |
 | MIGR-01 | Phase 38 | Pending |
 | MIGR-02 | Phase 38 | Pending |
 | MIGR-03 | Phase 38 | Pending |
