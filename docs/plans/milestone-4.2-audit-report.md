@@ -84,8 +84,9 @@ production verdict, PERF-07 needs production data — see §5).
 | Measurement | Result |
 |---|---|
 | Local offline suite (`pytest tests -m 'not live and not performance'`) | 918 passed, 16 deselected, 2 xfailed |
-| Hosted CI, branch `arena/01a1054c-data-harvester` | 8 of 9 runs successful |
-| CI run `37182035819` (commit `3132e20`) | **Unexplained failure** — see §6 |
+| Hosted CI, branch `arena/01a1054c-data-harvester` | 11 runs: 9 successful, 2 failed — both accounted for in §6 |
+| CI run `37182035819` (commit `3132e20`) | **Unexplained failure** — cause never established |
+| CI run `37192437734` (commit `5b9935c`) | **Explained failure** — my own documentation defect, fixed in `0695cdf` |
 | Performance suite (excluded from the CI job) | 5 benchmarks × 3 scales, all passing |
 | Oracle mutation coverage | 6/6 SQL mutations detected; 7/7 documentation drifts detected |
 
@@ -149,7 +150,19 @@ authority — which is why this report counts requirements rather than phases.
 "Run isolated offline suite" step. Log and artifact egress from the sandbox is
 blocked, so **no cause was established** — it is recorded as an unexplained
 transient, not as flakiness, timing, or OOM. Every subsequent run on the same
-branch succeeded, including a re-run of the identical suite.
+branch succeeded (10 runs, including repeats of the identical suite).
+
+**Explained CI failure.** Run `37192437734` on `5b9935c` failed the same step. It
+was reproduced locally and was my own defect: a guard test that flags any
+document asserting an eight-column schema flagged the v4.2 milestone entry, which
+*quotes* the archived error while stating the correct count.
+
+**F15 — process finding: the suite was run before the final edits.** That
+regression reached CI because the full local suite had been run *before* the last
+round of documentation edits, so the new tests never exercised the final text.
+The fix (distinguishing a quotation from a claim) was trivial; the lesson is that
+the full suite must be run *after* every edit, not before the last one. It is
+recorded here because a signoff is only as good as the discipline behind it.
 
 ---
 
@@ -195,3 +208,45 @@ For the scope in §1, the following are **not** established, and this report doe
 not claim them: replay/rewind, offline compaction and purge, 24-hour endurance,
 append-only capacity and maintenance safety, provider-level capture-gap
 accounting, and any performance verdict about production hardware.
+
+---
+
+## 9. Deviations, and what they cost
+
+Recorded so that no reader has to infer them.
+
+1. **Phase 36 was executed before Phase 35.** The ROADMAP lists Phase 36 as
+   depending on Phases 28-35. Phase 36 was run first at the user's explicit
+   direction. The dependency was flagged only afterwards, which was a mistake in
+   ordering on my part: it should have been raised before starting.
+   - *What survived:* DOCS-01 (schema), DOCS-02 (defaults and precedence),
+     DOCS-03 (entry points and fail-closed behaviour) and DOCS-04 (this report)
+     do not depend on capacity or maintenance measurements, so their results
+     stand.
+   - *What it cost:* **§4 of the operations runbook - the append-only policy, the
+     maintenance-guard procedure, off-hours compaction, and the physical symbol
+     purge - is unverified.** That is Phase 35's subject matter (CAPA-01..05) and
+     no evidence in this report covers it. Some maintenance fencing has
+     pre-existing coverage from v4.1 (`test_tick_lake_audit_storage_regressions.py`
+     and others), but the runbook's maintenance *procedures* have not been
+     rehearsed. Physical replacement and compaction therefore remain disabled,
+     which is the correct state while CAPA-04 is unproven.
+2. **Phase 35 is not executed at all.** CAPA-01..05 are Pending. Most are
+   sandbox-testable (simulated files/day, injected ENOSPC thresholds,
+   pending-purge honesty, maintenance fencing, stale-marker fail-closed); only the
+   real production capacity projection is out of reach. Note that ROADMAP lists
+   Phase 35 as depending on Phase 31, which is deferred - so a strict dependency
+   reading blocks it, though the majority of its criteria do not actually require
+   a 24-hour run.
+3. **Q10a and Q10b are excluded by instruction**, not by oversight: replay/rewind
+   (RPLY-01..05) and offline compaction/purge (COMP-01..05) are not in scope, not
+   tested, and not signed off.
+4. **Phase 31 (24-hour endurance) is deferred by instruction.** ENDR-01..05 are
+   Pending and untested.
+5. **Benchmarks are container measurements.** Every figure in §5 comes from a
+   2-core/3 GB container. They are not a production-host verdict and must not be
+   quoted as one.
+
+**Net effect on the signoff:** 30 of 45 requirements are complete. The remaining
+15 are named individually above rather than aggregated, because an unnamed gap
+tends to be read as a completed one.
