@@ -175,6 +175,56 @@ unexplained transient rather than written off, and re-appearing failures must be
 investigated against the artifact before any signoff. This is also why the
 workflow now uploads `pytest.log` and JUnit XML on every run.
 
+## 8b. Production-scale benchmarks (Phase 30, PERF-01/04/05/06/08)
+
+Tool: `tests/performance/test_lake_scale_benchmarks.py` (marked `performance`, so
+it is excluded from the 20-minute offline job). Input:
+`tests/support/deterministic_dataset.py` — a new combined, seeded, batched
+generator, because no existing generator produced a large dataset containing all
+the edge cases at once (§7).
+
+Rows are controlled by `GSD_LAKE_BENCH_ROWS`. Artifacts are per scale in
+`.planning/artifacts/`, summarised in `lake-scale-summary.json`.
+
+| Rows | Wall s | CPU s/M ticks | rows/s | Files | Files (hot symbol) | Peak RSS MB | 1m p95 | 5m p95 | 1d p95 | Flush→visible ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 200,000 | 7.806 | 37.0 | 25,621.8 | 400 | 40 | 180.2 | 51.787 ms | 52.95 ms | 67.93 ms | 80.93 |
+| 1,000,000 | 42.876 | 40.59 | 23,323.0 | 2,000 | 200 | 181.9 | 184.046 ms | 170.905 ms | 151.373 ms | 86.617 |
+| 10,000,000 | 427.511 | 40.566 | 23,391.2 | 20,000 | 2,000 | 185.3 | 1288.248 ms | 1297.38 ms | 1384.718 ms | 133.463 |
+
+**Finding F2 — the write path scales; the query path does not.** Writer CPU cost
+per million ticks is flat (37.0 → 40.6 s) and peak RSS is flat (180 → 185 MB)
+from 200k to 10M rows, so ingestion and memory are bounded and linear. Query
+latency, however, tracks **files per symbol**, not rows: 40 files → 52 ms,
+200 files → 184 ms, 2,000 files → 1,288 ms, roughly 0.6–1.3 ms per file even
+after pruning selects only the hot symbol's files.
+
+Against the retained gates (`1m`/`5m` p95 <100 ms, `1d` p95 <250 ms): met at
+200k rows; **breached at 1M and 10M rows on this host**. Pruning works and is
+proven (10× file reduction, `PERF-06`), but pruning alone does not keep latency
+bounded as the append-only design accumulates one file per micro-batch per
+symbol per day.
+
+**Interpretation, stated carefully.** This is a 2-core/3 GB container, not the
+project's performance reference host, so these numbers are **not** a production
+verdict and are not compared against the production SLA. What *is*
+host-independent is the shape of the curve: latency grows linearly with file
+count, and the design has no compaction (Q10b, deferred to v4.3). Even a
+production host several times faster would breach the `<100 ms` gate at a few
+thousand files per symbol. This is therefore a capacity/operations finding for
+Q08 and a direct input to the Q10b compaction decision — recorded as evidence,
+not as a fixed defect, since no gate is claimed to have been broken on the
+reference host.
+
+**Not measured here (recorded as unmeasured, not passed):**
+- **PERF-02** (≥50% CPU reduction vs legacy DuckDB): no reproducible baseline
+  exists — traceability gap LAKE-P0-03. The absolute figure (≈40 CPU s per
+  million ticks) is recorded and can be compared once a baseline is produced.
+- **PERF-03** (event-loop lag p99 <20 ms): needs the live streaming runner and a
+  provider, neither available here.
+- **PERF-07** (historical resampling benchmarks): needs the production
+  historical database.
+
 ## 9. Gate status
 
 | Gate | Phase | Status | Evidence |
@@ -186,7 +236,14 @@ workflow now uploads `pytest.log` and JUnit XML on every run.
 | ISOL-04 (independent oracle) | 29 | PASS | 7 tests proving detection of all three corruption classes |
 | ISOL-05 / ENDR-05 (deterministic barriers) | 29/31 | PASS (partial) | Defect D1 fixed and covered by 6 unit tests |
 | ISOL-01/02 (isolation of new tools/processes) | 29 | Not started | — |
-| PERF-01..08 (production-scale performance) | 30 | Not started | Blocked on a combined scalable generator (§7) |
+| PERF-01 (1M/10M reproducible datasets) | 30 | PASS | §8b, `lake-scale-summary.json` |
+| PERF-02 (≥50% CPU reduction) | 30 | BLOCKED | No reproducible baseline (gap LAKE-P0-03); absolute cost recorded |
+| PERF-03 (event-loop lag p99 <20 ms) | 30 | NOT MEASURED | Needs the live runner and a provider |
+| PERF-04 (1m/5m p95 <100 ms, 1d p95 <250 ms) | 30 | FAIL on this host | Met at 200k; 184 ms / 1,288 ms at 1M / 10M — see finding F2 |
+| PERF-05 (visibility freshness) | 30 | PASS | 81–133 ms flush→visible across scales |
+| PERF-06 (partition pruning) | 30 | PASS | 10× file reduction proven by file inventory |
+| PERF-07 (historical benchmarks) | 30 | DEFERRED | Requires production historical database |
+| PERF-08 (bounded memory & backpressure) | 30 | PASS | Peak RSS 180→185 MB from 200k to 10M rows |
 | ENDR-01..04 (24h endurance) | 31 | DEFERRED | User instruction: defer the 24-hour run |
 | PERF-07 (historical benchmarks) | 30 | DEFERRED | Requires production historical database, absent here |
 | MIGR-01/02/04 (operational migration) | 34 | DEFERRED | Requires production inventory, absent here |

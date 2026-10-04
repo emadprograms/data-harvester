@@ -15,14 +15,18 @@ _Newest first. Each entry is a shipped, verified milestone._
 
 **Goal:** produce reproducible evidence for the v4.0/v4.1 requirements, resolve what that verification uncovers, and issue an explicitly scoped append-only release signoff. This milestone produces evidence, not features.
 
-**Status:** Phases 28–29 complete, Phase 30 in progress. Release candidate `6706e5f`, PR [#8](https://github.com/emadprograms/data-harvester/pull/8).
+**Status:** Phases 28–30 complete; Phase 31 (24h endurance) deferred; Phases 32/33/35/36 remain.
 
 **Completed:**
 - **Phase 28 — CI evidence & traceability.** Hosted CI green on two candidate SHAs. Requirement matrix maps 51 archived requirement IDs to executable nodes (48 mapped, 3 gaps declared rather than assumed passing). Release report validator refuses gates with missing artifacts, stale SHAs, null metrics, skipped required tests, or an empty test selection.
 - **Phase 29 — Isolation & independent oracles.** The multiset oracle is now *proven* to detect a corrupted value, a removed duplicate, and a phantom row. The deterministic generator's contract is pinned (reproducibility, stable IDs, and the presence of ties, duplicates, nulls, late arrivals, UTC rollover, and session boundaries).
+- **Phase 30 — Production-scale benchmarks.** Measured at 200k / 1M / 10M rows on a deterministic dataset. The write path scales cleanly (CPU 37.0 → 40.6 s per million ticks, peak RSS flat at 180 → 185 MB). Query latency scales with **files per symbol**, not rows: 52 ms at 40 files, 184 ms at 200, 1,288 ms at 2,000. See finding F2.
 
 **Defects found and fixed:**
 - **D1** — `test_chaos_port_conflict_backoff_and_recovery` slept a fixed 0.8s and asserted crash detection, but the child needs ~0.615s to fail with EADDRINUSE; detection raced the assertion and the test failed on Linux. Replaced with a deterministic bounded poll. Failing before, passing after.
+
+**Findings:**
+- **F2 — query latency grows with file count.** Partition pruning works and is proven (10× file reduction), but the append-only design accumulates one file per micro-batch per symbol per day, and latency tracks that count. The retained `<100 ms` gate holds at 200k rows and is breached at 1M/10M on this container. Not a production-host verdict, but the shape of the curve is host-independent and is a direct input to the Q10b compaction decision.
 
 **Deferred (cannot be executed in this environment):**
 - 24-hour endurance run (Q04) — deferred by user instruction

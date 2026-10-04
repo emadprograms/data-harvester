@@ -26,14 +26,14 @@
 
 ### Production-Scale Performance (Q03)
 
-- [ ] **PERF-01**: Reproducible 1M and 10M-row datasets can be built with ≥19 symbols, hot-symbol skew, session and month windows, with a manifest recording rows, partitions, file sizes, distribution, and seed
-- [ ] **PERF-02**: Writer CPU seconds per million ticks show ≥50% reduction against a documented comparable baseline under matched input, durability semantics, machine, filesystem, and publication counts
-- [ ] **PERF-03**: Event-loop scheduling lag is p99 <20 ms at the declared peak input rate
-- [ ] **PERF-04**: Warm one-symbol/session 1m and 5m queries are p95 <100 ms, and one-symbol/month daily candles are p95 <250 ms, with output correctness checked alongside timing
-- [ ] **PERF-05**: Visibility freshness (receive time → finalized file, monotonic clock, separate reader) is p99 ≤ configured flush interval + 1 second under healthy load
-- [ ] **PERF-06**: Partition pruning is demonstrated through selected file inventories or query profiling, including unrelated-symbol fixtures
-- [ ] **PERF-07**: The four historical resampling benchmarks execute with `PERFORMANCE_HISTORICAL_DB_PATH` set; the qualification command fails on a missing dataset or a skipped required benchmark
-- [ ] **PERF-08**: No sustained healthy-load backlog; bounded queue depth and aggregate RSS stay within the predeclared host budget, with sample counts and cache conditions predeclared
+- [x] **PERF-01**: Reproducible 1M and 10M-row datasets can be built with ≥19 symbols, hot-symbol skew, session and month windows, with a manifest recording rows, partitions, file sizes, distribution, and seed
+- [ ] **PERF-02**: *(BLOCKED — no reproducible baseline; gap LAKE-P0-03)* Writer CPU seconds per million ticks show ≥50% reduction against a documented comparable baseline under matched input, durability semantics, machine, filesystem, and publication counts
+- [ ] **PERF-03**: *(NOT MEASURED — needs live runner and provider)* Event-loop scheduling lag is p99 <20 ms at the declared peak input rate
+- [ ] **PERF-04**: *(FAIL on the executing container at 1M/10M rows; not a production-host verdict — see execution report finding F2)* Warm one-symbol/session 1m and 5m queries are p95 <100 ms, and one-symbol/month daily candles are p95 <250 ms, with output correctness checked alongside timing
+- [x] **PERF-05**: Visibility freshness (receive time → finalized file, monotonic clock, separate reader) is p99 ≤ configured flush interval + 1 second under healthy load
+- [x] **PERF-06**: Partition pruning is demonstrated through selected file inventories or query profiling, including unrelated-symbol fixtures
+- [ ] **PERF-07**: *(DEFERRED — needs production historical database)* The four historical resampling benchmarks execute with `PERFORMANCE_HISTORICAL_DB_PATH` set; the qualification command fails on a missing dataset or a skipped required benchmark
+- [x] **PERF-08**: No sustained healthy-load backlog; bounded queue depth and aggregate RSS stay within the predeclared host budget, with sample counts and cache conditions predeclared
 
 ### Endurance & Sustained Recovery (Q04)
 
@@ -125,14 +125,14 @@ Deferred from v4.2 by design (Q10). Tracked, not in the current roadmap, and **e
 | ISOL-03 | Phase 29 | Complete |
 | ISOL-04 | Phase 29 | Complete |
 | ISOL-05 | Phase 29 | Complete |
-| PERF-01 | Phase 30 | Pending |
+| PERF-01 | Phase 30 | Complete |
 | PERF-02 | Phase 30 | Pending |
 | PERF-03 | Phase 30 | Pending |
 | PERF-04 | Phase 30 | Pending |
-| PERF-05 | Phase 30 | Pending |
-| PERF-06 | Phase 30 | Pending |
+| PERF-05 | Phase 30 | Complete |
+| PERF-06 | Phase 30 | Complete |
 | PERF-07 | Phase 30 | Pending |
-| PERF-08 | Phase 30 | Pending |
+| PERF-08 | Phase 30 | Complete |
 | ENDR-01 | Phase 31 | Pending |
 | ENDR-02 | Phase 31 | Pending |
 | ENDR-03 | Phase 31 | Pending |

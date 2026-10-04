@@ -1,0 +1,5 @@
+{
+  "rows": 2000,
+  "rows_published_on_flush": 2000,
+  "flush_to_visible_ms": 133.463
+}
