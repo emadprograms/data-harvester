@@ -1,7 +1,45 @@
 """Spawned-process barriers with bounded joins and unconditional cleanup."""
 import multiprocessing
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence
+
+
+def wait_until(predicate: Callable[[], bool], timeout: float = 10.0, interval: float = 0.05) -> bool:
+    """Poll `predicate` until it is true or `timeout` elapses.
+
+    Deterministic replacement for fixed ``time.sleep`` synchronization: it waits
+    only as long as the condition actually needs, which keeps tests stable on
+    slower hosts (CI runners, loaded machines) without widening any product SLA.
+    """
+    deadline = time.monotonic() + float(timeout)
+    while True:
+        try:
+            if predicate():
+                return True
+        except Exception:
+            # Predicates may inspect not-yet-initialized state (e.g. a child
+            # that has not written its readiness file yet); keep polling.
+            pass
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(float(interval))
+
+
+def wait_until_or_fail(
+    predicate: Callable[[], bool],
+    description: str,
+    timeout: float = 10.0,
+    interval: float = 0.05,
+) -> float:
+    """Wait for `predicate`, raising AssertionError with elapsed-time evidence."""
+    started = time.monotonic()
+    if wait_until(predicate, timeout=timeout, interval=interval):
+        return time.monotonic() - started
+    raise AssertionError(
+        f"Timed out after {timeout}s waiting for {description} "
+        f"(poll interval {interval}s)"
+    )
 
 
 def barrier_file_worker(ready, release, committed, output_path):
