@@ -6,18 +6,25 @@ A high-performance, 100% local market data harvesting and streaming engine runni
 ## Core Value
 Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
 
-## Current Milestone (v4.2) — In Planning
+## Current Milestone (v4.3) — In Progress
 
-**v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (planning started 2026-10-04)
+**v4.3: Final Tick-Lake Implementation and Verification** — Phases 37–45 (planning started 2026-10-04)
 
-Goal: produce reproducible evidence for the Milestone 4.0/4.1 requirements, resolve the failures that verification uncovers, and issue an explicitly scoped append-only release signoff.
+Goal: Finish the historical DuckDB-to-Parquet migration and concurrent ingestion/analytics work, correct incomplete qualification, implement the remaining operational capabilities (capacity monitoring, offline compaction/purge if needed, market rewind decision & replay iterator, 24-hour endurance), and produce one final evidence-backed signoff with zero required unresolved gates based strictly on `docs/plans/milestone-4.3-final-concurrency-closeout.md`.
 
-- **This milestone produces evidence, not features.** Production code changes only where a test demonstrates a defect or an approved capability is absent; existing F01–F11 regressions are preserved.
-- **Scope:** Q01–Q09 → Phases 28–36 (CI evidence, isolation/oracles, production-scale performance, 24h endurance, durability boundary, Repo B integration, migration/restore rehearsal, capacity/maintenance, documentation & signoff).
-- **Deferred to v4.3:** Q10a replay/rewind (RPLY-01–05) and Q10b offline compaction/physical purge (COMP-01–05), plus a durable inbox/spool for zero-loss live capture.
-- **Evidence rules:** every gate records `PASS` / `FAIL` / `BLOCKED` / `DEFERRED` with requirement ID, test node or command, tested commit, environment, fixture identity, expected and observed result, and an artifact reference. Thresholds are never widened and skips never count as passes.
-- **Source plan:** [`docs/plans/milestone-4.2-signoff-and-verification.md`](../docs/plans/milestone-4.2-signoff-and-verification.md)
-- **Artifacts:** [REQUIREMENTS.md](REQUIREMENTS.md) (45 requirements) · [ROADMAP.md](ROADMAP.md) (Phases 28–36) · [STATE.md](STATE.md)
+- **Agreed Scope & Adjustments (9 Phases):**
+  1. **Phase 37 (Package A)**: Preflight, safe test isolation, production write guards, and fail-closed release report validator with table-driven mutation tests (C43-06).
+  2. **Phase 38 (Package B)**: Migration source-coverage ledger (resolves C43-01 without payload deduplication), provenance-scoped final verification (resolves C43-02 without xfail), complete-lake audit, and coordinator cutover/rollback rehearsal.
+  3. **Phase 39 (Package C)**: Fast reader failure on unavailable roots without legacy DuckDB fallback, barrier-controlled snapshot race test (resolves C43-07), and isolated executable contract verification.
+  4. **Phase 40 (Package D)**: Real OS runner lifecycle tests, assertion-bearing durability barrier crash matrix, fake provider sequence ledger with honest gap accounting, and guaranteed RAM loss boundary.
+  5. **Phase 43 (Pass 1, Package G)**: Initial corrected benchmarks at >=19 symbols / 1M/10M scale, continuous peak RSS/CPU sampling, real arrival-to-visible p99 latency, and enforced qualification upper limits to measure raw-partition fan-out.
+  6. **Phase 41 (Package E)**: Capacity monitoring and alerts; conditional offline compaction and physical purge under a durable maintenance journal with consumer drain and receipt lineage if required by Pass 1 SLAs.
+  7. **Phase 42 (Package F)**: Market Rewind release inclusion decision; if YES, implement and test bounded deterministic replay iterator; if NO, omit and proceed to Pass 2.
+  8. **Phase 43 (Pass 2, Package G)**: Re-run performance qualification after runtime or compaction changes.
+  9. **Phase 44 (Package H)**: 24-hour continuous multi-process endurance run with live synthetic ingestion, periodic checkpointing, and separate four-category reconciliation.
+  10. **Phase 45 (Package I)**: Final candidate freeze, authenticated hosted CI log verification, requirement traceability reconciliation, and hardened release audit.
+- **Execution sequence:** `Phase 37 -> 38 -> 39 -> 40 -> 43 (Pass 1) -> 41 -> 42 (Decision: Yes -> implement replay -> 43 Pass 2; No -> 43 Pass 2) -> 44 -> 45`.
+- **Artifacts:** [REQUIREMENTS.md](REQUIREMENTS.md) (37 requirements) · [ROADMAP.md](ROADMAP.md) (Phases 37–45) · [STATE.md](STATE.md)
 
 ## Current State (Shipped v4.1)
 - **Partitioned Parquet Tick Lake (`data/tick_lake/ticks`)**: Fully decoupled append-only storage organized by Hive two-level partitioning (`symbol=<ENCODED_SYMBOL>/date=<YYYY-MM-DD>/*.parquet`). Live ticks never touch a disk-backed DuckDB database, completely eliminating write locks between ingestion and analytical readers.
@@ -28,7 +35,8 @@ Goal: produce reproducible evidence for the Milestone 4.0/4.1 requirements, reso
 - **Historical Storage (`data/historical.duckdb`)**: ~8.9M deduplicated 1-minute OHLCV bars across 40 symbols covering October 2024 to September 2026. Sub-10ms dynamic candlestick resampling via DuckDB native `time_bucket()`.
 - **Observability Command Center**: Interactive TradingView Lightweight Charts (v4.1.3) with multi-timeframe analytical resampling (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`), raw OHLCV candle inspector, CSV export, live tick tape, market session clock, and integrity auditing.
 - **Milestone v4.1 Shipped (2026-10-03, Closed: 2026-10-04)**: `Partitioned Parquet Lake Deep Testing & Hardening` (Phases 22–27) — 122 new comprehensive edge-case, stress, fuzz, backpressure, and chaos tests expanded to **746 passing offline tests** (0 failures, 0 errors) with 5 local performance gates passing (<100ms p95). All 17 requirements verified; all audit findings F01–F11 remediated, regression-tested, and offline qualified; formal audit verdict: `PASSED / QUALIFIED` ([.planning/milestones/v4.1-MILESTONE-AUDIT.md](milestones/v4.1-MILESTONE-AUDIT.md)).
-- **Documentation**: `README.md`, `docs/operations/tick_lake_operations_guide.md`, `docs/contracts/repo_b_tick_lake_contract.md`, `docs/windows_service_setup.md`, and `docs/plans/*` are aligned with the shipped v4.1 architecture and paths.
+- **Milestone v4.2 Closed (2026-10-04)**: `Tick Lake Qualification & Scoped Signoff` (Phases 28–36) — Scoped signoff with 30 of 45 requirements verified; 15 requirements explicitly excluded/deferred (24h endurance, capacity monitoring, Q10a replay, Q10b compaction) and two xfails pinned for remediation in v4.3 ([.planning/milestones/v4.2-MILESTONE-AUDIT.md](milestones/v4.2-MILESTONE-AUDIT.md)).
+- **Documentation**: `README.md`, `docs/operations/tick_lake_operations_guide.md`, `docs/contracts/repo_b_tick_lake_contract.md`, `docs/windows_service_setup.md`, and `docs/plans/*` are aligned with the shipped architecture and paths.
 
 ## Requirements
 
@@ -144,4 +152,4 @@ _Phase-level requirement detail for v4.1 is archived at [.planning/milestones/v4
 | Tests-only hardening milestone (v4.1) | Freezing application code while adding 122 adversarial tests proves the lake design rather than hiding defects behind concurrent refactors | ✓ Good |
 
 ---
-*Last updated: 2026-10-04 after Milestone v4.1 completion, audit remediation (F01–F11), and formal archival (746-test offline suite, git tag v4.1).*
+*Last updated: 2026-10-04 after Milestone v4.3 initialization and planning.*

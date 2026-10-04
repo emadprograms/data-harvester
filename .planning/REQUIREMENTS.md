@@ -2,174 +2,142 @@
 
 **Defined:** 2026-10-04
 **Core Value:** Zero-cloud, zero-quota persistent market data ingestion and storage — capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
-**Milestone:** v4.2 Tick Lake Qualification & Scoped Signoff
+**Milestone:** v4.3 Final Tick-Lake Implementation and Verification
 
-**Source of truth for scope:** [`docs/plans/milestone-4.2-signoff-and-verification.md`](../docs/plans/milestone-4.2-signoff-and-verification.md) — gates Q01–Q10.
+**Source of truth for scope:** [`docs/plans/milestone-4.3-final-concurrency-closeout.md`](../docs/plans/milestone-4.3-final-concurrency-closeout.md) — Findings C43-01 through C43-12, Packages A through I (Phases 37–45).
 
-> **This milestone produces evidence, not features.** Every requirement below is a qualification claim. A requirement is *Complete* only when its evidence artifact exists and records `PASS`. Missing data, an unavailable repository, a skipped required test, or an empty CI rollup is `BLOCKED` or `DEFERRED` — never `PASS`.
+> **This milestone completes the implementation and verification of the partitioned Parquet tick lake.** Every requirement below is an assertion-bearing qualification claim. A requirement is *Complete* only when its executable evidence artifact exists and records `PASS` with zero required unresolved gates. Skips, xfails, or waivers on required gates are strictly rejected.
 
-## v4.2 Requirements
+---
 
-### Evidence & Traceability (Q01)
+## v4.3 Requirements by Phase
 
-- [x] **EVID-01**: Operator can point to a hosted CI run for the exact release-candidate SHA with a green offline workflow (`.github/workflows/offline-tests.yml`), recorded as run URL + SHA
-- [x] **EVID-02**: Operator can read a requirement-to-evidence matrix mapping every `LAKE-*`, `TEST-P22-*` through `TEST-P27-*`, and F01–F11 item to an assertion-bearing test node
-- [x] **EVID-03**: Release report validator rejects a gate whose artifact is missing, whose code SHA mismatches, whose metrics are absent or zero, which skipped a required test, or whose status is not passing — each rejection unit-tested
+### Phase 37: Preflight, Test Isolation & Fail-Closed Validator (Package A)
 
-### Test Isolation & Independent Oracles (Q02)
+- [ ] **VALD-01**: New fixtures, logs, and benchmark tools write only inside designated safe run directories outside tracked historical artifacts; an inherited production `DATA_DIR` / `TICK_LAKE_ROOT`, symlink alias, or unsafe output path fails closed before any write.
+- [ ] **VALD-02**: The release report validator consumes an authoritative, independently declared required-gate inventory, rejecting `--allow-deferred` waivers on required FAIL or BLOCKED gates; missing, incomplete, or failing gates strictly fail closed.
+- [ ] **VALD-03**: Table-driven report mutation tests demonstrate that the validator detects missing artifacts, directory inputs instead of files, zero latency, test count conservation errors, malformed schemas, and mutated metrics (resolving C43-06).
+- [ ] **VALD-04**: Preflight environment characterization records candidate commit SHA, clean/dirty working tree, dependency versions, OS, hardware, filesystem, and explicit capability probes (local socket binding, subprocess lifecycle, process metrics, Node availability, public network).
 
-- [x] **ISOL-01**: New fixture and benchmark tools write only inside a designated scratch directory; an inherited production `DATA_DIR` / `TICK_LAKE_ROOT`, symlink alias, or unsafe output path fails before any write
-- [x] **ISOL-02**: Every spawned process receives explicit isolated configuration and cannot fall back to the production database or external lake
-- [x] **ISOL-03**: Deterministic generator produces stable IDs, timestamp ties, duplicate observations, null/zero volume, late arrivals, encoded symbols, and session boundaries
-- [x] **ISOL-04**: Independent oracle detects a corrupted value, a removed duplicate, and a phantom row while preserving duplicate multiplicity
-- [x] **ISOL-05**: Barrier timeouts, child failures, cancellation, and test exceptions clean up processes, threads, temporary ports, and file handles; a child exit before readiness fails the parent
+### Phase 38: Migration Overlap Protection & Provenance-Scoped Verification (Package B)
 
-### Production-Scale Performance (Q03)
+- [ ] **MIGR-01**: Source-coverage ledger operates independently of run scope or query filters, preventing duplicate row publication on overlapping or subset/superset runs without payload deduplication (resolving C43-01).
+- [ ] **MIGR-02**: Final publication verification inspects the published Parquet inventory against the frozen source using bidirectional `EXCEPT ALL`, scoped strictly to migration-owned inventory so legitimate concurrent live rows do not trigger verification failure (resolving C43-02 without xfail).
+- [ ] **MIGR-03**: Complete-inventory integrity audit and whole-lake audit detect unowned, foreign, corrupted, or forged-provenance files across all lake namespaces.
+- [ ] **MIGR-04**: Production cutover and rollback rehearsal executes through `MigrationHandoffCoordinator` and `ProcessSupervisor` under injected stalled drain, stopped supervisor, snapshot mismatch, publication failure, and post-cutover live data preservation.
 
-- [x] **PERF-01**: Reproducible 1M and 10M-row datasets can be built with ≥19 symbols, hot-symbol skew, session and month windows, with a manifest recording rows, partitions, file sizes, distribution, and seed
-- [ ] **PERF-02**: *(BLOCKED — no reproducible baseline; gap LAKE-P0-03)* Writer CPU seconds per million ticks show ≥50% reduction against a documented comparable baseline under matched input, durability semantics, machine, filesystem, and publication counts
-- [ ] **PERF-03**: *(NOT MEASURED — needs live runner and provider)* Event-loop scheduling lag is p99 <20 ms at the declared peak input rate
-- [ ] **PERF-04**: *(FAIL on the executing container at 1M/10M rows; not a production-host verdict — see execution report finding F2)* Warm one-symbol/session 1m and 5m queries are p95 <100 ms, and one-symbol/month daily candles are p95 <250 ms, with output correctness checked alongside timing
-- [x] **PERF-05**: Visibility freshness (receive time → finalized file, monotonic clock, separate reader) is p99 ≤ configured flush interval + 1 second under healthy load
-- [x] **PERF-06**: Partition pruning is demonstrated through selected file inventories or query profiling, including unrelated-symbol fixtures
-- [ ] **PERF-07**: *(DEFERRED — needs production historical database)* The four historical resampling benchmarks execute with `PERFORMANCE_HISTORICAL_DB_PATH` set; the qualification command fails on a missing dataset or a skipped required benchmark
-- [x] **PERF-08**: No sustained healthy-load backlog; bounded queue depth and aggregate RSS stay within the predeclared host budget, with sample counts and cache conditions predeclared
+### Phase 39: Reader Root Correctness & Portable Executable Contract (Package C)
 
-### Endurance & Sustained Recovery (Q04)
+- [ ] **READ-01**: The reader distinguishes uninitialized roots, lost mounts, corrupted metadata, or unreadable partitions from legitimate empty lakes, raising specific structured exceptions with zero silent fallback to legacy DuckDB.
+- [ ] **READ-02**: Barrier-controlled snapshot race test captures the exact file list, removes an input file during execution barrier, and asserts either complete results or an explicit snapshot-unavailable error, never silent partial reads (resolving C43-07).
+- [ ] **READ-03**: Published markdown reader contract examples execute in an isolated subprocess with zero internal `src` imports, verifying physical schema, types, nullability, and encoded symbols against the live lake.
+- [ ] **READ-04**: Resampling correctness is verified against independent candle oracles across UTC/exchange date boundaries, DST shifts, leap years, null/zero volume semantics, and deterministic tie-breaking.
 
-- [ ] **ENDR-01**: A ≥24 continuous hour run completes with writer, dashboard, independent reader, and registry activity under predeclared rates, query mix, and fault schedule
-- [ ] **ENDR-02**: Per-process and aggregate CPU/RSS, handles, threads, queue depth, oldest pending age, file/receipt/intent counts, free space, and latency windows are sampled throughout, with explicit warm-up and post-warm-up growth limits
-- [ ] **ENDR-03**: Scheduled kill/restart, provider disconnect/reconnect, transient storage errors, registry changes, and failed drains recover within the declared deadline with durable records preserved
-- [ ] **ENDR-04**: Durable/committed IDs reconcile continuously and at final drain against an independent input ledger held outside the killed process
-- [ ] **ENDR-05**: An aborted harness reports `INCOMPLETE` / failed qualification; an unexpected child death or absent telemetry fails the run rather than producing a green report
+### Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D)
 
-### Durability Boundary & Capture Gap (Q05)
+- [ ] **DURB-01**: Real OS runner lifecycle tests under SIGINT/SIGTERM verify `_shutdown_signal_handler` execution, cooperative worker queue drain, and clean process termination.
+- [ ] **DURB-02**: Crash matrix kills the writer at admission, intent durability, staged fsync, final promotion, directory fsync, receipt durability, and acknowledgment, reconciling against an independent external ledger in a fresh process.
+- [ ] **DURB-03**: Fake provider with sequence ledgers and controllable disconnect/reconnect records explicit visible gap start/end intervals and reports loss as unknown when unquantifiable.
+- [ ] **DURB-04**: Guaranteed RAM-only loss boundary is verified and signed honestly as the guarantee limit; no unverified live zero-loss or power-loss claims are made.
 
-- [x] **DURB-01**: Crash matrix kills the writer at each durability barrier (queue admission, intent, staged file, promotion, receipt, acknowledgment) and reconciles IDs after restart in a fresh process
-- [x] **DURB-02**: Faulted file writes, fsync, promotion, directory fsync, receipt/status writes, and recovery produce no false committed counts, no corrupt visible files, and no duplicate retry — including a batch spanning multiple partitions
-- [x] **DURB-03**: The RAM-only loss boundary is demonstrated and documented honestly, and is not presented as a power-loss guarantee
-- [ ] **DURB-04**: *(DEFERRED — needs a provider replay protocol and retention guarantees)* Provider disconnects during queue saturation and during handoff yield exact recovery where replay is supported and a visible capture-gap interval/counter where it is not
-- [x] **DURB-05**: Status and exit codes distinguish healthy stop, failed drain, durable pending recovery, and unrecoverable RAM-only pending work, with the affected interval discoverable by operators
+### Phase 43: Initial & Re-run Performance Qualification (Package G - Pass 1 & Pass 2)
 
-### Repo B Contract & Integration (Q06)
+- [ ] **PERF-01**: Reproducible benchmark datasets are generated with >=19 symbols, hot-symbol skew, and session/month windows at 1M and 10M rows, with recorded manifests (resolving C43-05).
+- [ ] **PERF-02**: Background sampler continuously tracks peak RSS and CPU throughout benchmark execution, replacing point-in-time `max(start, end)` snapshots.
+- [ ] **PERF-03**: Real receive-to-visible freshness is measured through the actual runner and an independent reader process (healthy load p99 <= configured flush interval + 1 second; resolving C43-04).
+- [ ] **PERF-04**: Qualification harness strictly enforces upper limits: warm session 1m/5m queries p95 <100ms, warm month daily candles p95 <250ms, writer CPU >=50% reduction vs legacy baseline, and event loop lag p99 <20ms (resolving C43-03).
+- [ ] **PERF-05**: Two-pass qualification execution: Pass 1 measures raw-partition fan-out latency to inform Phase 41 compaction; Pass 2 re-qualifies performance after runtime or compaction changes.
 
-- [x] **REPB-01**: A consumer in a separate process with no `src` imports validates physical schema, types, nullability, encoded symbols, UTC partition selection, empty-lake behavior, ties, and duplicate multiplicity
-- [x] **REPB-02**: Contract examples execute as tests; 1m/5m/1d candles match an independent oracle including UTC/exchange date boundaries, DST, null/zero volume, and late data
-- [x] **REPB-03**: Real Repo B opens charts and switches symbols while a dummy legacy tick database is exclusively locked, with no accidental legacy attachment and exact results verified
-- [x] **REPB-04**: A fresh request observes newly finalized files and excludes staging, migration, and retired files; snapshot semantics are documented
-- [x] **REPB-05**: Cancellation, connection cleanup, concurrent readers, missing roots, maintenance pause/resume, and stale snapshot handling all behave as specified
+### Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E)
 
-### Migration, Backup & Restore Rehearsal (Q07)
+- [ ] **CAPA-01**: Capacity monitor tracks files/day by symbol, small-file distribution, intent/receipt growth, free disk space, and query discovery cost, with rate-limited warning and critical alerts.
+- [ ] **CAPA-02**: Durable maintenance journal and consumer drain protocol stops reader admission, drains active queries/replays, pauses supervisor restarts, and refuses unmanaged external readers during maintenance.
+- [ ] **CAPA-03**: Offline compaction implementation (conditional on Phase 43 Pass 1 SLA requirements) writes consolidated files outside active globs, verifies multiset equivalence before replacement, and preserves an immutable receipt lineage map.
+- [ ] **CAPA-04**: Physical purge automation removes fenced `PENDING_PURGE` symbol files only under an inactive fenced generation, with crash-safe recovery and rollback.
 
-- [x] **MIGR-01**: A large frozen source containing inactive symbols, duplicates, ties, nulls, float edge values, and late events migrates through to the final published inventory
-- [x] **MIGR-02**: *(reconciliation against final output is performed by the suite; the tool's own verify mode remains staging-based — see finding F11)* Source and final published files reconcile by bidirectional `EXCEPT ALL` on all mapped fields plus per-symbol/date counts and registry mapping, verified against final output rather than staging
-- [x] **MIGR-03**: *(re-running with a different date filter duplicates partitions — see finding F10)* Crashes between export/checkpoint/verify/publish/receipt restart in a fresh CLI process; repeat and append migrations preserve exact multiplicity and all immutable prior files
-- [x] **MIGR-04**: Cutover rehearsal (stop/drain, frozen-source capture, ownership release, publish, restart, reconcile) behaves honestly under an injected stalled drain and a failed restart
-- [x] **MIGR-05**: A retained backup restores into a new scratch destination, is queryable and reconcilable, and rollback preserves newly written live Parquet data
+### Phase 42: Market Rewind & Bounded Replay Iterator Decision (Package F - Decision Gated)
 
-### Capacity & Maintenance Safety (Q08)
+- [ ] **RPLY-01**: Release decision gate for Market Rewind evaluates whether replay iterator is included in release scope: branch YES implements and qualifies replay iterator; branch NO documents omission and routes directly to Phase 43 Pass 2.
+- [ ] **RPLY-02**: If included, `src/storage/replay.py` provides a bounded chronological snapshot replay iterator over frozen file inventories yielding Arrow batches without full-history RAM materialization or large-OFFSET scans.
+- [ ] **RPLY-03**: If included, deterministic total ordering `(timestamp, symbol, ingest_id)` with stable tie-breaking and cursor resumption survives fresh process restarts.
+- [ ] **RPLY-04**: Portable reader contract remains fully verified and operational regardless of the replay iterator inclusion decision.
 
-- [ ] **CAPA-01**: Files/day by symbol and date, receipt/intent growth, disk usage, and query discovery cost are simulated for realistic quiet/busy schedules, including late ticks to old partitions
-- [ ] **CAPA-02**: Low-space and file-count thresholds produce actionable status before exhaustion, rate-limited reporting, and safe retention of pending work on ENOSPC
-- [ ] **CAPA-03**: Administrative symbol deletion reports pending purge honestly and removes no active files; no startup/cleanup path performs uncoordinated retention
-- [ ] **CAPA-04**: Maintenance fences writer, migration, recovery, and service restart paths; consumer drain is verified and an unmanaged external reader is refused
-- [ ] **CAPA-05**: Stale maintenance markers and interrupted operations fail closed with a documented recovery path; a marker is never cleared merely because its process exited
+### Phase 44: 24-Hour Sustained Multi-Process Endurance Run (Package H)
 
-### Documentation & Signoff (Q09)
+- [ ] **ENDR-01**: Multi-process endurance harness runs continuously for at least 24 hours with real runner, dashboard, and independent reader under live synthetic ingestion.
+- [ ] **ENDR-02**: Telemetry continuously tracks per-process/aggregate CPU, RSS, handle counts, thread counts, and queue depth with bounded growth and zero zombie processes.
+- [ ] **ENDR-03**: Independent producer ledger reconciles admitted, durable, published, and rejected records separately; provider ticks during documented gaps are not misclassified as lost durable records.
+- [ ] **ENDR-04**: Scheduled faults (disconnects, restarts, transient I/O errors, maintenance cycles) recover within declared deadlines with zero durable record loss.
+- [ ] **ENDR-05**: Harness fails closed: deliberate premature aborts or absent telemetry produce `INCOMPLETE` / failed qualification, never green.
 
-- [x] **DOCS-01**: Schema documentation matches `src/storage/schema.py` (nine columns including `ingest_id`) and public examples execute successfully against generated fixtures
-- [x] **DOCS-02**: Configuration precedence, actual flush defaults, data-root selection, empty registry startup, and legacy compatibility selection match verified behavior in README and runbooks
-- [x] **DOCS-03**: Every supported runtime streaming entry point maps to its intended backend, and lake-selected paths fail closed instead of silently reopening the legacy tick DB
-- [x] **DOCS-04**: v4.2 execution report and audit report are published with the requirement matrix, CI evidence, benchmark artifacts, migration/restore reports, Repo B result, durability contract, and explicit deferred scope
+### Phase 45: Operational Rehearsal, Candidate CI & Milestone Closeout Audit (Package I)
 
-## v4.3 Requirements
+- [ ] **AUDT-01**: Candidate code freeze is established; full offline test suite executes with zero required xfails, skips, or unhandled errors.
+- [ ] **AUDT-02**: Hosted candidate CI run URL, commit SHA, and test logs are verified through authenticated CI checks.
+- [ ] **AUDT-03**: Complete requirement-level traceability matrix reconciles all Milestone 4.3 requirements, test nodes, and artifacts with zero contradictions.
+- [ ] **AUDT-04**: Release report passes hardened validation with zero required unresolved gates; final `milestone-4.3-audit-report.md` is published.
 
-Deferred from v4.2 by design (Q10). Tracked, not in the current roadmap, and **excluded from the append-only release scope**.
-
-### Replay / Rewind (Q10a)
-
-- **RPLY-01**: Bounded snapshot replay over an explicit immutable file list with deterministic total ordering and a documented multi-symbol tie-breaker
-- **RPLY-02**: Resumable cursor tied to the snapshot survives process restart, with no whole-history materialization or large-OFFSET iteration
-- **RPLY-03**: Actual Repo B playback uses this API, with warm time-to-first-batch <250 ms at 1M/10M rows and memory bounded by a predeclared budget
-- **RPLY-04**: Late-arrival and snapshot semantics are captured explicitly; maintenance waits for active replay or invalidates unsupported resume snapshots
-- **RPLY-05**: Resource cleanup on early iterator close, plus cancellation, empty intervals, and symbol/date boundary tests
-
-### Offline Compaction & Physical Purge (Q10b)
-
-- **COMP-01**: Prebuilt outputs in excluded staging verify full multiset equivalence before any replacement
-- **COMP-02**: Unique replacement names and a recoverable journal let recovery finish or roll back before any reader restarts
-- **COMP-03**: Repeat compaction, late arrivals, partition boundaries, inactive-symbol purge, disk full, and competing owners are tested
-- **COMP-04**: A crash after every retirement/promotion/journal step leaves the resumed reader with exactly the expected multiset
-- **COMP-05**: Backups survive failed replacement; compaction time and headroom fit the tested pause budget
+---
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Durable inbox / disk spool for zero-loss live capture | New capability requiring group-fsync before acknowledgment, not a documentation fix; zero loss is scoped to verified frozen-source migration (Q05) |
-| Provider acknowledgment/replay protocol | Depends on provider retention guarantees not yet verified; capture-gap accounting covers the interim (DURB-04) |
-| Enabling physical replacement / compaction | Blocked until Q10b passes and all readers can be drained and fenced (CAPA-04 keeps it disabled) |
-| Replay / market-rewind signoff | Requires Q10a; the append-only signoff explicitly lists rewind as deferred |
-| Cross-platform qualification claims | Only the deployment host and Linux CI are qualified; other platforms are listed as unqualified (EVID-01) |
-| Live / provider tests in hosted CI | Explicitly excluded from the offline workflow; run manually and recorded separately |
+| Durable inbox / disk spool (`_spool/`) for power failure zero-loss | Architectural extension requiring group-fsync before ack; the guaranteed release boundary is the documented RAM loss boundary. |
+| Provider replay protocol & retention verification | Requires external provider-specific contracts; fake provider sequence ledger and gap accounting covers the protocol boundary honestly. |
+| Online live compaction / dynamic file mutation | The architecture enforces an immutable Parquet lake; compaction operates strictly during coordinated drain maintenance windows. |
+| Relaxed qualification thresholds | Thresholds are strict upper limits; no retry-until-green or threshold widening to force passes. |
 
-## Traceability
+---
+
+## Traceability Mapping
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EVID-01 | Phase 28 | Complete |
-| EVID-02 | Phase 28 | Complete |
-| EVID-03 | Phase 28 | Complete |
-| ISOL-01 | Phase 29 | Complete |
-| ISOL-02 | Phase 29 | Complete |
-| ISOL-03 | Phase 29 | Complete |
-| ISOL-04 | Phase 29 | Complete |
-| ISOL-05 | Phase 29 | Complete |
-| PERF-01 | Phase 30 | Complete |
-| PERF-02 | Phase 30 | Pending |
-| PERF-03 | Phase 30 | Pending |
-| PERF-04 | Phase 30 | Pending |
-| PERF-05 | Phase 30 | Complete |
-| PERF-06 | Phase 30 | Complete |
-| PERF-07 | Phase 30 | Pending |
-| PERF-08 | Phase 30 | Complete |
-| ENDR-01 | Phase 31 | Pending |
-| ENDR-02 | Phase 31 | Pending |
-| ENDR-03 | Phase 31 | Pending |
-| ENDR-04 | Phase 31 | Pending |
-| ENDR-05 | Phase 31 | Pending |
-| DURB-01 | Phase 32 | Complete |
-| DURB-02 | Phase 32 | Complete |
-| DURB-03 | Phase 32 | Complete |
-| DURB-04 | Phase 32 | Pending |
-| DURB-05 | Phase 32 | Complete |
-| REPB-01 | Phase 33 | Complete |
-| REPB-02 | Phase 33 | Complete |
-| REPB-03 | Phase 33 | Complete |
-| REPB-04 | Phase 33 | Complete |
-| REPB-05 | Phase 33 | Complete |
-| MIGR-01 | Phase 34 | Complete |
-| MIGR-02 | Phase 34 | Complete |
-| MIGR-03 | Phase 34 | Complete |
-| MIGR-04 | Phase 34 | Complete |
-| MIGR-05 | Phase 34 | Complete |
-| CAPA-01 | Phase 35 | Pending |
-| CAPA-02 | Phase 35 | Pending |
-| CAPA-03 | Phase 35 | Pending |
-| CAPA-04 | Phase 35 | Pending |
-| CAPA-05 | Phase 35 | Pending |
-| DOCS-01 | Phase 36 | Complete |
-| DOCS-02 | Phase 36 | Complete |
-| DOCS-03 | Phase 36 | Complete |
-| DOCS-04 | Phase 36 | Complete |
+| VALD-01 | Phase 37 | Pending |
+| VALD-02 | Phase 37 | Pending |
+| VALD-03 | Phase 37 | Pending |
+| VALD-04 | Phase 37 | Pending |
+| MIGR-01 | Phase 38 | Pending |
+| MIGR-02 | Phase 38 | Pending |
+| MIGR-03 | Phase 38 | Pending |
+| MIGR-04 | Phase 38 | Pending |
+| READ-01 | Phase 39 | Pending |
+| READ-02 | Phase 39 | Pending |
+| READ-03 | Phase 39 | Pending |
+| READ-04 | Phase 39 | Pending |
+| DURB-01 | Phase 40 | Pending |
+| DURB-02 | Phase 40 | Pending |
+| DURB-03 | Phase 40 | Pending |
+| DURB-04 | Phase 40 | Pending |
+| PERF-01 | Phase 43 | Pending |
+| PERF-02 | Phase 43 | Pending |
+| PERF-03 | Phase 43 | Pending |
+| PERF-04 | Phase 43 | Pending |
+| PERF-05 | Phase 43 | Pending |
+| CAPA-01 | Phase 41 | Pending |
+| CAPA-02 | Phase 41 | Pending |
+| CAPA-03 | Phase 41 | Pending |
+| CAPA-04 | Phase 41 | Pending |
+| RPLY-01 | Phase 42 | Pending |
+| RPLY-02 | Phase 42 | Pending |
+| RPLY-03 | Phase 42 | Pending |
+| RPLY-04 | Phase 42 | Pending |
+| ENDR-01 | Phase 44 | Pending |
+| ENDR-02 | Phase 44 | Pending |
+| ENDR-03 | Phase 44 | Pending |
+| ENDR-04 | Phase 44 | Pending |
+| ENDR-05 | Phase 44 | Pending |
+| AUDT-01 | Phase 45 | Pending |
+| AUDT-02 | Phase 45 | Pending |
+| AUDT-03 | Phase 45 | Pending |
+| AUDT-04 | Phase 45 | Pending |
 
 **Coverage:**
-- v4.2 requirements: 45 total
-- Mapped to phases: 45
+- Total Milestone 4.3 requirements: 37
+- Mapped to phases: 37
 - Unmapped: 0 ✓
-- Deferred to v4.3: 10 (RPLY-01–05, COMP-01–05)
 
 ---
 *Requirements defined: 2026-10-04*
-*Last updated: 2026-10-04 after Phase 28 and Phase 29 execution*
-*Derived from: docs/plans/milestone-4.2-signoff-and-verification.md (Q01–Q10)*
+*Derived from: docs/plans/milestone-4.3-final-concurrency-closeout.md (Packages A–I)*

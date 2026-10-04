@@ -2,7 +2,8 @@
 
 _Newest first. Each entry is a shipped, verified milestone._
 
-- [ ] **v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (**in progress**, started 2026-10-04)
+- [ ] **v4.3 Final Tick-Lake Implementation and Verification** — Phases 37–45 (**in progress**, started 2026-10-04)
+- [x] **v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (closed 2026-10-04)
 - [x] **v4.1 Partitioned Parquet Lake Deep Testing & Hardening** — Phases 22–27 (shipped 2026-10-03)
 - [x] **v4.0 Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)** — Phases 15–21 (shipped 2026-10-03)
 - [x] **v3.0 Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard** — Phases 10–14 (shipped 2026-09-26)
@@ -11,7 +12,26 @@ _Newest first. Each entry is a shipped, verified milestone._
 
 ---
 
-## v4.2 Tick Lake Qualification & Scoped Signoff (In progress: started 2026-10-04)
+## v4.3 Final Tick-Lake Implementation and Verification (In progress: started 2026-10-04)
+
+**Goal:** Finish the historical DuckDB-to-Parquet migration and concurrent ingestion/analytics work, correct incomplete qualification, implement the remaining operational capabilities (capacity monitoring, offline compaction/purge if needed, market rewind decision & replay iterator, 24-hour endurance), and produce one final evidence-backed signoff based strictly on `docs/plans/milestone-4.3-final-concurrency-closeout.md`.
+
+**Status:** Initialized; Phase 37 ready to plan.
+
+**Phases:**
+- Phase 37: Preflight, Test Isolation & Fail-Closed Validator (Package A)
+- Phase 38: Migration Overlap Protection & Provenance-Scoped Verification (Package B)
+- Phase 39: Reader Root Correctness & Portable Executable Contract (Package C)
+- Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D)
+- Phase 43: Initial & Re-run Performance Qualification (Package G - Pass 1 & Pass 2)
+- Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E)
+- Phase 42: Market Rewind & Bounded Replay Iterator Decision (Package F)
+- Phase 44: 24-Hour Sustained Multi-Process Endurance Run (Package H)
+- Phase 45: Operational Rehearsal, Candidate CI & Milestone Closeout Audit (Package I)
+
+---
+
+## v4.2 Tick Lake Qualification & Scoped Signoff (Closed 2026-10-04)
 
 **Goal:** produce reproducible evidence for the v4.0/v4.1 requirements, resolve what that verification uncovers, and issue an explicitly scoped append-only release signoff. This milestone produces evidence, not features.
 

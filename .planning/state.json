@@ -1,58 +1,58 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v4.2 — Tick Lake Qualification & Scoped Signoff",
+  "milestone": "v4.3 — Final Tick-Lake Implementation and Verification",
   "phases": [
     {
-      "number": "28",
-      "name": "CI Evidence & Requirement Traceability",
+      "number": "37",
+      "name": "Preflight, Test Isolation & Fail-Closed Validator",
       "status": "pending"
     },
     {
-      "number": "29",
-      "name": "Test Isolation & Independent Oracles",
+      "number": "38",
+      "name": "Migration Overlap Protection & Provenance-Scoped Verification",
       "status": "pending"
     },
     {
-      "number": "30",
-      "name": "Production-Scale Performance Qualification",
+      "number": "39",
+      "name": "Reader Root Correctness & Portable Executable Contract",
       "status": "pending"
     },
     {
-      "number": "31",
-      "name": "Endurance & Sustained Recovery",
+      "number": "40",
+      "name": "Honest Durability Boundaries & Provider Gap Ledger",
       "status": "pending"
     },
     {
-      "number": "32",
-      "name": "Durability Boundary & Capture-Gap Contract",
+      "number": "43",
+      "name": "Production-Scale Benchmarks & Performance Qualification (Pass 1)",
       "status": "pending"
     },
     {
-      "number": "33",
-      "name": "Repo B Contract & Integration",
+      "number": "41",
+      "name": "Capacity Monitoring, Offline Compaction & Physical Purge",
       "status": "pending"
     },
     {
-      "number": "34",
-      "name": "Migration, Backup & Restore Rehearsal",
+      "number": "42",
+      "name": "Market Rewind & Bounded Replay Iterator Decision",
       "status": "pending"
     },
     {
-      "number": "35",
-      "name": "Append-Only Capacity & Maintenance Safety",
+      "number": "44",
+      "name": "24-Hour Sustained Multi-Process Endurance Run",
       "status": "pending"
     },
     {
-      "number": "36",
-      "name": "Contract Repair & Signoff Documentation",
+      "number": "45",
+      "name": "Operational Rehearsal, Candidate CI & Milestone Closeout Audit",
       "status": "pending"
     }
   ],
   "next": {
-    "command": "/gsd:discuss-phase 28",
-    "label": "Discuss Phase 28",
-    "reason": "Phase 28 is the first v4.2 phase and is ready for context gathering"
+    "command": "/gsd-plan-phase 37",
+    "label": "Plan Phase 37",
+    "reason": "Phase 37 is the entry phase of Milestone 4.3 and is ready to plan"
   },
   "updated_at": "2026-10-04T00:00:00.000Z"
 }
