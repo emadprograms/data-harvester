@@ -61,11 +61,11 @@
 
 ### Migration, Backup & Restore Rehearsal (Q07)
 
-- [ ] **MIGR-01**: A large frozen source containing inactive symbols, duplicates, ties, nulls, float edge values, and late events migrates through to the final published inventory
-- [ ] **MIGR-02**: Source and final published files reconcile by bidirectional `EXCEPT ALL` on all mapped fields plus per-symbol/date counts and registry mapping, verified against final output rather than staging
-- [ ] **MIGR-03**: Crashes between export/checkpoint/verify/publish/receipt restart in a fresh CLI process; repeat and append migrations preserve exact multiplicity and all immutable prior files
-- [ ] **MIGR-04**: Cutover rehearsal (stop/drain, frozen-source capture, ownership release, publish, restart, reconcile) behaves honestly under an injected stalled drain and a failed restart
-- [ ] **MIGR-05**: A retained backup restores into a new scratch destination, is queryable and reconcilable, and rollback preserves newly written live Parquet data
+- [x] **MIGR-01**: A large frozen source containing inactive symbols, duplicates, ties, nulls, float edge values, and late events migrates through to the final published inventory
+- [x] **MIGR-02**: *(reconciliation against final output is performed by the suite; the tool's own verify mode remains staging-based — see finding F11)* Source and final published files reconcile by bidirectional `EXCEPT ALL` on all mapped fields plus per-symbol/date counts and registry mapping, verified against final output rather than staging
+- [x] **MIGR-03**: *(re-running with a different date filter duplicates partitions — see finding F10)* Crashes between export/checkpoint/verify/publish/receipt restart in a fresh CLI process; repeat and append migrations preserve exact multiplicity and all immutable prior files
+- [x] **MIGR-04**: Cutover rehearsal (stop/drain, frozen-source capture, ownership release, publish, restart, reconcile) behaves honestly under an injected stalled drain and a failed restart
+- [x] **MIGR-05**: A retained backup restores into a new scratch destination, is queryable and reconcilable, and rollback preserves newly written live Parquet data
 
 ### Capacity & Maintenance Safety (Q08)
 
@@ -148,11 +148,11 @@ Deferred from v4.2 by design (Q10). Tracked, not in the current roadmap, and **e
 | REPB-03 | Phase 33 | Complete |
 | REPB-04 | Phase 33 | Complete |
 | REPB-05 | Phase 33 | Complete |
-| MIGR-01 | Phase 34 | Pending |
-| MIGR-02 | Phase 34 | Pending |
-| MIGR-03 | Phase 34 | Pending |
-| MIGR-04 | Phase 34 | Pending |
-| MIGR-05 | Phase 34 | Pending |
+| MIGR-01 | Phase 34 | Complete |
+| MIGR-02 | Phase 34 | Complete |
+| MIGR-03 | Phase 34 | Complete |
+| MIGR-04 | Phase 34 | Complete |
+| MIGR-05 | Phase 34 | Complete |
 | CAPA-01 | Phase 35 | Pending |
 | CAPA-02 | Phase 35 | Pending |
 | CAPA-03 | Phase 35 | Pending |

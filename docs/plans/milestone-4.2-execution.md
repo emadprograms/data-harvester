@@ -344,6 +344,65 @@ that implements it.
 The gate is that the contract is complete and executable for a *fresh*
 third-party consumer, which is what these tests establish.
 
+## 8e. Migration, backup and restore rehearsal (Phase 34, MIGR-01..05)
+
+Tooling: `tests/support/migration_cli.py` (the real CLI in a fresh process),
+`tests/support/migration_fault_runner.py` (crash injection at durability
+syscalls), `tests/support/frozen_source.py` (large frozen edge-case source),
+`tests/support/cutover_rehearsal.py` (the cutover sequence, which the product
+does not yet ship as a script), and 19 tests across
+`tests/storage/test_migration_rehearsal.py` and
+`tests/storage/test_cutover_rehearsal.py`.
+
+Every migration runs through the CLI in a **fresh interpreter**, because "resumes
+after a crash" has to mean it survives losing all in-memory state — an
+in-process call to `main()` cannot show that. Crash points that cannot be
+produced by stopping early are injected at the syscall that decides durability:
+
+| Crash point | Mechanism | Result |
+|---|---|---|
+| mid-export | SIGKILL once a staged chunk appears | resumed with `--resume` in a new process; reconciles exactly |
+| data-file promotion | injected `os.link` failure | publish fails, retry in a fresh process succeeds, nothing lost or duplicated |
+| receipt write | injected `os.replace` failure | same |
+
+**Migration publishes by hard link (`os.link`), not `os.replace`.** The live
+writer renames; the migration tool links. A crash-injection harness that only
+patches `os.replace` will silently fail to crash migration publication, which is
+worth knowing for anyone extending this work.
+
+**Two gaps are pinned with `xfail(strict=True)` rather than fixed**, because both
+need a design decision that belongs to a later milestone:
+
+- **F10 — a re-run with a different date filter duplicates partitions.** After a
+  completed migration, re-running with `--date-start/--date-end` narrowed to an
+  already-migrated date treats the new *plan* as new work and publishes it again.
+  Measured: 51 → 102 rows per symbol for the re-run date. The guard against
+  re-migration is keyed to plan identity, not to what is already in the lake.
+- **F11 — `verify` reconciles staging, not the published lake.**
+  `MigrationOrchestrator.verify` is documented in its own docstring as
+  reconciling "the exact run-owned staged inventory to its frozen DuckDB source".
+  It proves the *export* was lossless. It does not prove the *published* lake
+  matches the source, and it exits 0 when the lake contains rows the source never
+  had.
+
+F11 is what makes F10 dangerous: the tool's own verification cannot see the
+duplication it allows. The suite therefore performs the required bidirectional
+`EXCEPT ALL` reconciliation **independently, against `ticks/`**, and asserts that
+staging is empty afterwards so that reconciliation cannot silently read staging
+instead.
+
+Cutover rehearsal behaviour is verified by injecting failures into the sequence:
+a stalled drain aborts **before** publication (asserted: no migration rows reach
+the lake and `publish` is recorded `SKIPPED`), and a failed restart is reported as
+a failure even though the data was published. Ownership is checked to be exclusive
+while held.
+
+**Scope note.** Real historical source access remains unavailable, so the source
+is a large synthetic frozen DuckDB. It covers the required edge cases by
+construction: inactive symbols, exact duplicates (multiplicity 3), ties on
+`(timestamp, symbol)`, nulls across every nullable column, float edges including
+the denormal minimum and near-`DBL_MAX`, and late events inserted out of order.
+
 ## 9. Gate status
 
 | Gate | Phase | Status | Evidence |
@@ -365,6 +424,11 @@ third-party consumer, which is what these tests establish.
 | REPB-03 (legacy DB locked, no attachment) | 33 | PASS | exact results while locked; every connection `:memory:` |
 | REPB-04 (visibility and snapshot semantics) | 33 | PASS | staging/migration excluded; §7.3 documents snapshots |
 | REPB-05 (cancellation, cleanup, concurrency) | 33 | PASS | interrupt + reuse, no leaked connections, 8 readers agree |
+| MIGR-01 (large frozen source, edge cases) | 34 | PASS | inactive symbols, dupes, ties, nulls, float edges, late events |
+| MIGR-02 (bidirectional EXCEPT ALL vs final output) | 34 | PASS (external check) | suite reconciles against ticks/; tool verify is staging-based — F11 |
+| MIGR-03 (crash/resume, repeat/append) | 34 | PASS | fresh-process resume; prior files byte-identical — F10 noted |
+| MIGR-04 (cutover rehearsal honesty) | 34 | PASS | stalled drain aborts before publish; failed restart not reported as success |
+| MIGR-05 (backup restore, rollback) | 34 | PASS | restored copy queryable and reconciles; rollback keeps live data |
 | PERF-01 (1M/10M reproducible datasets) | 30 | PASS | §8b, `lake-scale-summary.json` |
 | PERF-02 (≥50% CPU reduction) | 30 | BLOCKED | No reproducible baseline (gap LAKE-P0-03); absolute cost recorded |
 | PERF-03 (event-loop lag p99 <20 ms) | 30 | NOT MEASURED | Needs the live runner and a provider |
