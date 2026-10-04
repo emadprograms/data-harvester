@@ -174,8 +174,9 @@ flowchart TD
 
 ---
 
-#### Phase 39: Reader Root Correctness & Portable Executable Contract (Package C)
+#### Phase 39: Reader Root Correctness & Portable Executable Contract (Package C) [x]
 
+**Status**: Completed 2026-10-04 (commit `4c18243b`)
 **Goal**: Ensure the lake reader fails fast on uninitialized or unavailable roots without legacy DuckDB fallback, replace the file-deletion test with a barrier-controlled snapshot race, and execute the portable contract suite.
 **Depends on**: Phase 37
 **Requirements**: [READ-01, READ-02, READ-03, READ-04]
@@ -185,7 +186,7 @@ flowchart TD
   3. Barrier-controlled snapshot race test captures the exact file list, removes a file during execution barrier, and asserts either complete results or an explicit snapshot-unavailable error (never silent partial reads; resolving C43-07).
   4. Published markdown contract examples execute in an isolated subprocess with zero internal `src` imports, verifying candle resampling accuracy across DST, timestamp ties, null volume, and late data.
 
-**Plans**: 0 plans (run `/gsd-plan-phase 39` to break down)
+**Plans**: 1 plan complete (commit `4c18243b`)
 
 ---
 

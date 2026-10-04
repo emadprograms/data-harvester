@@ -28,10 +28,10 @@
 
 ### Phase 39: Reader Root Correctness & Portable Executable Contract (Package C)
 
-- [ ] **READ-01**: The reader distinguishes uninitialized roots, lost mounts, corrupted metadata, or unreadable partitions from legitimate empty lakes, raising specific structured exceptions with zero silent fallback to legacy DuckDB.
-- [ ] **READ-02**: Barrier-controlled snapshot race test captures the exact file list, removes an input file during execution barrier, and asserts either complete results or an explicit snapshot-unavailable error, never silent partial reads (resolving C43-07).
-- [ ] **READ-03**: Published markdown reader contract examples execute in an isolated subprocess with zero internal `src` imports, verifying physical schema, types, nullability, and encoded symbols against the live lake.
-- [ ] **READ-04**: Resampling correctness is verified against independent candle oracles across UTC/exchange date boundaries, DST shifts, leap years, null/zero volume semantics, and deterministic tie-breaking.
+- [x] **READ-01**: The reader distinguishes uninitialized roots, lost mounts, corrupted metadata, or unreadable partitions from legitimate empty lakes, raising specific structured exceptions with zero silent fallback to legacy DuckDB.
+- [x] **READ-02**: Barrier-controlled snapshot race test captures the exact file list, removes an input file during execution barrier, and asserts either complete results or an explicit snapshot-unavailable error, never silent partial reads (resolving C43-07).
+- [x] **READ-03**: Published markdown reader contract examples execute in an isolated subprocess with zero internal `src` imports, verifying physical schema, types, nullability, and encoded symbols against the live lake.
+- [x] **READ-04**: Resampling correctness is verified against independent candle oracles across UTC/exchange date boundaries, DST shifts, leap years, null/zero volume semantics, and deterministic tie-breaking.
 
 ### Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D)
 
@@ -102,10 +102,10 @@
 | MIGR-02 | Phase 38 | Complete |
 | MIGR-03 | Phase 38 | Complete |
 | MIGR-04 | Phase 38 | Complete |
-| READ-01 | Phase 39 | Pending |
-| READ-02 | Phase 39 | Pending |
-| READ-03 | Phase 39 | Pending |
-| READ-04 | Phase 39 | Pending |
+| READ-01 | Phase 39 | Complete |
+| READ-02 | Phase 39 | Complete |
+| READ-03 | Phase 39 | Complete |
+| READ-04 | Phase 39 | Complete |
 | DURB-01 | Phase 40 | Pending |
 | DURB-02 | Phase 40 | Pending |
 | DURB-03 | Phase 40 | Pending |
