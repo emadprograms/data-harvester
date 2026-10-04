@@ -18,8 +18,8 @@
 
 ### Test Isolation & Independent Oracles (Q02)
 
-- [ ] **ISOL-01**: New fixture and benchmark tools write only inside a designated scratch directory; an inherited production `DATA_DIR` / `TICK_LAKE_ROOT`, symlink alias, or unsafe output path fails before any write
-- [ ] **ISOL-02**: Every spawned process receives explicit isolated configuration and cannot fall back to the production database or external lake
+- [x] **ISOL-01**: New fixture and benchmark tools write only inside a designated scratch directory; an inherited production `DATA_DIR` / `TICK_LAKE_ROOT`, symlink alias, or unsafe output path fails before any write
+- [x] **ISOL-02**: Every spawned process receives explicit isolated configuration and cannot fall back to the production database or external lake
 - [x] **ISOL-03**: Deterministic generator produces stable IDs, timestamp ties, duplicate observations, null/zero volume, late arrivals, encoded symbols, and session boundaries
 - [x] **ISOL-04**: Independent oracle detects a corrupted value, a removed duplicate, and a phantom row while preserving duplicate multiplicity
 - [x] **ISOL-05**: Barrier timeouts, child failures, cancellation, and test exceptions clean up processes, threads, temporary ports, and file handles; a child exit before readiness fails the parent
@@ -77,10 +77,10 @@
 
 ### Documentation & Signoff (Q09)
 
-- [ ] **DOCS-01**: Schema documentation matches `src/storage/schema.py` (nine columns including `ingest_id`) and public examples execute successfully against generated fixtures
-- [ ] **DOCS-02**: Configuration precedence, actual flush defaults, data-root selection, empty registry startup, and legacy compatibility selection match verified behavior in README and runbooks
-- [ ] **DOCS-03**: Every supported runtime streaming entry point maps to its intended backend, and lake-selected paths fail closed instead of silently reopening the legacy tick DB
-- [ ] **DOCS-04**: v4.2 execution report and audit report are published with the requirement matrix, CI evidence, benchmark artifacts, migration/restore reports, Repo B result, durability contract, and explicit deferred scope
+- [x] **DOCS-01**: Schema documentation matches `src/storage/schema.py` (nine columns including `ingest_id`) and public examples execute successfully against generated fixtures
+- [x] **DOCS-02**: Configuration precedence, actual flush defaults, data-root selection, empty registry startup, and legacy compatibility selection match verified behavior in README and runbooks
+- [x] **DOCS-03**: Every supported runtime streaming entry point maps to its intended backend, and lake-selected paths fail closed instead of silently reopening the legacy tick DB
+- [x] **DOCS-04**: v4.2 execution report and audit report are published with the requirement matrix, CI evidence, benchmark artifacts, migration/restore reports, Repo B result, durability contract, and explicit deferred scope
 
 ## v4.3 Requirements
 
@@ -120,8 +120,8 @@ Deferred from v4.2 by design (Q10). Tracked, not in the current roadmap, and **e
 | EVID-01 | Phase 28 | Complete |
 | EVID-02 | Phase 28 | Complete |
 | EVID-03 | Phase 28 | Complete |
-| ISOL-01 | Phase 29 | Pending |
-| ISOL-02 | Phase 29 | Pending |
+| ISOL-01 | Phase 29 | Complete |
+| ISOL-02 | Phase 29 | Complete |
 | ISOL-03 | Phase 29 | Complete |
 | ISOL-04 | Phase 29 | Complete |
 | ISOL-05 | Phase 29 | Complete |
@@ -158,10 +158,10 @@ Deferred from v4.2 by design (Q10). Tracked, not in the current roadmap, and **e
 | CAPA-03 | Phase 35 | Pending |
 | CAPA-04 | Phase 35 | Pending |
 | CAPA-05 | Phase 35 | Pending |
-| DOCS-01 | Phase 36 | Pending |
-| DOCS-02 | Phase 36 | Pending |
-| DOCS-03 | Phase 36 | Pending |
-| DOCS-04 | Phase 36 | Pending |
+| DOCS-01 | Phase 36 | Complete |
+| DOCS-02 | Phase 36 | Complete |
+| DOCS-03 | Phase 36 | Complete |
+| DOCS-04 | Phase 36 | Complete |
 
 **Coverage:**
 - v4.2 requirements: 45 total

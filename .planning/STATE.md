@@ -4,10 +4,10 @@ milestone: v4.2
 status: planning
 last_updated: "2026-10-04T00:00:00.000Z"
 last_activity: 2026-10-04
-last_activity_desc: "Phases 28-30 and 32-34 complete. Phase 34 ran every migration through the real CLI in a fresh process; two gaps pinned (F10 re-run duplication, F11 verify is staging-based). Phase 33 executed the published Repo B examples and found five documentation defects (F3-F7, incl. a silent empty-result bug for percent-encoded symbols), corrected two behavioural claims (F8 reader fail-fast, F9 stale-resolution partial reads), and mutation-tested the candle oracle 6/6. Benchmarks at 200k/1M/10M rows: write path scales (RSS flat 180-185MB), query latency tracks files per symbol (52ms/184ms/1288ms). Phase 31 deferred; Phase 32 next."
+last_activity_desc: "Phases 28-30 and 32-34 and 36 complete. Phase 36 published the v4.2 audit report (30 of 45 requirements complete; 15 explicitly out of scope), fixed five documentation defects (F12-F14 and the contract set), and closed ISOL-01/02 which Phase 29 had reported complete without verifying. Phase 34 ran every migration through the real CLI in a fresh process; two gaps pinned (F10 re-run duplication, F11 verify is staging-based). Phase 33 executed the published Repo B examples and found five documentation defects (F3-F7, incl. a silent empty-result bug for percent-encoded symbols), corrected two behavioural claims (F8 reader fail-fast, F9 stale-resolution partial reads), and mutation-tested the candle oracle 6/6. Benchmarks at 200k/1M/10M rows: write path scales (RSS flat 180-185MB), query latency tracks files per symbol (52ms/184ms/1288ms). Phase 31 deferred; Phase 32 next."
 progress:
   total_phases: 9
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 0
   completed_plans: 0
   percent: 0
@@ -21,16 +21,16 @@ milestone_name: "v4.2 Tick Lake Qualification & Scoped Signoff"
 See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-04)
 
 **Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage.
-**Current focus:** Phase 35 — Append-Only Capacity & Maintenance Safety
+**Current focus:** Phase 36 — Contract Repair & Signoff Documentation
 
 ## Current Position
 
-Phase: 35 of 36 (Append-Only Capacity & Maintenance Safety)
+Phase: 36 of 36 (Contract Repair & Signoff Documentation)
 Plan: — (not yet planned)
 Status: Ready to plan (Phase 31 endurance deferred)
 Last activity: 2026-10-04 — Phase 34 complete (19 tests): migrations run through the real CLI in a fresh process, crashing at export (SIGKILL + resume), data-file promotion (os.link) and receipt write (os.replace). Two gaps pinned as xfail: F10 a re-run with a different date filter duplicates partitions, and F11 verify reconciles staging rather than the published lake, which is why the duplication goes undetected. Local suite now 898 passed, 2 xfailed. Phase 33 complete (28 tests): the documented Repo B examples are extracted from the markdown and executed, in a subprocess where `src` imports raise. Five documentation defects found and fixed (F3-F7), two behavioural claims corrected (F8, F9), and the candle oracle mutation-tested 6/6 — the first run caught only 4/5 because the fixture's row sorting masked the tie-break rule. Phase 32 complete: durability boundary pinned by a SIGKILL crash matrix (150 acknowledged rows survive, 250 RAM-only rows lost) and fault injection. Local offline suite now 881 passed, 16 deselected.
 
-Progress: [██████░░░░] 67%
+Progress: [███████░░░] 78%
 
 ## Accumulated Context
 
