@@ -2,16 +2,16 @@
 gsd_state_version: "1.0"
 milestone: none
 status: idle
-last_updated: "2026-10-03T18:00:00.000Z"
-last_activity: 2026-10-03
-last_activity_desc: "Milestone v4.1 shipped and archived; repository-wide documentation refresh completed (README, operations guide, Repo B contract, service docs, planning docs)."
+last_updated: "2026-10-04T07:18:00.000Z"
+last_activity: 2026-10-04
+last_activity_desc: "Milestone v4.1 closed and archived (F01–F11 remediation verified, 746 offline tests passing, git tag v4.1 created)."
 progress:
   total_phases: 0
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
   percent: 100
-milestone_name: "None — v4.1 (Partitioned Parquet Lake Deep Testing & Hardening) shipped 2026-10-03"
+milestone_name: "None — v4.1 (Partitioned Parquet Lake Deep Testing & Hardening) shipped and archived"
 ---
 
 # Project State: Data Harvester
@@ -21,19 +21,20 @@ milestone_name: "None — v4.1 (Partitioned Parquet Lake Deep Testing & Hardenin
 Phase: None — Milestone v4.1 closed and archived.
 Plan: —
 Status: idle (no active milestone)
-Last activity: 2026-10-03 — Completed Phase 27; shipped Milestone v4.1; refreshed all documentation.
+Last activity: 2026-10-04 — Closed Milestone v4.1; remediated audit findings F01–F11; qualified offline suite (746 passing tests); created git tag v4.1.
 
 ## Milestone Summary
 
-- Milestone: v4.1 (COMPLETED and SHIPPED 2026-10-03)
+- Milestone: v4.1 (COMPLETED, SHIPPED, AND ARCHIVED)
 - Goal: Deep edge-case coverage, stress testing, fuzzing, chaos recovery, and soak testing for the partitioned Parquet lake architecture.
-- Result: 6/6 phases, 6/6 plans, **17/17 requirements with passing tests**, 122 new tests, offline suite at 688 passing tests (696 collected).
+- Result: 6/6 phases, 6/6 plans, **17/17 requirements verified with passing tests**, F01–F11 remediated, offline suite at 746 passing tests (11 deselected), 5 local performance gates passing (<100ms p95).
   - Phase 22: Storage Foundation & Publication Edge Case Tests (`src/storage/config.py`, `schema.py`, `publication.py`) — COMPLETED (36/36 tests, commit 04544d56)
   - Phase 23: Streaming Writer & Runner Stress & Lifecycle Tests (`src/storage/parquet_writer.py`, `src/stream/runner.py`) — COMPLETED (14/14 tests, commit e856c035)
   - Phase 24: Versioned Symbol Registry & Dynamic Reload Stress Tests (`src/storage/registry.py`, `src/dashboard/server.py`) — COMPLETED (13/13 tests, commit d596bde7)
   - Phase 25: In-Memory DuckDB Lake Reader & Analytics Edge Tests (`src/storage/reader.py`, `src/dashboard/analytics.py`) — COMPLETED (17/17 tests, commit 54c87ecd)
   - Phase 26: Migration Tooling Rehearsal & Fuzz Tests (`tools/migrate_streaming_to_parquet.py`) — COMPLETED (32/32 tests, commit 56ab82a6)
   - Phase 27: Multi-Process Long-Running Soak & Chaos Tests (`tools/service_supervisor.py`, `tools/validate_concurrency.py`) — COMPLETED (10/10 tests, commit 2a7a4253)
+- Audit Outcome: Verified and qualified ([.planning/milestones/v4.1-MILESTONE-AUDIT.md](milestones/v4.1-MILESTONE-AUDIT.md)) — all 11 findings F01–F11 resolved and qualified.
 
 ## Execution Protocol (Strict 2-Stage Subagent Loop per Phase)
 
@@ -42,11 +43,12 @@ Last activity: 2026-10-03 — Completed Phase 27; shipped Milestone v4.1; refres
 
 ## Blockers/Concerns
 
-- **v4.1 audit verdict is `gaps_found`** ([.planning/v4.1-MILESTONE-AUDIT.md](v4.1-MILESTONE-AUDIT.md)): all 17 requirements have green tests, but no per-phase `VERIFICATION.md` artifacts exist (process gap chosen deliberately by the researcher→implementer cycle), plus 2 partial-coverage findings (TEST-P23-02 real SIGINT/SIGTERM path, TEST-P27-02 streamer chaos uses `tools/synthetic_streamer.py`) and 3 integration findings (INT-1 duplicate `cleanup_orphaned_staging_files` export, INT-2 `_is_mocked_db_connection` test hook in production analytics, INT-3 drop counters not surfaced to operators). None are data-corrupting defects.
-- Timing-sensitive performance gates (supervisor soak p95 latency, registry signal-storm debounce coalescing, RSS thresholds) can fail on slow or heavily loaded hosts; run them on the named reference machine described in `docs/plans/tick-lake-test-first-remediation.md` before drawing conclusions. Two such gates failed on a low-spec sandbox on 2026-10-03 while passing on the reference machine.
+- None. Milestone v4.1 audit findings F01–F11 have been remediated and qualified.
+- Timing-sensitive performance benchmarks (soak p95 latency, registry signal debouncing) are qualified on local environments with dashboard latency well below 100ms.
 
 ## Operator Next Steps
 
 - Milestone v4.1 is complete, verified, and archived; there is no active milestone.
+- Start next milestone with `/gsd-new-milestone`.
 - Candidate follow-ups (uncommitted scope) are listed in `ROADMAP.md` → "Milestone Backlog": wiring the documented `STREAM_*` environment variables into the runner/writer, off-hours compaction (P7a), purge automation, durable spool, and Repo B integration/rehearsal.
 - Standard operations: `./START_SERVICES.sh`, `./VIEW_STATUS.sh`, `./STOP_SERVICES.sh` (macOS) or `tools\windows\INSTALL_STARTUP.bat` / `VIEW_STATUS.bat` / `STOP_SERVICES.bat` (Windows); verify health at `http://localhost:8420/api/status`.

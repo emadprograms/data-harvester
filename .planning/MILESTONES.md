@@ -10,15 +10,16 @@ _Newest first. Each entry is a shipped, verified milestone._
 
 ---
 
-## v4.1 Partitioned Parquet Lake Deep Testing & Hardening (Shipped: 2026-10-03)
+## v4.1 Partitioned Parquet Lake Deep Testing & Hardening (Shipped: 2026-10-03, Closed: 2026-10-04)
 
-**Phases completed:** 6 phases (Phases 22–27), 6 plans, 17/17 requirements have passing tests
-**Verification status:** ⚠️ `gaps_found` per [.planning/v4.1-MILESTONE-AUDIT.md](v4.1-MILESTONE-AUDIT.md) — all 17 requirements have green tests, but no `VERIFICATION.md` artifact exists for any phase (process gap, not a defect gap). Two partial-coverage findings (TEST-P23-02 real signal path, TEST-P27-02 streamer chaos uses a synthetic stand-in) and three integration findings (INT-1…3) are tracked in [.planning/ROADMAP.md](ROADMAP.md) backlog.
-**Tests:** 122 new automated tests, bringing the offline suite to **688 passing tests** (`pytest tests/ -m "not live and not performance"`; 696 collected in total)
-**Test files:** `tests/storage/test_storage_edge_cases.py` (36), `tests/stream/test_lake_runner_stress.py` (14), `tests/storage/test_registry_stress.py` (13), `tests/storage/test_lake_reader_stress.py` (17), `tests/storage/test_migration_stress.py` (32), `tests/integration/test_supervisor_chaos_soak.py` (10)
-**Architecture:** Unchanged from v4.0 — the milestone was a hardening/verification milestone. All 122 tests were added without modifying application behaviour; the v4.0 partitioned Parquet lake design held up under adversarial conditions.
-**Commits:** Phase commits `04544d56`, `e856c035`, `d596bde7`, `54c87ecd`, `56ab82a6`, `2a7a4253`
-**Archive:** [.planning/milestones/v4.1-ROADMAP.md](milestones/v4.1-ROADMAP.md) · [.planning/milestones/v4.1-REQUIREMENTS.md](milestones/v4.1-REQUIREMENTS.md) · [.planning/v4.1-MILESTONE-AUDIT.md](v4.1-MILESTONE-AUDIT.md)
+**Phases completed:** 6 phases (Phases 22–27), 6 plans, 17/17 requirements verified
+**Verification status:** ✅ `PASSED / QUALIFIED` per [.planning/milestones/v4.1-MILESTONE-AUDIT.md](milestones/v4.1-MILESTONE-AUDIT.md) — All 17 requirements verified; findings F01–F11 remediated, regression tested, and offline qualified. Coverage gaps (TEST-P23-02 real OS signal subprocess runner, TEST-P27-02 real streamer chaos monkey) and integration findings (INT-1 staging cleaner export, INT-2 removal of test hooks in production analytics, INT-3 surfaced drop telemetry and write throttling) resolved cleanly.
+**Tests:** 122 new automated tests expanded to **746 passing offline tests** (`pytest tests/ -m "not live and not performance"`, 0 failures, 0 errors, 11 deselected); 5 passing local performance gates (<100ms p95).
+**Test files:** `tests/storage/test_storage_edge_cases.py` (36), `tests/stream/test_lake_runner_stress.py` (14), `tests/storage/test_registry_stress.py` (13), `tests/storage/test_lake_reader_stress.py` (17), `tests/storage/test_migration_stress.py` (32), `tests/integration/test_supervisor_chaos_soak.py` (10), plus F01–F11 remediation and qualification suites.
+**Architecture:** Decoupled partitioned Parquet tick lake hardened with single writer/publisher lock serialization, fail-closed configuration, and monotonic versioned symbol registry.
+**Commits:** Phase commits `04544d56`, `e856c035`, `d596bde7`, `54c87ecd`, `56ab82a6`, `2a7a4253`; remediation commits `e6763f9f`, `869a15cc`, `1c9af766`, `e3005d63`.
+**Git tag:** `v4.1`
+**Archive:** [.planning/milestones/v4.1-ROADMAP.md](milestones/v4.1-ROADMAP.md) · [.planning/milestones/v4.1-REQUIREMENTS.md](milestones/v4.1-REQUIREMENTS.md) · [.planning/milestones/v4.1-MILESTONE-AUDIT.md](milestones/v4.1-MILESTONE-AUDIT.md) · [.planning/milestones/v4.1-quick/](milestones/v4.1-quick/)
 
 **Key accomplishments:**
 

@@ -1,3 +1,8 @@
+---
+status: complete
+date: 2026-10-01
+---
+
 # Quick Task Summary: Rename market_data to minute_data and ticks to tick_data
 
 ## Overview

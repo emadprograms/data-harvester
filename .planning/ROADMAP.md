@@ -23,9 +23,9 @@
 - [x] Phase 26: Migration Tooling Rehearsal & Fuzz Tests (1/1 plan) — completed 2026-10-03 (32/32 tests)
 - [x] Phase 27: Multi-Process Long-Running Soak & Chaos Tests (1/1 plan) — completed 2026-10-03 (10/10 tests)
 
-Result: 122 new tests, offline suite at **688 passed** (0 failures, 0 errors at closeout). Audit verdict: ⚠️ **`gaps_found`** (verification artifacts missing; 2 coverage gaps; 3 integration findings — no data defects).
+Result: 122 new tests expanded to **746 passed offline tests** post-remediation (0 failures, 0 errors at closeout). Audit verdict: ✅ **`passed`** (F01–F11 remediated and verified; offline qualification passed; local performance gates passed).
 
-See: [.planning/milestones/v4.1-ROADMAP.md](milestones/v4.1-ROADMAP.md) · [.planning/milestones/v4.1-REQUIREMENTS.md](milestones/v4.1-REQUIREMENTS.md) · [.planning/v4.1-MILESTONE-AUDIT.md](v4.1-MILESTONE-AUDIT.md)
+See: [.planning/milestones/v4.1-ROADMAP.md](milestones/v4.1-ROADMAP.md) · [.planning/milestones/v4.1-REQUIREMENTS.md](milestones/v4.1-REQUIREMENTS.md) · [.planning/milestones/v4.1-MILESTONE-AUDIT.md](milestones/v4.1-MILESTONE-AUDIT.md) · [.planning/milestones/v4.1-quick/](milestones/v4.1-quick/)
 
 </details>
 
@@ -88,15 +88,7 @@ See: [.planning/milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 ### Milestone Backlog (candidates, unplanned)
 
-These are surfaced from the [v4.1 milestone audit](v4.1-MILESTONE-AUDIT.md), the v4.0/v4.1 retrospectives, and code/docs review; none are committed scope yet.
-
-**Audit recommendations (from `v4.1-MILESTONE-AUDIT.md` §6):**
-
-- **Process gap:** produce per-phase `VERIFICATION.md` artifacts for Phases 22–27 (or formally accept v4.1 as a test-only milestone with verification debt) — the FAIL gate behind the `gaps_found` verdict.
-- **INT-1 (medium):** resolve the `cleanup_orphaned_staging_files` name collision — rename the registry variant (e.g. `cleanup_orphaned_registry_staging_files`) and keep the publication cleaner exported at package level.
-- **INT-2 (medium):** remove `_is_mocked_db_connection` from `src/dashboard/analytics.py`; have legacy tests set `TICK_LAKE_ROOT` / patch `_get_lake_reader` instead of relying on `isinstance(..., Mock)` in production routing.
-- **INT-3 (low):** surface `TickLakeWriter.total_dropped` / `StreamingEngine.ticks_dropped` in `get_stream_status` (+ dashboard/health), and rate-limit the per-drop `writer_status.json` write.
-- **Coverage gaps:** drive a real SIGINT/SIGTERM through `src/stream/runner.py`'s signal handlers in a subprocess (TEST-P23-02), and run supervisor chaos against the real `StreamingEngine` rather than `tools/synthetic_streamer.py` (TEST-P27-02). The registry cleaner also has no production runtime caller.
+These are candidate operational and architectural follow-ups surfaced from retrospectives and code review (all v4.1 audit recommendations INT-1–3 and coverage items were remediated and verified in PR #7 and commit `e3005d63`):
 
 **Architecture / operations follow-ups:**
 
