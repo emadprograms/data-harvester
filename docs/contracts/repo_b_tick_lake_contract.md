@@ -1,10 +1,12 @@
 # Repo B Tick Lake Read Contract
 
-**Document Version:** 1.1.0
+**Document Version:** 1.2.0
 **Phase / Milestone:** Originally Phase 19 (P4) / Milestone v4.0 — reviewed and hardened in Milestone v4.1 (Phases 22–27)
-**Last reviewed:** 2026-10-03
+**Last reviewed:** 2026-10-04
 **Target Audience:** Repo B engineers, quantitative research teams, backtesting & simulation consumers.
 **Dependencies on `data-harvester`:** **NONE** (zero library imports required; uses standard `duckdb` and `pyarrow`).
+
+**Changes in 1.2.0 (Milestone v4.2, Phase 33):** corrected three defects found by executing these examples against a real lake — (1) the symbol safe set is `[A-Za-z0-9_-]` and the period **is** encoded (`BRK.B` -> `BRK%2EB`), so the example reader now encodes symbols and encoded symbols are actually reachable; (2) `symbol` is physically dictionary-encoded, not plain `string`; (3) the PyArrow example no longer infers Hive partitioning, which collided with the physical `symbol` column and raised `ArrowTypeError`. Added §7.3 (snapshot semantics, including the silent-partial-result hazard).
 
 **Changes in 1.1.0:** corrected the control-plane filenames (`_control/registry.json`, plus intents and the reload signal), corrected migrated-chunk filenames, documented lake-root resolution and `lake.json` metadata, and added §7 (v4.1 hardening guarantees for readers).
 
@@ -61,8 +63,9 @@ The tick lake root directory (configured via `TICK_LAKE_ROOT` environment variab
 
 The lake adheres to Hive two-level partitioning under the `ticks/` directory:
 - **Level 1 — Symbol Partition:** `symbol=<ENCODED_SYMBOL>/`
-  - Safe symbol encoding: ASCII alphanumeric characters, periods, underscores, and dashes (`[A-Za-z0-9._-]`) remain unescaped (e.g. `symbol=AAPL/`, `symbol=BRK.B/`).
-  - Special characters (such as `/`, `:`, `%`, spaces) are uppercase percent-encoded (e.g. `EUR/USD` -> `symbol=EUR%2FUSD/`).
+  - **Safe set is `[A-Za-z0-9_-]` only.** Everything else — including the period — is percent-encoded byte-by-byte with uppercase hex, matching `src/storage/config.py::encode_symbol`.
+  - Worked examples: `AAPL` -> `symbol=AAPL/`, `BRK.B` -> `symbol=BRK%2EB/`, `EUR/USD` -> `symbol=EUR%2FUSD/`, `BTC/USD` -> `symbol=BTC%2FUSD/`.
+  - **Consumers must encode before building a path.** Looking for `symbol=BRK.B/` returns nothing and no error; the directory is `symbol=BRK%2EB/`. The example reader in §4.1 does this via `encode_symbol()`.
 - **Level 2 — Date Partition:** `date=<YYYY-MM-DD>/`
   - Partition date is the **UTC event date** (`CAST(timestamp AS DATE)`), **not** local exchange time and **not** ingestion receive time.
   - A single US regular trading session (09:30 to 16:00 ET) spans a single UTC date during daylight saving time (13:30 to 20:00 UTC) and standard time (14:30 to 21:00 UTC).
@@ -86,7 +89,7 @@ Every Parquet file in `ticks/` adheres strictly to **Lake Schema v1**.
 | Column Name | DuckDB Physical Type | Arrow Physical Type | Nullable | Description |
 |---|---|---|---|---|
 | `timestamp` | `TIMESTAMP` (naive UTC) | `timestamp('us')` | **No** | Microsecond UTC timestamp of the quote event. Zero timezone offset. |
-| `symbol` | `VARCHAR` | `string` | **No** | Canonical uppercase display symbol (e.g. `'AAPL'`, `'NVDA'`). |
+| `symbol` | `VARCHAR` | `dictionary<values=string, indices=int32>` | **No** | Canonical uppercase display symbol (e.g. `'AAPL'`, `'NVDA'`). Written dictionary-encoded; it reads back as text, but a schema that asserts plain `string` will not match. |
 | `price` | `DOUBLE` | `float64` | **No** | Observed quote/trade price (> 0.0). |
 | `volume` | `DOUBLE` | `float64` | Yes | Traded volume or quote depth. **Capital observation semantics:** When null, volume coalesces to `1.0`. |
 | `bid` | `DOUBLE` | `float64` | Yes | Current best bid price. |
@@ -127,6 +130,28 @@ from typing import List, Dict, Any, Optional
 import duckdb
 
 
+# Only these characters survive encoding; everything else is percent-encoded
+# byte-by-byte with uppercase hex. The period is NOT safe: BRK.B -> BRK%2EB.
+SAFE_SYMBOL_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+)
+
+
+def encode_symbol(symbol: str) -> str:
+    """Encode a display symbol into its partition-directory form.
+
+    Consumers MUST call this before building a path: an unencoded lookup for a
+    symbol such as BRK.B or EUR/USD matches nothing and reports no error.
+    """
+    encoded = []
+    for ch in symbol:
+        if ch in SAFE_SYMBOL_CHARS:
+            encoded.append(ch)
+        else:
+            encoded.extend(f"%{byte:02X}" for byte in ch.encode("utf-8"))
+    return "".join(encoded)
+
+
 class RepoBTickReader:
     """
     Zero-dependency reader for Partitioned Parquet Tick Lake.
@@ -138,8 +163,8 @@ class RepoBTickReader:
 
     def _resolve_files(self, symbol: str, start_date: date, end_date: date) -> List[str]:
         """Prune partitions at the filesystem level before passing to DuckDB."""
-        # Clean symbol for Hive partition directory
-        sym_dir = self.ticks_dir / f"symbol={symbol.upper()}"
+        # The directory name holds the ENCODED symbol, not the display symbol.
+        sym_dir = self.ticks_dir / f"symbol={encode_symbol(symbol.upper())}"
         if not sym_dir.is_dir():
             return []
 
@@ -291,14 +316,16 @@ def query_tape(lake_root: Path, symbol: str, limit: int = 50) -> List[Dict[str, 
 If Repo B prefers reading directly into Arrow RecordBatches without DuckDB:
 
 ```python
+from datetime import datetime
 from pathlib import Path
+import pyarrow as pa
 import pyarrow.dataset as ds
 import pyarrow.compute as pc
 
 
 def scan_ticks_with_arrow(lake_root: Path, symbol: str, start_dt: str, end_dt: str):
     """
-    Direct Arrow dataset scanner leveraging Hive directory partitioning.
+    Direct Arrow dataset scanner over the finalized partition tree.
     """
     ticks_root = lake_root / "ticks"
     if not ticks_root.is_dir():
@@ -307,20 +334,30 @@ def scan_ticks_with_arrow(lake_root: Path, symbol: str, start_dt: str, end_dt: s
     dataset = ds.dataset(
         str(ticks_root),
         format="parquet",
-        partitioning=ds.partitioning(
-            schema=None,
-            flavor="hive",
-        ),
+        # Do NOT infer Hive partitioning here. The files already carry physical
+        # `symbol` and `timestamp` columns, and inferring a string `symbol`
+        # partition key collides with the dictionary-encoded physical column:
+        # pyarrow raises ArrowTypeError: Unable to merge: Field symbol has
+        # incompatible types. Filter on the physical columns instead.
     )
 
-    # Push down filter expression
-    expr = (pc.field("symbol") == symbol) & \
-           (pc.field("timestamp") >= pc.scalar(start_dt, ds.pa.timestamp("us"))) & \
-           (pc.field("timestamp") < pc.scalar(end_dt, ds.pa.timestamp("us")))
+    # Timestamp bounds must be typed to match the physical timestamp[us] column.
+    start = pa.scalar(datetime.fromisoformat(start_dt), type=pa.timestamp("us"))
+    end = pa.scalar(datetime.fromisoformat(end_dt), type=pa.timestamp("us"))
+
+    expr = (
+        (pc.field("symbol") == symbol)
+        & (pc.field("timestamp") >= start)
+        & (pc.field("timestamp") < end)
+    )
 
     table = dataset.to_table(filter=expr)
     return table
 ```
+
+> **Note:** `pc.scalar(value, type)` is not a valid call in current PyArrow
+> releases; the two-argument form was removed. Use `pa.scalar(value, type=...)`
+> as above.
 
 ---
 
@@ -369,7 +406,12 @@ Milestone v4.1 (Phases 22–27) added 122 adversarial tests over the v4.0 lake i
 
 ### 7.1 Lake Metadata Contract
 
-`lake.json` declares `format = "tick_lake"`, `schema_version = 1`, and `compatible_versions = [1]`. Readers that wish to fail fast on unknown formats can inspect this file first; the shipped reader (`src/storage/reader.py`) raises `IncompatibleSchemaError`/`LakeNotFoundError` accordingly and refuses to operate while `_maintenance/in_progress.json` exists.
+`lake.json` declares `format = "tick_lake"`, `schema_version = 1`, and `compatible_versions = [1]`.
+
+The behaviour of the shipped reader (`src/storage/reader.py`) was verified against a real lake in v4.2 Phase 33, and is narrower than earlier revisions of this document claimed:
+
+- **It does not fail fast on a missing or foreign root.** `query_candles` returns `[]` as soon as partition resolution finds no files; neither `LakeNotFoundError` nor `IncompatibleSchemaError` is raised on the query path. Pointing a reader at the wrong directory therefore produces **empty results, not an error**. Consumers who need fail-fast must inspect `lake.json` themselves — the three fields above are the whole check.
+- **It does refuse to run during maintenance.** While `_maintenance/in_progress.json` exists, `LakeMaintenanceInProgressError` is raised when a query opens a connection (at query time, not at construction).
 
 ### 7.2 Verification Commands
 
@@ -380,9 +422,35 @@ pytest tests/storage/test_storage_edge_cases.py -v     # publication/collision/r
 pytest tests/integration/ -v                           # multi-process concurrency, soak, chaos
 ```
 
-### 7.3 Document History
+### 7.3 Snapshot Semantics and Stale Resolutions
+
+A read is a snapshot over the **file list resolved at the start of the request**.
+Files under `ticks/` are append-only and immutable: a batch file is published by
+atomic rename and never rewritten in place. The consequences for consumers are:
+
+1. **Newly finalized files appear on the next request.** A batch published after
+   resolution is invisible to the in-flight request and visible to the next one.
+   There is no need to invalidate anything: create a new reader or re-resolve.
+2. **Never cache a resolved file list.** Resolve immediately before querying.
+3. **A file removed between resolve and query can be silently skipped.** If
+   maintenance, compaction or retention removes a file after resolution, DuckDB's
+   `read_parquet` may return results computed from the remaining files **without
+   raising**. This was measured on a three-file partition set: removing one file
+   returned 3 candles instead of 10, with no exception and no warning.
+   The remedy is a re-resolve-and-retry loop, and a row-count sanity check for
+   any query whose completeness matters. Do not treat "no error" as "complete".
+4. **Staging, migration and retired artifacts are never part of a snapshot.**
+   `_staging/`, `_migration/` and `_maintenance/` are outside `ticks/` and are
+   excluded by construction, not by filter.
+5. **Maintenance guard.** While `_maintenance/in_progress.json` exists, the
+   shipped reader refuses to operate (`LakeMaintenanceInProgressError`); the
+   standalone examples in this document do not check it, so call
+   `is_lake_maintenance_in_progress()` first if partial reads matter to you.
+
+### 7.4 Document History
 
 | Version | Date | Milestone | Summary |
 |---|---|---|---|
 | 1.0.0 | 2026-10-03 | v4.0 (P4) | Initial read contract for downstream consumers. |
 | 1.1.0 | 2026-10-03 | v4.1 | Corrected control-plane filenames and chunk naming; documented lake root resolution and `lake.json`; added hardening guarantees (§7). |
+| 1.2.0 | 2026-10-04 | v4.2 (Phase 33) | Fixed symbol encoding rule and example, corrected the physical `symbol` type, fixed the PyArrow example, and documented snapshot semantics (§7.3). |
