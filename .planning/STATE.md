@@ -4,10 +4,10 @@ milestone: v4.2
 status: planning
 last_updated: "2026-10-04T00:00:00.000Z"
 last_activity: 2026-10-04
-last_activity_desc: "Phases 28-30 complete. Benchmarks at 200k/1M/10M rows: write path scales (RSS flat 180-185MB), query latency tracks files per symbol (52ms/184ms/1288ms). Phase 31 deferred; Phase 32 next."
+last_activity_desc: "Phases 28-30, 32 and 33 complete. Phase 33 executed the published Repo B examples and found five documentation defects (F3-F7, incl. a silent empty-result bug for percent-encoded symbols), corrected two behavioural claims (F8 reader fail-fast, F9 stale-resolution partial reads), and mutation-tested the candle oracle 6/6. Benchmarks at 200k/1M/10M rows: write path scales (RSS flat 180-185MB), query latency tracks files per symbol (52ms/184ms/1288ms). Phase 31 deferred; Phase 32 next."
 progress:
   total_phases: 9
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 0
   completed_plans: 0
   percent: 0
@@ -21,16 +21,16 @@ milestone_name: "v4.2 Tick Lake Qualification & Scoped Signoff"
 See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-04)
 
 **Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage.
-**Current focus:** Phase 28 — CI Evidence & Requirement Traceability
+**Current focus:** Phase 34 — Migration Backup & Restore Rehearsal
 
 ## Current Position
 
-Phase: 33 of 36 (Repo B Contract & Integration)
+Phase: 34 of 36 (Migration Backup & Restore Rehearsal)
 Plan: — (not yet planned)
 Status: Ready to plan (Phase 31 endurance deferred)
-Last activity: 2026-10-04 — Phase 32 complete: hosted CI green (runs 37181864550, 37182614963), traceability matrix (51 reqs, 48 mapped, 3 declared gaps), release report validator (21 tests). Defect D1 fixed (arbitrary sleep raced crash detection). Phase 29 complete: oracle proven to detect corruption/removed duplicates/phantoms; generator contract pinned (28 tests). Local Linux suite now 823 passed, 11 deselected.
+Last activity: 2026-10-04 — Phase 33 complete (28 tests): the documented Repo B examples are extracted from the markdown and executed, in a subprocess where `src` imports raise. Five documentation defects found and fixed (F3-F7), two behavioural claims corrected (F8, F9), and the candle oracle mutation-tested 6/6 — the first run caught only 4/5 because the fixture's row sorting masked the tie-break rule. Phase 32 complete: durability boundary pinned by a SIGKILL crash matrix (150 acknowledged rows survive, 250 RAM-only rows lost) and fault injection. Local offline suite now 881 passed, 16 deselected.
 
-Progress: [████░░░░░░] 44%
+Progress: [█████░░░░░] 56%
 
 ## Accumulated Context
 
@@ -50,7 +50,7 @@ None yet.
 ### Blockers/Concerns
 
 - **Phase 31**: A 24-hour endurance run cannot start until its harness self-tests and fault scenarios pass (Phase 30 precedes it).
-- **Phase 33**: Repo B repository and commit must be inventoried and recorded before integration tests can be named; if unavailable, the gate is `BLOCKED`, not substituted.
+- **Phase 33**: *Resolved* — no specific Repo B repository is used (per instruction). The gate is that the contract is complete and executable for any fresh third-party consumer, verified by executing the published examples themselves.
 - **Phase 34**: Real historical source access is a prerequisite; synthetic migration passing does not qualify operational migration.
 - **Cross-phase**: Material changes after performance/endurance qualification invalidate affected results and require re-running those gates.
 - **Environment**: GSD Core 1.15.0 is installed globally (Node 22 vs the required ≥24 — unsupported but functional); no host AI runtime (Claude Code/Codex/OpenCode) is installed, so `/gsd:*` commands are driven manually.

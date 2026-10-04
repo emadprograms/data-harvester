@@ -271,6 +271,79 @@ for v4.2 and recorded as such.
 needs a provider replay protocol and provider retention guarantees that cannot
 be verified here.
 
+## 8d. Repo B contract and integration (Phase 33, REPB-01..05)
+
+Tooling: `tests/support/contract_examples.py` plus 28 tests in
+`tests/contract/test_repo_b_contract.py` and a deterministic edge-case lake in
+`tests/contract/lake_fixture.py`.
+
+The examples in `docs/contracts/repo_b_tick_lake_contract.md` are **extracted
+from the markdown and executed**, not re-implemented in the test tree. The
+document is the artifact a consumer copies, so a near-copy kept beside the tests
+would let the two drift and would prove nothing about what Repo B actually
+pastes. Isolation runs in a separate process with an import hook that raises on
+any `src` import, and a dedicated test asserts that hook genuinely fires.
+
+**Executing the published examples found five defects in them.** Every one was a
+documentation defect, not a product defect, and all five are fixed in the
+document at version 1.2.0:
+
+| # | Defect in the published contract | Impact on a consumer following it | Fix |
+|---|---|---|---|
+| F3 | §2.2 claimed periods stay unescaped (`symbol=BRK.B/`); the safe set is `[A-Za-z0-9_-]`, so the real directory is `symbol=BRK%2EB/` | Looking in `symbol=BRK.B/` matches nothing | Rule corrected, worked examples added |
+| F4 | §3.1 listed `symbol` as Arrow `string`; it is written dictionary-encoded | A schema asserting `string` does not match | Type corrected, note added |
+| F5 | §4.1 built the partition path from the raw display symbol | **Encoded symbols silently returned zero candles** | Example now calls `encode_symbol()` |
+| F6 | §5 inferred Hive partitioning, which collides with the physical `symbol` column | `ArrowTypeError`, example unusable | Partitioning inference removed |
+| F7 | §5 called `pc.scalar(value, type)`, a two-argument form removed in current PyArrow | `TypeError` | `pa.scalar(value, type=...)` |
+
+F5 is the serious one: it fails silently. A consumer querying `BRK.B` or
+`EUR/USD` would have received an empty result set rather than an error.
+
+Two further corrections came out of testing behaviour the document described
+rather than code it shipped:
+
+- **F8 — §7.1 overstated the shipped reader.** It claimed the reader raises
+  `LakeNotFoundError`/`IncompatibleSchemaError` on a bad root. It does not:
+  `query_candles` returns `[]` as soon as partition resolution finds nothing, so
+  a misconfigured path produces **empty results, not an error**. The document now
+  states this and tells consumers to inspect `lake.json` themselves if they need
+  fail-fast. The reader's behaviour was left unchanged — silently altering it
+  would risk breaking callers that rely on empty results for empty partitions.
+- **F9 — stale resolutions can silently under-report (new §7.3).** If a file is
+  removed between resolve and query, DuckDB returns results computed from the
+  remaining files **without raising**. Measured: removing one of three resolved
+  files returned 3 candles instead of 10, no exception, no warning. The remedy
+  (resolve immediately before querying, re-resolve and retry, sanity-check row
+  counts) is now documented, and a test pins the behaviour so the advice cannot
+  quietly become stale.
+
+**The oracle comparison was mutation-tested.** An oracle that has never been
+shown to fail proves nothing, so six mutations were injected into the documented
+resampling SQL and each was checked against the Python reference oracle:
+
+| Mutation | Detected |
+|---|---|
+| `open`: `arg_min` → `arg_max` | yes |
+| `volume`: drop `coalesce(volume, 1.0)` | yes (`TypeError` on a null-volume bucket) |
+| tie-break `open`: `(timestamp, ingest_id)` → `timestamp` | yes |
+| tie-break `close`: `(timestamp, ingest_id)` → `timestamp` | yes |
+| `high`: `max(price)` → `min(price)` | yes |
+| bucket ordering `ASC` → `DESC` | yes |
+
+The first run of that check caught only 4 of 5: the tie-break mutations were
+**not** detected, because the fixture co-located both halves of the tie in one
+file, and the writer sorts rows within a file by `(timestamp, ingest_id)` — so
+physical row order already produced the documented answer and the rule was
+untestable. The fixture now writes the two halves into **separate batch files**,
+where "first row encountered" and "MIN ingest_id" genuinely disagree. Both
+tie-break mutations are now caught. This is recorded because the failure mode is
+general: a deterministic-ordering guarantee can be masked by the very sorting
+that implements it.
+
+**Note on scope.** Per instruction, no specific "Repo B" repository was used.
+The gate is that the contract is complete and executable for a *fresh*
+third-party consumer, which is what these tests establish.
+
 ## 9. Gate status
 
 | Gate | Phase | Status | Evidence |
@@ -287,6 +360,11 @@ be verified here.
 | DURB-03 (RAM-only boundary) | 32 | PASS (documented as lossy) | §8c |
 | DURB-04 (provider disconnect/replay) | 32 | DEFERRED | Needs provider replay protocol |
 | DURB-05 (exit/status semantics) | 32 | PASS | healthy=0, failed drain=4, kill=-SIGKILL |
+| REPB-01 (independent consumer, no src) | 33 | PASS | 28 tests; subprocess with an src import hook |
+| REPB-02 (examples execute, oracle match) | 33 | PASS | 1m/5m/1d vs reference oracle; 6/6 mutations caught |
+| REPB-03 (legacy DB locked, no attachment) | 33 | PASS | exact results while locked; every connection `:memory:` |
+| REPB-04 (visibility and snapshot semantics) | 33 | PASS | staging/migration excluded; §7.3 documents snapshots |
+| REPB-05 (cancellation, cleanup, concurrency) | 33 | PASS | interrupt + reuse, no leaked connections, 8 readers agree |
 | PERF-01 (1M/10M reproducible datasets) | 30 | PASS | §8b, `lake-scale-summary.json` |
 | PERF-02 (≥50% CPU reduction) | 30 | BLOCKED | No reproducible baseline (gap LAKE-P0-03); absolute cost recorded |
 | PERF-03 (event-loop lag p99 <20 ms) | 30 | NOT MEASURED | Needs the live runner and a provider |

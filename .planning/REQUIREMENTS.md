@@ -53,11 +53,11 @@
 
 ### Repo B Contract & Integration (Q06)
 
-- [ ] **REPB-01**: A consumer in a separate process with no `src` imports validates physical schema, types, nullability, encoded symbols, UTC partition selection, empty-lake behavior, ties, and duplicate multiplicity
-- [ ] **REPB-02**: Contract examples execute as tests; 1m/5m/1d candles match an independent oracle including UTC/exchange date boundaries, DST, null/zero volume, and late data
-- [ ] **REPB-03**: Real Repo B opens charts and switches symbols while a dummy legacy tick database is exclusively locked, with no accidental legacy attachment and exact results verified
-- [ ] **REPB-04**: A fresh request observes newly finalized files and excludes staging, migration, and retired files; snapshot semantics are documented
-- [ ] **REPB-05**: Cancellation, connection cleanup, concurrent readers, missing roots, maintenance pause/resume, and stale snapshot handling all behave as specified
+- [x] **REPB-01**: A consumer in a separate process with no `src` imports validates physical schema, types, nullability, encoded symbols, UTC partition selection, empty-lake behavior, ties, and duplicate multiplicity
+- [x] **REPB-02**: Contract examples execute as tests; 1m/5m/1d candles match an independent oracle including UTC/exchange date boundaries, DST, null/zero volume, and late data
+- [x] **REPB-03**: Real Repo B opens charts and switches symbols while a dummy legacy tick database is exclusively locked, with no accidental legacy attachment and exact results verified
+- [x] **REPB-04**: A fresh request observes newly finalized files and excludes staging, migration, and retired files; snapshot semantics are documented
+- [x] **REPB-05**: Cancellation, connection cleanup, concurrent readers, missing roots, maintenance pause/resume, and stale snapshot handling all behave as specified
 
 ### Migration, Backup & Restore Rehearsal (Q07)
 
@@ -143,11 +143,11 @@ Deferred from v4.2 by design (Q10). Tracked, not in the current roadmap, and **e
 | DURB-03 | Phase 32 | Complete |
 | DURB-04 | Phase 32 | Pending |
 | DURB-05 | Phase 32 | Complete |
-| REPB-01 | Phase 33 | Pending |
-| REPB-02 | Phase 33 | Pending |
-| REPB-03 | Phase 33 | Pending |
-| REPB-04 | Phase 33 | Pending |
-| REPB-05 | Phase 33 | Pending |
+| REPB-01 | Phase 33 | Complete |
+| REPB-02 | Phase 33 | Complete |
+| REPB-03 | Phase 33 | Complete |
+| REPB-04 | Phase 33 | Complete |
+| REPB-05 | Phase 33 | Complete |
 | MIGR-01 | Phase 34 | Pending |
 | MIGR-02 | Phase 34 | Pending |
 | MIGR-03 | Phase 34 | Pending |
