@@ -7,26 +7,26 @@ it survives losing all in-memory state. Crash points that cannot be produced by
 stopping early are injected at the syscall that decides durability via
 `tests/support/migration_fault_runner.py`.
 
-Two findings are pinned by these tests rather than fixed, because both need a
-design decision that belongs to a later milestone:
+Two findings previously pinned here are now implemented and verified:
 
-- **F10** — re-running a migration with a *different* date filter after a
-  completed migration duplicates every partition in that filter, and the tool's
-  own `verify` does not notice.
-- **F11** — `verify` reconciles the run-owned **staging** inventory against the
-  source, not the **final published** inventory. It proves the export was
-  lossless; it does not prove the published lake matches the source.
+- **F10 (C43-01 / MIGR-01)** — coverage ledger prevents partition duplication on re-run with different filters.
+- **F11 (C43-02 / MIGR-02)** — provenance-scoped verification reconciles migration-owned receipt inventory against source, and whole-lake audit mode catches unowned additions.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 from collections import Counter
 from pathlib import Path
 
 import duckdb
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
+
+from tests.support.cutover_rehearsal import CutoverRehearsal
 
 from src.storage.config import init_tick_lake
 from src.storage.parquet_writer import TickLakeWriter
@@ -263,40 +263,75 @@ def test_reconciliation_reads_final_output_not_staging(frozen, lake):
     assert _final_files(lake), "no finalized files to reconcile against"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "F11: MigrationOrchestrator.verify reconciles the run-owned staging inventory "
-        "against the source, not the final published inventory. It therefore passes "
-        "even when the published lake contains rows the source never had. Remove this "
-        "marker when verify reconciles against ticks/."
-    ),
-)
 def test_tool_verify_detects_published_rows_absent_from_the_source(frozen, lake):
-    """MIGR-02 (gap): verify should catch phantom rows already in the lake."""
+    """MIGR-02: verify detects when migration-owned published files contain phantom/corrupted rows."""
     assert run_cli(_cli_args(frozen["db"], lake, mode="all")).ok
 
-    # Introduce published rows the source does not contain.
-    writer = TickLakeWriter(root=lake, writer_id="phantom", max_batch_rows=10**9)
+    # Mutate a migration-owned published parquet file by appending an extra row not in the source
+    pub_files = _final_files(lake)
+    assert pub_files, "no published files found"
+    target_file = pub_files[0]
+    target_file.chmod(0o644)
+    table = pq.ParquetFile(target_file).read()
+    extra_row = table.slice(0, 1).to_pydict()
+    extra_row["price"] = [999999.0]
+    extra_row["ingest_id"] = ["phantom_0001"]
+    mutated = pa.concat_tables([table, pa.Table.from_pydict(extra_row, schema=table.schema)])
+    pq.write_table(mutated, target_file)
+    target_file.chmod(0o444)
+
+    verify = run_cli(_cli_args(frozen["db"], lake, mode="verify", force=FLAG))
+    assert not verify.ok, "verify passed despite corrupted/phantom published rows in migration-owned files"
+    verify_pub = run_cli(_cli_args(frozen["db"], lake, mode="verify-published"))
+    assert not verify_pub.ok, "verify-published passed despite corrupted published files"
+
+
+def test_legitimate_concurrent_live_rows_do_not_fail_migration_verification(frozen, lake):
+    """MIGR-02: legitimate concurrent live rows outside migration receipt do not fail verification."""
+    assert run_cli(_cli_args(frozen["db"], lake, mode="all")).ok
+
+    # Introduce legitimate published rows via TickLakeWriter
+    writer = TickLakeWriter(root=lake, writer_id="live_concurrent", max_batch_rows=10**9)
     writer.write_ticks(
         [
             QuoteTick(
                 timestamp="2026-07-10T13:30:00",
                 symbol="AAPL",
-                price=1.0,
-                volume=1.0,
-                source="PHANTOM",
+                price=150.0,
+                volume=10.0,
+                source="LIVE",
                 session="REG",
-                ingest_id="phantom_0001",
+                ingest_id="live_0001",
             )
         ]
     )
     writer.flush(block=True)
     writer.close()
 
-    verify = run_cli(_cli_args(frozen["db"], lake, mode="verify", force=FLAG))
-    # Desired: a non-zero exit, because the published inventory no longer matches.
-    assert not verify.ok, "verify passed despite phantom published rows"
+    verify = run_cli(_cli_args(frozen["db"], lake, mode="verify"))
+    assert verify.ok, f"provenance-scoped verify failed on concurrent live rows:\n{verify.describe()}"
+
+    verify_pub = run_cli(_cli_args(frozen["db"], lake, mode="verify-published"))
+    assert verify_pub.ok, f"verify-published failed on concurrent live rows:\n{verify_pub.describe()}"
+
+
+def test_whole_lake_audit_catches_unowned_foreign_additions(frozen, lake):
+    """MIGR-02: whole-lake integrity audit detects unowned foreign additions across ticks/."""
+    assert run_cli(_cli_args(frozen["db"], lake, mode="all")).ok
+
+    # A clean lake passes audit-lake
+    clean_audit = run_cli(_cli_args(frozen["db"], lake, mode="audit-lake"))
+    assert clean_audit.ok, f"audit-lake failed on clean lake:\n{clean_audit.describe()}"
+
+    # Add an unowned foreign parquet file in ticks/
+    target_dir = lake / "ticks" / "symbol=AAPL" / "date=2026-07-10"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    foreign_file = target_dir / "foreign_unowned.parquet"
+    sample = _final_files(lake)[0]
+    pq.write_table(pq.ParquetFile(sample).read().slice(0, 1), foreign_file)
+
+    tainted_audit = run_cli(_cli_args(frozen["db"], lake, mode="audit-lake"))
+    assert not tainted_audit.ok, "audit-lake passed despite unowned foreign parquet file"
 
 
 # ---------------------------------------------------------------- MIGR-03
@@ -405,18 +440,8 @@ def test_repeating_a_migration_is_idempotent(frozen, lake):
     assert changed == [], f"repeating the migration rewrote files: {changed}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "F10: re-running a migration with a different date filter after a completed "
-        "migration treats the new plan as new work and duplicates every partition in "
-        "that filter (measured: 51 -> 102 rows per symbol). The staging-based verify "
-        "does not detect it. Remove this marker when migration guards on lake content "
-        "rather than plan identity."
-    ),
-)
 def test_rerunning_with_a_different_filter_does_not_duplicate(frozen, lake):
-    """MIGR-03 (gap): a narrower re-run must not duplicate already-migrated data."""
+    """MIGR-01 / MIGR-03: a narrower re-run must not duplicate already-migrated data."""
     assert run_cli(_cli_args(frozen["db"], lake, mode="all")).ok
     before = len(read_final_rows(lake))
 
@@ -428,6 +453,37 @@ def test_rerunning_with_a_different_filter_does_not_duplicate(frozen, lake):
     assert len(read_final_rows(lake)) == before, (
         "a narrower re-run duplicated already-migrated partitions"
     )
+    missing, extra = _except_all_differences(
+        _source_records(frozen["rows"]), read_final_rows(lake)
+    )
+    assert (missing, extra) == (0, 0), f"narrower re-run introduced discrepancies: missing={missing} extra={extra}"
+
+
+def test_rerunning_with_a_broader_filter_does_not_duplicate(frozen, lake):
+    """MIGR-01: migrating a subset first, then re-running broader scope does not duplicate existing partitions."""
+    first = run_cli(
+        _cli_args(frozen["db"], lake, mode="all", date_start="2026-07-10", date_end="2026-07-10")
+    )
+    assert first.ok, f"first partial migration failed:\n{first.describe()}"
+
+    cov_file = lake / "_migration" / "coverage.json"
+    assert cov_file.is_file(), "coverage.json was not created"
+    cov_data = json.loads(cov_file.read_text(encoding="utf-8"))
+    parts = cov_data.get("partitions", cov_data)
+    assert any("date=2026-07-10" in k for k in parts), "coverage.json missing 2026-07-10 partitions"
+
+    # Now re-run with broader filter covering all dates
+    second = run_cli(_cli_args(frozen["db"], lake, mode="all", force=FLAG))
+    assert second.ok, f"broader re-run failed:\n{second.describe()}"
+
+    final = read_final_rows(lake)
+    assert len(final) == len(frozen["rows"]), (
+        f"expected {len(frozen['rows'])} rows after broader migration, found {len(final)}"
+    )
+    missing, extra = _except_all_differences(
+        _source_records(frozen["rows"]), final
+    )
+    assert (missing, extra) == (0, 0), f"broader migration introduced discrepancies: missing={missing} extra={extra}"
 
 
 # ---------------------------------------------------------------- MIGR-05
@@ -494,3 +550,50 @@ def test_rollback_preserves_newly_written_live_data(frozen, lake):
 
     reader = TickLakeReader(root=lake)
     assert reader.query_candles("AAPL", "1d"), "the lake is not queryable after rollback"
+
+
+# ---------------------------------------------------------------- MIGR-04
+
+
+def test_cutover_rehearsal_with_handoff_coordinator_and_supervisor(frozen, lake):
+    """MIGR-04: CutoverRehearsal coordinates with MigrationHandoffCoordinator and ProcessSupervisor."""
+    class MockProcessSupervisor:
+        def __init__(self):
+            self.child_pid = 99999
+            self.is_handoff_suspended = False
+
+        def suspend_for_handoff(self, timeout: float = 15.0) -> int:
+            self.is_handoff_suspended = True
+            return 0
+
+        def resume_after_handoff(self) -> None:
+            self.is_handoff_suspended = False
+
+    class MockMigrationCoordinator:
+        def __init__(self, supervisor):
+            self.supervisor = supervisor
+            self.executed = False
+
+        def execute(self):
+            assert self.supervisor.child_pid == 99999
+            self.executed = True
+            run_cli(_cli_args(frozen["db"], lake, mode="all"))
+            return []
+
+    mock_supervisor = MockProcessSupervisor()
+    mock_coordinator = MockMigrationCoordinator(mock_supervisor)
+
+    rehearsal = CutoverRehearsal(
+        lake=lake,
+        source_db=frozen["db"],
+        coordinator=mock_coordinator,
+        supervisor=mock_supervisor,
+        reconcile=lambda: _except_all_differences(_source_records(frozen["rows"]), read_final_rows(lake)),
+    )
+    result = rehearsal.run()
+    assert result.failed_step is None, f"cutover rehearsal failed:\n{result.report()}"
+    assert result.published is True
+    assert result.restarted is True
+    assert mock_coordinator.executed is True
+    assert mock_supervisor.is_handoff_suspended is False
+

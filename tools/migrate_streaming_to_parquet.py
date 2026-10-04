@@ -232,6 +232,8 @@ class PartitionPlan:
     row_count: int
     min_timestamp: str
     max_timestamp: str
+    status: str = "PENDING"
+    published_batch_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -240,6 +242,8 @@ class PartitionPlan:
             "row_count": self.row_count,
             "min_timestamp": self.min_timestamp,
             "max_timestamp": self.max_timestamp,
+            "status": self.status,
+            "published_batch_id": self.published_batch_id,
         }
 
     @classmethod
@@ -248,8 +252,10 @@ class PartitionPlan:
             symbol=data["symbol"],
             date=data["date"],
             row_count=data["row_count"],
-            min_timestamp=str(data["min_timestamp"]),
-            max_timestamp=str(data["max_timestamp"]),
+            min_timestamp=str(data.get("min_timestamp", "")),
+            max_timestamp=str(data.get("max_timestamp", "")),
+            status=data.get("status", "PENDING"),
+            published_batch_id=data.get("published_batch_id"),
         )
 
     def save(self, path: Union[str, Path]) -> None:
@@ -547,6 +553,7 @@ class MigrationOrchestrator:
         self.runs_dir = self.migration_dir / "runs"
         self.active_file = self.migration_dir / "active.json"
         self.lock_file = self.migration_dir / "migration.lock"
+        self.coverage_file = self.migration_dir / "coverage.json"
 
         self.migration_id: Optional[str] = None
         self.run_dir: Optional[Path] = None
@@ -606,6 +613,161 @@ class MigrationOrchestrator:
                     "sha256": self._file_sha256(path),
                 })
         return self._json_sha256(manifest)
+
+    def _source_fingerprint(self) -> str:
+        """Stable fingerprint of the source database snapshot, schema, table, and projection."""
+        db_sha = self._file_sha256(self.source_db) if self.source_db and self.source_db.is_file() else ""
+        wal_path = Path(str(self.source_db) + ".wal") if self.source_db else None
+        wal_sha = self._file_sha256(wal_path) if wal_path and wal_path.is_file() else ""
+        payload = {
+            "db_sha256": db_sha,
+            "wal_sha256": wal_sha,
+            "source_schema_sha256": self.identity.get("source_schema_sha256", ""),
+            "source_table": self.source_table or "",
+            "projection_version": self.PROJECTION_VERSION,
+        }
+        return self._json_sha256(payload)
+
+    def _load_coverage(self) -> Dict[str, Any]:
+        """Load coverage ledger from <lake_root>/_migration/coverage.json or bootstrap from receipts."""
+        if self.coverage_file.is_file():
+            try:
+                data = json.loads(self.coverage_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+            except Exception as exc:
+                raise MigrationError(f"Cannot read migration coverage ledger {self.coverage_file}: {exc}") from exc
+        return self._bootstrap_coverage_from_receipts()
+
+    def _bootstrap_coverage_from_receipts(self) -> Dict[str, Any]:
+        """Bootstrap coverage ledger from valid published migration receipts if coverage.json is absent."""
+        receipts_dir = self.lake_root / "_control" / "receipts"
+        partitions: Dict[str, Any] = {}
+        if receipts_dir.is_dir():
+            for receipt_path in sorted(receipts_dir.glob("migration_*.json")):
+                try:
+                    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                    if receipt.get("status") != "PUBLISHED":
+                        continue
+                    batch_id = receipt.get("batch_id", "")
+                    snap = receipt.get("source_snapshot_sha256", "")
+                    for detail in receipt.get("file_details", []):
+                        sym = detail.get("symbol")
+                        dt = detail.get("date")
+                        if not sym or not dt:
+                            continue
+                        key = self._partition_key(sym, dt)
+                        rel = detail.get("relative_path")
+                        if not rel or not (self.lake_root / rel).is_file():
+                            continue
+                        if key not in partitions:
+                            partitions[key] = {
+                                "symbol": sym,
+                                "date": dt,
+                                "source_rows": 0,
+                                "first_timestamp": "",
+                                "last_timestamp": "",
+                                "published_batch_id": batch_id,
+                                "status": "COVERED",
+                                "source_snapshot_sha256": snap,
+                                "source_fingerprint": "",
+                                "files": [],
+                            }
+                        partitions[key]["source_rows"] += int(detail.get("row_count", 0))
+                        partitions[key]["files"].append({
+                            "final_path": rel,
+                            "row_count": int(detail.get("row_count", 0)),
+                            "sha256": detail.get("sha256", ""),
+                            "size_bytes": int(detail.get("file_size_bytes", 0)),
+                        })
+                except Exception:
+                    continue
+        return {
+            "version": 1,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "source_fingerprint": self._source_fingerprint() if (self.source_db and self.source_db.is_file()) else "",
+            "partitions": partitions,
+        }
+
+    def _save_coverage(self, coverage: Dict[str, Any]) -> None:
+        """Atomically persist coverage ledger with both 'partitions' dict and top-level keys."""
+        coverage["updated_at"] = datetime.now(timezone.utc).isoformat()
+        data = dict(coverage)
+        partitions = data.get("partitions", {})
+        for key, val in partitions.items():
+            data[key] = val
+        _atomic_save_json(data, self.coverage_file)
+
+    def _check_partition_coverage(
+        self,
+        symbol: str,
+        date_value: str,
+        candidate: Dict[str, Any],
+        coverage: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Check if a candidate partition is already marked COVERED for this source fingerprint
+        and existing published files match.
+        """
+        key = self._partition_key(symbol, date_value)
+        parts = coverage.get("partitions", coverage)
+        record = parts.get(key)
+        if not record or not isinstance(record, dict):
+            return None
+        if record.get("status") != "COVERED":
+            return None
+
+        # Verify source fingerprint or source snapshot match
+        rec_fp = record.get("source_fingerprint")
+        rec_snap = record.get("source_snapshot_sha256")
+        cur_fp = self._source_fingerprint() if (self.source_db and self.source_db.is_file()) else ""
+        cur_snap = self.identity.get("source_snapshot_sha256")
+        if rec_fp and cur_fp and rec_fp != cur_fp:
+            return None
+        if not rec_fp and rec_snap and cur_snap and rec_snap != cur_snap:
+            return None
+
+        cand_rows = int(candidate.get("row_count", 0))
+        rec_rows = int(record.get("source_rows", 0))
+        if cand_rows != rec_rows:
+            raise MigrationError(
+                f"Source partition {key} has {cand_rows} rows but coverage ledger records {rec_rows} rows. "
+                "Source data changed since migration; actionable reconciliation required."
+            )
+
+        files = record.get("files", [])
+        if files:
+            file_rows = 0
+            for file_info in files:
+                rel = file_info.get("final_path")
+                if not rel:
+                    continue
+                file_path = self._safe_path(self.lake_root, rel)
+                if not file_path.is_file():
+                    raise MigrationError(
+                        f"Partition {key} marked COVERED in ledger, but published file is missing: {file_path}"
+                    )
+                if file_info.get("size_bytes") and file_path.stat().st_size != int(file_info["size_bytes"]):
+                    raise MigrationError(
+                        f"Partition {key} published file size modified: {file_path}"
+                    )
+                if file_info.get("sha256") and self._file_sha256(file_path) != file_info["sha256"]:
+                    raise MigrationError(
+                        f"Partition {key} published file content modified: {file_path}"
+                    )
+                file_rows += int(file_info.get("row_count", 0))
+            if file_rows != rec_rows:
+                raise MigrationError(
+                    f"Partition {key} published files total {file_rows} rows, expected {rec_rows}"
+                )
+        else:
+            part_dir = self.lake_root / "ticks" / f"symbol={encode_symbol(symbol)}" / f"date={date_value}"
+            if not part_dir.is_dir() or not list(part_dir.glob("*.parquet")):
+                raise MigrationError(
+                    f"Partition {key} marked COVERED but no published parquet files found in {part_dir}"
+                )
+
+        return record
 
     def _normalized_scope(self) -> Dict[str, Any]:
         symbols = sorted(set(self.config.symbols or [])) or None
@@ -809,6 +971,16 @@ class MigrationOrchestrator:
         }
 
     def _plan_sha256(self, plan: MigrationPlan) -> str:
+        canonical_partitions = [
+            {
+                "symbol": str(p["symbol"]),
+                "date": str(p["date"]),
+                "row_count": int(p["row_count"]),
+                "min_timestamp": str(p.get("min_timestamp", "")),
+                "max_timestamp": str(p.get("max_timestamp", "")),
+            }
+            for p in plan.partitions
+        ]
         return self._json_sha256({
             "migration_id": plan.migration_id,
             "source_path": plan.source_path,
@@ -817,7 +989,7 @@ class MigrationOrchestrator:
             "source_table": plan.source_table,
             "projection_version": plan.projection_version,
             "scope": plan.scope,
-            "partitions": plan.partitions,
+            "partitions": canonical_partitions,
             "total_rows": plan.total_rows,
         })
 
@@ -865,14 +1037,23 @@ class MigrationOrchestrator:
             if clauses:
                 query += " WHERE " + " AND ".join(clauses)
             query += " GROUP BY symbol, date ORDER BY symbol, date"
+            coverage = self._load_coverage()
             for symbol, date_value, count, minimum, maximum in con.execute(query, params).fetchall():
-                partitions.append(PartitionPlan(
-                    symbol=str(symbol),
-                    date=str(date_value),
-                    row_count=int(count),
-                    min_timestamp=minimum.isoformat() if hasattr(minimum, "isoformat") else str(minimum),
-                    max_timestamp=maximum.isoformat() if hasattr(maximum, "isoformat") else str(maximum),
-                ).to_dict())
+                cand = {
+                    "symbol": str(symbol),
+                    "date": str(date_value),
+                    "row_count": int(count),
+                    "min_timestamp": minimum.isoformat() if hasattr(minimum, "isoformat") else str(minimum),
+                    "max_timestamp": maximum.isoformat() if hasattr(maximum, "isoformat") else str(maximum),
+                }
+                cov_rec = self._check_partition_coverage(str(symbol), str(date_value), cand, coverage)
+                if cov_rec is not None:
+                    cand["status"] = "COVERED"
+                    cand["published_batch_id"] = cov_rec.get("published_batch_id")
+                else:
+                    cand["status"] = "PENDING"
+                    cand["published_batch_id"] = None
+                partitions.append(PartitionPlan(**cand).to_dict())
 
         return MigrationPlan(
             created_at=datetime.now(timezone.utc).isoformat(),
@@ -1278,6 +1459,7 @@ class MigrationOrchestrator:
 
             table = self.source_table or "tick_data"
             table_exists = bool(self.schema_info.get("projection_sql"))
+            coverage = self._load_coverage()
             try:
                 with self._source_session() as con:
                     if table_exists:
@@ -1288,6 +1470,7 @@ class MigrationOrchestrator:
                             "bid ASC NULLS FIRST, ask ASC NULLS FIRST, source ASC NULLS FIRST, "
                             "session ASC NULLS FIRST"
                         )
+                        covered_count = 0
                         for part in plan.partitions:
                             symbol = part["symbol"]
                             date_value = part["date"]
@@ -1295,6 +1478,22 @@ class MigrationOrchestrator:
                             previous = state.partitions.get(key, {})
                             if self.config.resume and previous.get("status") == "COMPLETED":
                                 self._validate_completed_partition(key, part, previous)
+                                continue
+
+                            # Check coverage ledger
+                            cov_rec = self._check_partition_coverage(symbol, date_value, part, coverage)
+                            if cov_rec is not None or part.get("status") == "COVERED":
+                                state.partitions[key] = {
+                                    "status": "COVERED",
+                                    "chunks": [],
+                                    "files": cov_rec.get("files", []) if cov_rec else [],
+                                    "row_count": int(part["row_count"]),
+                                    "file_sizes": {},
+                                    "sha256": {},
+                                    "covered": True,
+                                    "published_batch_id": cov_rec.get("published_batch_id") if cov_rec else "",
+                                }
+                                covered_count += 1
                                 continue
 
                             self._clear_partition_stage(symbol, date_value)
@@ -1369,6 +1568,12 @@ class MigrationOrchestrator:
                                 "sha256": {item["name"]: item["sha256"] for item in file_details},
                             }
                             self._write_state(state)
+
+                        if plan.partitions and covered_count == len(plan.partitions):
+                            state.status = "PUBLISHED"
+                            self._write_state(state)
+                            return state
+
                     state.status = "IN_PROGRESS"
                     self._write_state(state)
             except Exception:
@@ -1493,6 +1698,9 @@ class MigrationOrchestrator:
         for part in plan.partitions:
             symbol = str(part["symbol"])
             date_value = str(part["date"])
+            key = self._partition_key(symbol, date_value)
+            if state.partitions.get(key, {}).get("status") == "COVERED":
+                continue
             source_count = int(con.execute(
                 f"SELECT count(*) FROM (SELECT {projection_sql} FROM {table_sql}) AS src "
                 "WHERE symbol=? AND strftime(timestamp, '%Y-%m-%d')=?",
@@ -1666,15 +1874,16 @@ class MigrationOrchestrator:
 
         with MigrationOwnershipLock(self.migration_dir, self.lock_file):
             state = self._load_state()
+            plan = self._load_plan(required=False)
+            if plan is None:
+                plan = self._ensure_plan_locked()
+
+            if self.config.mode == "verify-published" or (state and state.status == "PUBLISHED"):
+                return self.verify_published(plan=plan, state=state)
+
             if state is None:
                 raise MigrationError("Cannot verify: migration export checkpoint is missing")
             self._validate_identity_fields(state.to_dict(), "Migration checkpoint")
-            plan = self._load_plan(required=True)
-            if state.status == "PUBLISHED":
-                self._validate_published_receipt(state, plan)
-                if self.run_verification_file and self.run_verification_file.is_file():
-                    return VerificationResult.load(self.run_verification_file)
-                raise MigrationError("Published migration is missing its verification record")
             active = self._read_active()
             if active and active.get("migration_id") != self.migration_id:
                 raise MigrationOwnershipError("Another migration owns shared staging")
@@ -1686,11 +1895,322 @@ class MigrationOrchestrator:
             self._write_state(state)
             return result
 
+    def verify_published(
+        self,
+        plan: Optional[MigrationPlan] = None,
+        state: Optional[MigrationState] = None,
+    ) -> VerificationResult:
+        """
+        Provenance-Scoped Final Verification (MIGR-02):
+        Reconcile mapped source fields and multiplicity strictly against the
+        migration-owned receipt / coverage inventory using bidirectional EXCEPT ALL.
+        Legitimate concurrent live rows or independent sources outside this inventory
+        do NOT fail this reconciliation.
+        """
+        self._ensure_identity()
+        if plan is None:
+            plan = self._load_plan(required=False) or self._ensure_plan_locked()
+        if state is None:
+            state = self._load_state()
+
+        receipt_path = self.lake_root / "_control" / "receipts" / f"migration_{self.migration_id}.json"
+        owned_files: List[Dict[str, Any]] = []
+        coverage = self._load_coverage()
+        parts_cov = coverage.get("partitions", coverage)
+
+        if receipt_path.is_file():
+            try:
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                for detail in receipt.get("file_details", []):
+                    owned_files.append({
+                        "final_path": detail["relative_path"],
+                        "symbol": detail["symbol"],
+                        "date": detail["date"],
+                        "row_count": int(detail["row_count"]),
+                        "size_bytes": int(detail.get("file_size_bytes", 0)),
+                        "sha256": detail.get("sha256", ""),
+                    })
+            except Exception as exc:
+                raise MigrationError(f"Cannot read migration receipt {receipt_path}: {exc}") from exc
+        else:
+            for part in plan.partitions:
+                key = self._partition_key(part["symbol"], part["date"])
+                cov_rec = parts_cov.get(key)
+                if cov_rec and cov_rec.get("status") == "COVERED":
+                    for f in cov_rec.get("files", []):
+                        owned_files.append({
+                            "final_path": f["final_path"],
+                            "symbol": part["symbol"],
+                            "date": part["date"],
+                            "row_count": int(f["row_count"]),
+                            "size_bytes": int(f.get("size_bytes", 0)),
+                            "sha256": f.get("sha256", ""),
+                        })
+
+        if not owned_files:
+            raise MigrationError("No migration-owned published files found to verify")
+
+        discrepancies: List[Dict[str, Any]] = []
+        files_by_partition: Dict[Tuple[str, str], List[str]] = {}
+
+        for detail in owned_files:
+            rel = detail["final_path"]
+            path = self._safe_path(self.lake_root, rel)
+            sym = detail["symbol"]
+            dt = detail["date"]
+            files_by_partition.setdefault((sym, dt), []).append(str(path))
+
+            if not path.is_file() or path.is_symlink():
+                discrepancies.append({
+                    "type": "missing_published_file",
+                    "path": rel,
+                    "error": f"Published file missing or unsafe: {path}",
+                })
+                continue
+            actual_size = path.stat().st_size
+            if detail["size_bytes"] and actual_size != detail["size_bytes"]:
+                discrepancies.append({
+                    "type": "file_size_mismatch",
+                    "path": rel,
+                    "expected": detail["size_bytes"],
+                    "actual": actual_size,
+                })
+            actual_sha = self._file_sha256(path)
+            if detail["sha256"] and actual_sha != detail["sha256"]:
+                discrepancies.append({
+                    "type": "file_checksum_mismatch",
+                    "path": rel,
+                    "expected": detail["sha256"],
+                    "actual": actual_sha,
+                })
+            try:
+                table = pq.ParquetFile(path).read()
+                validate_table_v1(table)
+                if table.num_rows != detail["row_count"]:
+                    discrepancies.append({
+                        "type": "row_count_mismatch",
+                        "path": rel,
+                        "expected": detail["row_count"],
+                        "actual": table.num_rows,
+                    })
+            except Exception as exc:
+                discrepancies.append({
+                    "type": "parquet_read_error",
+                    "path": rel,
+                    "error": str(exc),
+                })
+
+        table = self.source_table or "tick_data"
+        table_sql = self._quote_identifier(table)
+        projection_sql = self.schema_info.get("projection_sql", "")
+        total_source = 0
+        total_parquet = 0
+
+        with self._source_session() as con:
+            for part in plan.partitions:
+                symbol = str(part["symbol"])
+                date_value = str(part["date"])
+                paths = sorted(files_by_partition.get((symbol, date_value), []))
+                source_count = int(con.execute(
+                    f"SELECT count(*) FROM (SELECT {projection_sql} FROM {table_sql}) AS src "
+                    "WHERE symbol=? AND strftime(timestamp, '%Y-%m-%d')=?",
+                    [symbol, date_value],
+                ).fetchone()[0])
+                total_source += source_count
+
+                if not paths:
+                    if source_count:
+                        discrepancies.append({
+                            "type": "missing_published_partition_files",
+                            "symbol": symbol,
+                            "date": date_value,
+                            "error": f"No published files for {symbol} on {date_value}, source has {source_count} rows",
+                        })
+                    continue
+
+                try:
+                    parquet_count = int(con.execute(
+                        "SELECT count(*) FROM read_parquet(?, hive_partitioning=false)", [paths]
+                    ).fetchone()[0])
+                    total_parquet += parquet_count
+
+                    diff_source = int(con.execute(
+                        f"""SELECT count(*) FROM (
+                            (SELECT timestamp,symbol,price,volume,bid,ask,source,session
+                             FROM (SELECT {projection_sql} FROM {table_sql}) AS src
+                             WHERE symbol=? AND strftime(timestamp, '%Y-%m-%d')=?)
+                            EXCEPT ALL
+                            (SELECT timestamp,symbol,price,volume,bid,ask,source,session
+                             FROM read_parquet(?, hive_partitioning=false))
+                        )""",
+                        [symbol, date_value, paths],
+                    ).fetchone()[0])
+                    diff_parquet = int(con.execute(
+                        f"""SELECT count(*) FROM (
+                            (SELECT timestamp,symbol,price,volume,bid,ask,source,session
+                             FROM read_parquet(?, hive_partitioning=false))
+                            EXCEPT ALL
+                            (SELECT timestamp,symbol,price,volume,bid,ask,source,session
+                             FROM (SELECT {projection_sql} FROM {table_sql}) AS src
+                             WHERE symbol=? AND strftime(timestamp, '%Y-%m-%d')=?)
+                        )""",
+                        [paths, symbol, date_value],
+                    ).fetchone()[0])
+
+                    if source_count != parquet_count:
+                        discrepancies.append({
+                            "type": "partition_row_count_mismatch",
+                            "symbol": symbol,
+                            "date": date_value,
+                            "source_count": source_count,
+                            "parquet_count": parquet_count,
+                        })
+                    if diff_source:
+                        discrepancies.append({
+                            "type": "source_except_parquet_discrepancy",
+                            "symbol": symbol,
+                            "date": date_value,
+                            "missing_in_parquet": diff_source,
+                        })
+                    if diff_parquet:
+                        discrepancies.append({
+                            "type": "parquet_except_source_discrepancy",
+                            "symbol": symbol,
+                            "date": date_value,
+                            "missing_in_source": diff_parquet,
+                        })
+                except Exception as exc:
+                    discrepancies.append({
+                        "type": "parquet_read_error",
+                        "symbol": symbol,
+                        "date": date_value,
+                        "error": str(exc),
+                    })
+
+        result = VerificationResult(
+            status="PASSED" if not discrepancies else "FAILED",
+            total_source_rows=total_source,
+            total_parquet_rows=total_parquet,
+            discrepancies=discrepancies,
+            verified_at=datetime.now(timezone.utc).isoformat(),
+            migration_id=self.migration_id or "",
+            source_path=str(self.source_db),
+            source_snapshot_sha256=self.identity["source_snapshot_sha256"],
+            source_schema_sha256=self.identity["source_schema_sha256"],
+            source_table=self.source_table or "",
+            projection_version=self.PROJECTION_VERSION,
+            scope=self.scope,
+            plan_sha256=self._plan_sha256(plan),
+            files=owned_files,
+        )
+        self._write_verification(result)
+        return result
+
+    def audit_lake(self) -> Dict[str, Any]:
+        """
+        Whole-Lake Integrity Audit (MIGR-02):
+        Verifies that all Parquet files across ticks/ map to valid publication receipts,
+        detecting unowned, malformed, or foreign additions across all namespaces.
+        """
+        receipts_dir = self.lake_root / "_control" / "receipts"
+        ticks_dir = self.lake_root / "ticks"
+
+        claimed_files: Dict[str, Dict[str, Any]] = {}
+        receipt_errors: List[Dict[str, Any]] = []
+
+        if receipts_dir.is_dir():
+            for receipt_path in sorted(receipts_dir.glob("*.json")):
+                try:
+                    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                    if receipt.get("status") != "PUBLISHED":
+                        continue
+                    batch_id = receipt.get("batch_id", receipt_path.stem)
+                    for detail in receipt.get("file_details", []):
+                        rel = detail.get("relative_path")
+                        if rel:
+                            claimed_files[rel] = {
+                                "batch_id": batch_id,
+                                "receipt_file": receipt_path.name,
+                                "size_bytes": detail.get("file_size_bytes"),
+                                "sha256": detail.get("sha256"),
+                                "row_count": detail.get("row_count"),
+                                "symbol": detail.get("symbol"),
+                                "date": detail.get("date"),
+                            }
+                    for rel in receipt.get("file_paths", []):
+                        if rel not in claimed_files:
+                            claimed_files[rel] = {
+                                "batch_id": batch_id,
+                                "receipt_file": receipt_path.name,
+                            }
+                except Exception as exc:
+                    receipt_errors.append({"receipt": receipt_path.name, "error": str(exc)})
+
+        discovered_files: Dict[str, Path] = {}
+        malformed_files: List[Dict[str, Any]] = []
+        if ticks_dir.is_dir():
+            for file_path in sorted(ticks_dir.rglob("*")):
+                if file_path.is_file():
+                    rel = file_path.relative_to(self.lake_root).as_posix()
+                    if file_path.suffix == ".parquet":
+                        discovered_files[rel] = file_path
+                    else:
+                        malformed_files.append({"path": rel, "error": "Non-parquet file in ticks namespace"})
+
+        unowned_files: List[str] = []
+        for rel in sorted(discovered_files):
+            if rel not in claimed_files:
+                unowned_files.append(rel)
+
+        missing_files: List[str] = []
+        corrupted_files: List[Dict[str, Any]] = []
+        for rel, meta in sorted(claimed_files.items()):
+            full_path = self.lake_root / rel
+            if not full_path.is_file():
+                missing_files.append(rel)
+                continue
+            expected_size = meta.get("size_bytes")
+            if expected_size is not None and full_path.stat().st_size != int(expected_size):
+                corrupted_files.append({
+                    "path": rel,
+                    "error": f"File size mismatch: expected {expected_size}, got {full_path.stat().st_size}",
+                })
+            expected_sha = meta.get("sha256")
+            if expected_sha and self._file_sha256(full_path) != expected_sha:
+                corrupted_files.append({
+                    "path": rel,
+                    "error": f"SHA256 mismatch for {rel}",
+                })
+            try:
+                table = pq.ParquetFile(full_path).read()
+                validate_table_v1(table)
+            except Exception as exc:
+                corrupted_files.append({"path": rel, "error": f"Parquet validation error: {exc}"})
+
+        has_errors = bool(receipt_errors or malformed_files or unowned_files or missing_files or corrupted_files)
+        status = "FAILED" if has_errors else "PASSED"
+
+        report = {
+            "status": status,
+            "audited_at": datetime.now(timezone.utc).isoformat(),
+            "total_receipts_checked": len(list(receipts_dir.glob("*.json"))) if receipts_dir.is_dir() else 0,
+            "total_claimed_files": len(claimed_files),
+            "total_discovered_parquet_files": len(discovered_files),
+            "unowned_files": unowned_files,
+            "missing_files": missing_files,
+            "malformed_files": malformed_files,
+            "corrupted_files": corrupted_files,
+            "receipt_errors": receipt_errors,
+        }
+        return report
+
     def _journal_entries(self, state: MigrationState) -> List[Dict[str, Any]]:
         assert self.migration_id is not None
         entries = []
         for key in sorted(state.partitions):
             part_state = state.partitions[key]
+            if part_state.get("status") == "COVERED":
+                continue
             if part_state.get("status") != "COMPLETED":
                 raise MigrationError(f"Cannot publish incomplete partition checkpoint {key}")
             for detail in sorted(part_state.get("files", []), key=lambda item: item["name"]):
@@ -1725,6 +2245,35 @@ class MigrationOrchestrator:
     def _validate_published_receipt(self, state: MigrationState, plan: MigrationPlan) -> None:
         assert self.migration_id is not None
         receipt_path = self.lake_root / "_control" / "receipts" / f"migration_{self.migration_id}.json"
+        if state.partitions and all(p.get("status") == "COVERED" for p in state.partitions.values()):
+            coverage = self._load_coverage()
+            parts = coverage.get("partitions", coverage)
+            for key in state.partitions:
+                if key not in parts or parts[key].get("status") != "COVERED":
+                    raise MigrationError(f"Published partition {key} has no valid coverage record")
+                cov_entry = parts[key]
+                for file_entry in cov_entry.get("files", []):
+                    final_path = self._safe_path(self.lake_root, file_entry["final_path"])
+                    if not final_path.is_file():
+                        raise MigrationError(f"Covered file {final_path} does not exist on disk")
+            if receipt_path.is_file():
+                try:
+                    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    raise MigrationError(f"Cannot read migration receipt {receipt_path}: {exc}") from exc
+                if (
+                    receipt.get("migration_id") != self.migration_id
+                    or receipt.get("source_snapshot_sha256") != self.identity["source_snapshot_sha256"]
+                    or receipt.get("plan_sha256") != self._plan_sha256(plan)
+                ):
+                    raise MigrationIdentityError("Migration receipt provenance does not match its checkpoint")
+                for detail in receipt.get("file_details", []):
+                    relative = detail.get("relative_path")
+                    if relative:
+                        final_path = self._safe_path(self.lake_root, relative)
+                        self._validate_final_file(final_path, detail)
+            return
+
         if not receipt_path.is_file():
             raise MigrationError(f"Published checkpoint has no migration receipt: {receipt_path}")
         try:
@@ -1912,9 +2461,13 @@ class MigrationOrchestrator:
 
     def _cleanup_published_files(self, state: MigrationState) -> None:
         for partition_state in state.partitions.values():
+            if partition_state.get("status") == "COVERED":
+                continue
             for detail in partition_state.get("files", []):
-                path = self._safe_path(self.migration_dir, detail["staging_path"])
-                path.unlink(missing_ok=True)
+                staging_rel = detail.get("staging_path")
+                if staging_rel:
+                    path = self._safe_path(self.migration_dir, staging_rel)
+                    path.unlink(missing_ok=True)
         if (self.staging_dir / "ticks").exists():
             for directory in sorted((self.staging_dir / "ticks").rglob("*"), reverse=True):
                 if directory.is_dir() and not directory.is_symlink():
@@ -1926,6 +2479,41 @@ class MigrationOrchestrator:
                 (self.staging_dir / "ticks").rmdir()
             except OSError:
                 pass
+
+    def _update_coverage_on_publish(self, state: MigrationState, plan: MigrationPlan, journal: Dict[str, Any]) -> None:
+        coverage = self._load_coverage()
+        if "partitions" not in coverage:
+            coverage["partitions"] = {}
+        coverage["source_fingerprint"] = self._source_fingerprint() if (self.source_db and self.source_db.is_file()) else ""
+
+        files_by_partition: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for entry in journal.get("files", []):
+            files_by_partition.setdefault((entry["symbol"], entry["date"]), []).append({
+                "final_path": entry["final_path"],
+                "row_count": int(entry["row_count"]),
+                "sha256": entry["sha256"],
+                "size_bytes": int(entry["size_bytes"]),
+            })
+
+        for part in plan.partitions:
+            sym = part["symbol"]
+            dt = part["date"]
+            key = self._partition_key(sym, dt)
+            if (sym, dt) in files_by_partition:
+                part_files = files_by_partition[(sym, dt)]
+                coverage["partitions"][key] = {
+                    "symbol": sym,
+                    "date": dt,
+                    "source_rows": int(part["row_count"]),
+                    "first_timestamp": str(part.get("min_timestamp", "")),
+                    "last_timestamp": str(part.get("max_timestamp", "")),
+                    "published_batch_id": f"migration_{self.migration_id}",
+                    "status": "COVERED",
+                    "source_fingerprint": self._source_fingerprint() if (self.source_db and self.source_db.is_file()) else "",
+                    "source_snapshot_sha256": self.identity["source_snapshot_sha256"],
+                    "files": part_files,
+                }
+        self._save_coverage(coverage)
 
     def publish(self) -> List[PublishReceipt]:
         """Revalidate verified scope and contents, then append immutable namespaced files."""
@@ -1943,11 +2531,24 @@ class MigrationOrchestrator:
                 self._validate_published_receipt(state, plan)
                 return []
 
+            if plan.partitions and all(
+                state.partitions.get(self._partition_key(p["symbol"], p["date"]), {}).get("status") == "COVERED"
+                for p in plan.partitions
+            ):
+                state.status = "PUBLISHED"
+                self._write_state(state)
+                return []
+
             # LakePublisherLock is intentionally acquired only for the final cutover.
             # Export and two-way verification can safely run while capture is active.
             with LakePublisherLock(self.lake_root, writer_id=f"migrator:{self.migration_id}"):
                 verification = self._verify_ready_state(state, plan)
                 entries = self._journal_entries(state)
+                if not entries:
+                    state.status = "PUBLISHED"
+                    self._write_state(state)
+                    return []
+
                 journal = self._read_journal(entries)
                 receipt_path = self.lake_root / "_control" / "receipts" / f"migration_{self.migration_id}.json"
 
@@ -1993,6 +2594,7 @@ class MigrationOrchestrator:
                 for entry in entries:
                     self._validate_final_file(self._safe_path(self.lake_root, entry["final_path"]), entry)
                 receipt = self._write_receipt(state, plan, journal)
+                self._update_coverage_on_publish(state, plan, journal)
                 journal["status"] = "PUBLISHED"
                 journal["updated_at"] = datetime.now(timezone.utc).isoformat()
                 _atomic_save_json(journal, self.publish_journal_file)
@@ -2008,12 +2610,19 @@ class MigrationOrchestrator:
                 self.plan()
             elif self.config.mode == "export":
                 self.export()
-            elif self.config.mode == "verify":
+            elif self.config.mode in ("verify", "verify-published"):
                 result = self.verify()
                 if result.status not in {"PASSED", "DRY_RUN"}:
                     return 1
             elif self.config.mode == "publish":
                 self.publish()
+            elif self.config.mode in ("audit-lake", "audit"):
+                report = self.audit_lake()
+                if report["status"] != "PASSED":
+                    logger.error("Whole-lake integrity audit failed:\n%s", json.dumps(report, indent=2))
+                    return 1
+                logger.info("Whole-lake integrity audit passed")
+                return 0
             elif self.config.mode == "all":
                 self.plan()
                 state = self.export()
@@ -2175,7 +2784,7 @@ def parse_args(args: Optional[Sequence[str]] = None) -> MigrationConfig:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["plan", "export", "verify", "publish", "all"],
+        choices=["plan", "export", "verify", "verify-published", "publish", "all", "audit-lake", "audit"],
         default="all",
         help="Lifecycle execution mode",
     )

@@ -23,7 +23,7 @@ import hashlib
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 
 from src.storage.parquet_writer import TickLakeWriter
 from src.storage.publication import LakePublisherLock
@@ -83,19 +83,32 @@ class CutoverRehearsal:
         restart: Optional[Callable[[Path], object]] = None,
         publish: Optional[Callable[[], object]] = None,
         reconcile: Optional[Callable[[], tuple]] = None,
+        coordinator: Optional[Any] = None,
+        supervisor: Optional[Any] = None,
     ) -> None:
         self.lake = Path(lake)
         self.source_db = Path(source_db)
         self.writer = writer
+        self.coordinator = coordinator
+        self.supervisor = supervisor
         self._drain = drain or _default_drain
         self._restart = restart or (lambda root: TickLakeWriter(root=root, writer_id="post_cutover", max_batch_rows=10**9))
-        self._publish = publish
+        self._publish = publish or (coordinator.execute if coordinator is not None else None)
         self._reconcile = reconcile
 
     # -- steps ---------------------------------------------------------
     def _stop_and_drain(self, result: RehearsalResult) -> bool:
         try:
-            self._drain(self.writer)
+            if self.coordinator is not None:
+                pass
+            elif self.supervisor is not None and self._drain is _default_drain:
+                exit_code = self.supervisor.suspend_for_handoff(timeout=15.0)
+                if exit_code not in (0, None):
+                    raise RuntimeError(f"Supervisor suspend failed: {exit_code}")
+            elif self.writer is not None:
+                self._drain(self.writer)
+            else:
+                self._drain(None)
         except Exception as exc:  # noqa: BLE001 - the step outcome is the point
             result.steps.append(Step("stop_and_drain", "FAILED", f"{type(exc).__name__}: {exc}"))
             return False
@@ -150,7 +163,12 @@ class CutoverRehearsal:
             return result
 
         try:
-            self._publish()
+            if self._publish is not None:
+                self._publish()
+            elif self.coordinator is not None:
+                self.coordinator.execute()
+            else:
+                raise RuntimeError("No publish callable or coordinator provided")
         except Exception as exc:  # noqa: BLE001
             result.steps.append(Step("publish", "FAILED", f"{type(exc).__name__}: {exc}"))
             result.steps.append(Step("restart", "SKIPPED"))
@@ -161,6 +179,8 @@ class CutoverRehearsal:
 
         try:
             self._restart(self.lake)
+            if self.supervisor is not None and getattr(self.supervisor, "is_handoff_suspended", False):
+                self.supervisor.resume_after_handoff()
         except Exception as exc:  # noqa: BLE001
             # Publication already happened; the run must not claim success.
             result.steps.append(Step("restart", "FAILED", f"{type(exc).__name__}: {exc}"))
