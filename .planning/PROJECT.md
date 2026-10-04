@@ -6,6 +6,19 @@ A high-performance, 100% local market data harvesting and streaming engine runni
 ## Core Value
 Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
 
+## Current Milestone (v4.2) — In Planning
+
+**v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (planning started 2026-10-04)
+
+Goal: produce reproducible evidence for the Milestone 4.0/4.1 requirements, resolve the failures that verification uncovers, and issue an explicitly scoped append-only release signoff.
+
+- **This milestone produces evidence, not features.** Production code changes only where a test demonstrates a defect or an approved capability is absent; existing F01–F11 regressions are preserved.
+- **Scope:** Q01–Q09 → Phases 28–36 (CI evidence, isolation/oracles, production-scale performance, 24h endurance, durability boundary, Repo B integration, migration/restore rehearsal, capacity/maintenance, documentation & signoff).
+- **Deferred to v4.3:** Q10a replay/rewind (RPLY-01–05) and Q10b offline compaction/physical purge (COMP-01–05), plus a durable inbox/spool for zero-loss live capture.
+- **Evidence rules:** every gate records `PASS` / `FAIL` / `BLOCKED` / `DEFERRED` with requirement ID, test node or command, tested commit, environment, fixture identity, expected and observed result, and an artifact reference. Thresholds are never widened and skips never count as passes.
+- **Source plan:** [`docs/plans/milestone-4.2-signoff-and-verification.md`](../docs/plans/milestone-4.2-signoff-and-verification.md)
+- **Artifacts:** [REQUIREMENTS.md](REQUIREMENTS.md) (45 requirements) · [ROADMAP.md](ROADMAP.md) (Phases 28–36) · [STATE.md](STATE.md)
+
 ## Current State (Shipped v4.1)
 - **Partitioned Parquet Tick Lake (`data/tick_lake/ticks`)**: Fully decoupled append-only storage organized by Hive two-level partitioning (`symbol=<ENCODED_SYMBOL>/date=<YYYY-MM-DD>/*.parquet`). Live ticks never touch a disk-backed DuckDB database, completely eliminating write locks between ingestion and analytical readers.
 - **Micro-Batch Lake Writer (`TickLakeWriter`)**: Asynchronous worker thread writing Snappy Parquet batches (class defaults: flush every 5.0s or 5,000 rows; the streaming runner constructs it with a 2.0s flush interval and a 10,000-tick bounded queue) with backpressure, retries with exponential backoff, malformed-tick quarantine, and graceful drain.
