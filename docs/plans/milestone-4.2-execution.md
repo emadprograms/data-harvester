@@ -225,6 +225,52 @@ reference host.
 - **PERF-07** (historical resampling benchmarks): needs the production
   historical database.
 
+## 8c. Durability boundary (Phase 32, DURB-01/02/03/05)
+
+Tooling: `tests/support/durability_worker.py` (subprocess writer) with
+`tests/storage/test_durability_boundary.py` (7 tests) and
+`tests/storage/test_durability_faults.py` (5 tests).
+
+The writer runs in a **real subprocess so it can be SIGKILLed** at a chosen
+barrier — an in-process exception cannot simulate a power loss or OOM kill. An
+independent ledger records what the writer acknowledged before the kill, and the
+tests compare it against what actually became durable.
+
+| Scenario | Acknowledged | Unflushed (RAM) | Outcome |
+|---|---|---|---|
+| SIGKILL at barrier | 150 rows | 250 rows | exactly the 150 survive; the 250 are lost; all surviving files keep a valid footer |
+| Graceful drain | 400 rows | 0 | all 400 durable |
+| Failed publication | 0 | 400 | exit code 4, pending work reported, nothing persisted |
+
+Recovery after the crash is idempotent (three consecutive recoveries produce an
+identical durable set).
+
+**Fault injection** at the points where durability is actually decided — file
+fsync, staged-file promotion (`os.replace`), receipt write — produces:
+
+- **Persistent fault:** nothing claimed published, no partially promoted file
+  visible, previously published batches untouched.
+- **Transient fault:** absorbed by the writer's retry, publishing each row
+  exactly once with no duplicates or loss.
+
+**Two corrections made during this work, both of which changed the tests rather
+than the product.** First, a single injected promotion failure does *not* make
+`flush()` raise — the retry absorbs it, which is correct; the original
+expectation was wrong. Second, recovery legitimately *completes* a valid pending
+publication, so the assertion "recovery must not resurrect the failed batch" was
+wrong; the correct contract is that it must never produce a partial or
+duplicated one. Both are now asserted as the product actually behaves.
+
+**Guarantee now documented, not assumed:** durability covers rows acknowledged
+by a completed publication. Rows admitted to the in-memory buffer and not yet
+flushed are **not** durable across a hard kill. Closing that gap needs a durable
+inbox with group fsync before acknowledgment — a new capability, out of scope
+for v4.2 and recorded as such.
+
+**Deferred:** DURB-04 (provider disconnect, replay and capture-gap accounting)
+needs a provider replay protocol and provider retention guarantees that cannot
+be verified here.
+
 ## 9. Gate status
 
 | Gate | Phase | Status | Evidence |
@@ -236,6 +282,11 @@ reference host.
 | ISOL-04 (independent oracle) | 29 | PASS | 7 tests proving detection of all three corruption classes |
 | ISOL-05 / ENDR-05 (deterministic barriers) | 29/31 | PASS (partial) | Defect D1 fixed and covered by 6 unit tests |
 | ISOL-01/02 (isolation of new tools/processes) | 29 | Not started | — |
+| DURB-01 (crash matrix and recovery) | 32 | PASS | 7 tests, SIGKILL subprocess matrix |
+| DURB-02 (fsync/promotion/receipt faults) | 32 | PASS | 5 tests, no false commits or partial files |
+| DURB-03 (RAM-only boundary) | 32 | PASS (documented as lossy) | §8c |
+| DURB-04 (provider disconnect/replay) | 32 | DEFERRED | Needs provider replay protocol |
+| DURB-05 (exit/status semantics) | 32 | PASS | healthy=0, failed drain=4, kill=-SIGKILL |
 | PERF-01 (1M/10M reproducible datasets) | 30 | PASS | §8b, `lake-scale-summary.json` |
 | PERF-02 (≥50% CPU reduction) | 30 | BLOCKED | No reproducible baseline (gap LAKE-P0-03); absolute cost recorded |
 | PERF-03 (event-loop lag p99 <20 ms) | 30 | NOT MEASURED | Needs the live runner and a provider |

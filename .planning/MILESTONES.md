@@ -15,11 +15,12 @@ _Newest first. Each entry is a shipped, verified milestone._
 
 **Goal:** produce reproducible evidence for the v4.0/v4.1 requirements, resolve what that verification uncovers, and issue an explicitly scoped append-only release signoff. This milestone produces evidence, not features.
 
-**Status:** Phases 28–30 complete; Phase 31 (24h endurance) deferred; Phases 32/33/35/36 remain.
+**Status:** Phases 28–30 and 32 complete; Phase 31 (24h endurance) deferred; Phases 33/35/36 remain.
 
 **Completed:**
 - **Phase 28 — CI evidence & traceability.** Hosted CI green on two candidate SHAs. Requirement matrix maps 51 archived requirement IDs to executable nodes (48 mapped, 3 gaps declared rather than assumed passing). Release report validator refuses gates with missing artifacts, stale SHAs, null metrics, skipped required tests, or an empty test selection.
 - **Phase 29 — Isolation & independent oracles.** The multiset oracle is now *proven* to detect a corrupted value, a removed duplicate, and a phantom row. The deterministic generator's contract is pinned (reproducibility, stable IDs, and the presence of ties, duplicates, nulls, late arrivals, UTC rollover, and session boundaries).
+- **Phase 32 — Durability boundary.** A writer subprocess is SIGKILLed at a chosen barrier and recovered in a fresh process: exactly the 150 acknowledged rows survive, the 250 held only in RAM are lost, and every surviving file keeps a valid footer. Faults injected at fsync, promotion and receipt write are never falsely claimed as commits, and a transient fault is retried into an exactly-once publish. The RAM-only window is now **documented as lossy** rather than assumed durable.
 - **Phase 30 — Production-scale benchmarks.** Measured at 200k / 1M / 10M rows on a deterministic dataset. The write path scales cleanly (CPU 37.0 → 40.6 s per million ticks, peak RSS flat at 180 → 185 MB). Query latency scales with **files per symbol**, not rows: 52 ms at 40 files, 184 ms at 200, 1,288 ms at 2,000. See finding F2.
 
 **Defects found and fixed:**

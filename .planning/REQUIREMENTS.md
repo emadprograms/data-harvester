@@ -45,11 +45,11 @@
 
 ### Durability Boundary & Capture Gap (Q05)
 
-- [ ] **DURB-01**: Crash matrix kills the writer at each durability barrier (queue admission, intent, staged file, promotion, receipt, acknowledgment) and reconciles IDs after restart in a fresh process
-- [ ] **DURB-02**: Faulted file writes, fsync, promotion, directory fsync, receipt/status writes, and recovery produce no false committed counts, no corrupt visible files, and no duplicate retry — including a batch spanning multiple partitions
-- [ ] **DURB-03**: The RAM-only loss boundary is demonstrated and documented honestly, and is not presented as a power-loss guarantee
-- [ ] **DURB-04**: Provider disconnects during queue saturation and during handoff yield exact recovery where replay is supported and a visible capture-gap interval/counter where it is not
-- [ ] **DURB-05**: Status and exit codes distinguish healthy stop, failed drain, durable pending recovery, and unrecoverable RAM-only pending work, with the affected interval discoverable by operators
+- [x] **DURB-01**: Crash matrix kills the writer at each durability barrier (queue admission, intent, staged file, promotion, receipt, acknowledgment) and reconciles IDs after restart in a fresh process
+- [x] **DURB-02**: Faulted file writes, fsync, promotion, directory fsync, receipt/status writes, and recovery produce no false committed counts, no corrupt visible files, and no duplicate retry — including a batch spanning multiple partitions
+- [x] **DURB-03**: The RAM-only loss boundary is demonstrated and documented honestly, and is not presented as a power-loss guarantee
+- [ ] **DURB-04**: *(DEFERRED — needs a provider replay protocol and retention guarantees)* Provider disconnects during queue saturation and during handoff yield exact recovery where replay is supported and a visible capture-gap interval/counter where it is not
+- [x] **DURB-05**: Status and exit codes distinguish healthy stop, failed drain, durable pending recovery, and unrecoverable RAM-only pending work, with the affected interval discoverable by operators
 
 ### Repo B Contract & Integration (Q06)
 
@@ -138,11 +138,11 @@ Deferred from v4.2 by design (Q10). Tracked, not in the current roadmap, and **e
 | ENDR-03 | Phase 31 | Pending |
 | ENDR-04 | Phase 31 | Pending |
 | ENDR-05 | Phase 31 | Pending |
-| DURB-01 | Phase 32 | Pending |
-| DURB-02 | Phase 32 | Pending |
-| DURB-03 | Phase 32 | Pending |
+| DURB-01 | Phase 32 | Complete |
+| DURB-02 | Phase 32 | Complete |
+| DURB-03 | Phase 32 | Complete |
 | DURB-04 | Phase 32 | Pending |
-| DURB-05 | Phase 32 | Pending |
+| DURB-05 | Phase 32 | Complete |
 | REPB-01 | Phase 33 | Pending |
 | REPB-02 | Phase 33 | Pending |
 | REPB-03 | Phase 33 | Pending |

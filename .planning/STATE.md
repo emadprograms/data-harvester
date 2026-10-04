@@ -7,7 +7,7 @@ last_activity: 2026-10-04
 last_activity_desc: "Phases 28-30 complete. Benchmarks at 200k/1M/10M rows: write path scales (RSS flat 180-185MB), query latency tracks files per symbol (52ms/184ms/1288ms). Phase 31 deferred; Phase 32 next."
 progress:
   total_phases: 9
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 0
   completed_plans: 0
   percent: 0
@@ -25,12 +25,12 @@ See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-04)
 
 ## Current Position
 
-Phase: 32 of 36 (Durability Boundary & Capture-Gap Contract)
+Phase: 33 of 36 (Repo B Contract & Integration)
 Plan: — (not yet planned)
 Status: Ready to plan (Phase 31 endurance deferred)
-Last activity: 2026-10-04 — Phase 30 complete: hosted CI green (runs 37181864550, 37182614963), traceability matrix (51 reqs, 48 mapped, 3 declared gaps), release report validator (21 tests). Defect D1 fixed (arbitrary sleep raced crash detection). Phase 29 complete: oracle proven to detect corruption/removed duplicates/phantoms; generator contract pinned (28 tests). Local Linux suite now 823 passed, 11 deselected.
+Last activity: 2026-10-04 — Phase 32 complete: hosted CI green (runs 37181864550, 37182614963), traceability matrix (51 reqs, 48 mapped, 3 declared gaps), release report validator (21 tests). Defect D1 fixed (arbitrary sleep raced crash detection). Phase 29 complete: oracle proven to detect corruption/removed duplicates/phantoms; generator contract pinned (28 tests). Local Linux suite now 823 passed, 11 deselected.
 
-Progress: [███░░░░░░░] 33%
+Progress: [████░░░░░░] 44%
 
 ## Accumulated Context
 
