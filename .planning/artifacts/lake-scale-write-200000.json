@@ -1,0 +1,69 @@
+{
+  "host": {
+    "cpu_count": 2,
+    "platform": "see execution report environment manifest"
+  },
+  "dataset": {
+    "seed": 20261004,
+    "requested_rows": 200000,
+    "produced_rows": 200000,
+    "symbols": [
+      "NVDA",
+      "AAPL",
+      "MSFT",
+      "ADBE",
+      "BRK.B",
+      "BTC/USD",
+      "XAU-USD",
+      "GBP/USD",
+      "EURUSD",
+      "TSLA"
+    ],
+    "symbol_counts": {
+      "NVDA": 120115,
+      "ADBE": 9062,
+      "GBP/USD": 9018,
+      "BTC/USD": 8764,
+      "XAU-USD": 8861,
+      "TSLA": 8872,
+      "AAPL": 8768,
+      "MSFT": 8906,
+      "EURUSD": 8734,
+      "BRK.B": 8900
+    },
+    "duplicate_rows": 3971,
+    "tied_timestamp_rows": 5765,
+    "null_volume_rows": 3984,
+    "zero_volume_rows": 4075,
+    "late_arrival_rows": 1906,
+    "session_counts": {
+      "PRE": 42505,
+      "REG": 148995,
+      "POST": 8500
+    },
+    "encoded_symbols": [],
+    "first_timestamp": "2026-10-02T11:00:00.254000",
+    "last_timestamp": "2026-10-02T20:23:57.781000"
+  },
+  "write": {
+    "rows_requested": 200000,
+    "rows_written": 200000,
+    "wall_seconds": 7.806,
+    "cpu_seconds": 7.4,
+    "rows_per_second": 25621.8,
+    "cpu_seconds_per_million_ticks": 37.0,
+    "batches_published": 40,
+    "quarantined": 0,
+    "dropped": 0,
+    "peak_rss_mb": 180.2,
+    "rss_growth_mb": 21.5
+  },
+  "inventory": {
+    "finalized_files": 400,
+    "partitions": 10
+  },
+  "baseline_comparison": {
+    "status": "NOT_MEASURED",
+    "reason": "No reproducible legacy DuckDB baseline exists (traceability gap LAKE-P0-03)."
+  }
+}

@@ -1,43 +1,58 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v4.1",
+  "milestone": "v4.2 — Tick Lake Qualification & Scoped Signoff",
   "phases": [
     {
-      "number": "22",
-      "name": "Storage Foundation & Publication Edge Case Tests",
-      "status": "in_progress"
-    },
-    {
-      "number": "23",
-      "name": "Streaming Writer & Runner Stress & Lifecycle Tests",
+      "number": "28",
+      "name": "CI Evidence & Requirement Traceability",
       "status": "pending"
     },
     {
-      "number": "24",
-      "name": "Versioned Symbol Registry & Dynamic Reload Stress Tests",
+      "number": "29",
+      "name": "Test Isolation & Independent Oracles",
       "status": "pending"
     },
     {
-      "number": "25",
-      "name": "In-Memory DuckDB Lake Reader & Analytics Edge Tests",
+      "number": "30",
+      "name": "Production-Scale Performance Qualification",
       "status": "pending"
     },
     {
-      "number": "26",
-      "name": "Migration Tooling Rehearsal & Fuzz Tests",
+      "number": "31",
+      "name": "Endurance & Sustained Recovery",
       "status": "pending"
     },
     {
-      "number": "27",
-      "name": "Multi-Process Long-Running Soak & Chaos Tests",
+      "number": "32",
+      "name": "Durability Boundary & Capture-Gap Contract",
+      "status": "pending"
+    },
+    {
+      "number": "33",
+      "name": "Repo B Contract & Integration",
+      "status": "pending"
+    },
+    {
+      "number": "34",
+      "name": "Migration, Backup & Restore Rehearsal",
+      "status": "pending"
+    },
+    {
+      "number": "35",
+      "name": "Append-Only Capacity & Maintenance Safety",
+      "status": "pending"
+    },
+    {
+      "number": "36",
+      "name": "Contract Repair & Signoff Documentation",
       "status": "pending"
     }
   ],
   "next": {
-    "command": "/gsd-progress",
-    "label": "Execute Phase 22 Stage 1",
-    "reason": "Phase 22 is active and ready for researcher subagent"
+    "command": "/gsd:discuss-phase 28",
+    "label": "Discuss Phase 28",
+    "reason": "Phase 28 is the first v4.2 phase and is ready for context gathering"
   },
-  "updated_at": "2026-10-03T13:06:00.000Z"
+  "updated_at": "2026-10-04T00:00:00.000Z"
 }

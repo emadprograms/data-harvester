@@ -49,6 +49,7 @@ import requests
 from src.storage.config import init_tick_lake
 from src.storage.parquet_writer import TickLakeWriter
 from src.storage.schema import ticks_to_table
+from tests.support.process_harness import wait_until
 from tools.service_supervisor import ProcessSupervisor
 from tools.validate_concurrency import print_summary_table, run_concurrency_validation
 
@@ -809,24 +810,25 @@ def test_chaos_port_conflict_backoff_and_recovery(tmp_path):
 
     base_url = f"http://127.0.0.1:{port}"
     try:
-        # Wait 0.8s for child to fail with EADDRINUSE and enter backoff
-        time.sleep(0.8)
-        assert supervisor.consecutive_crashes >= 1, "Supervisor did not detect port conflict crash"
+        # Deterministic barrier (v4.2 Q02/Q04). The child needs ~0.6s to import
+        # and fail with EADDRINUSE on this host, so a fixed 0.8s sleep raced the
+        # supervisor's crash detection and failed on slower/loaded machines.
+        # Poll for the observable condition instead; the assertion is unchanged.
+        assert wait_until(
+            lambda: supervisor.consecutive_crashes >= 1, timeout=15.0, interval=0.05
+        ), "Supervisor did not detect port conflict crash within 15s"
 
         # Release external socket so port is free
         ext_sock.close()
 
         # Wait for supervisor to restart child and /api/status to respond 200 within SLA (<10s)
-        recovered = False
-        for _ in range(50):
-            time.sleep(0.2)
+        def status_ok() -> bool:
             try:
-                r = requests.get(f"{base_url}/api/status", timeout=1)
-                if r.status_code == 200:
-                    recovered = True
-                    break
+                return requests.get(f"{base_url}/api/status", timeout=1).status_code == 200
             except Exception:
-                pass
+                return False
+
+        recovered = wait_until(status_ok, timeout=10.0, interval=0.2)
 
         assert recovered is True, "Dashboard failed to bind port after external conflict was released"
     finally:

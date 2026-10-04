@@ -1,0 +1,32 @@
+{
+  "symbol": "NVDA",
+  "queries": {
+    "1m": {
+      "samples": 25,
+      "p50_ms": 148.098,
+      "p95_ms": 184.046,
+      "p99_ms": 189.043,
+      "max_ms": 189.172
+    },
+    "5m": {
+      "samples": 25,
+      "p50_ms": 146.818,
+      "p95_ms": 170.905,
+      "p99_ms": 175.113,
+      "max_ms": 176.441
+    },
+    "1d": {
+      "samples": 25,
+      "p50_ms": 144.869,
+      "p95_ms": 151.373,
+      "p99_ms": 151.647,
+      "max_ms": 151.725
+    }
+  },
+  "pruning": {
+    "total_files": 2000,
+    "files_selected_for_symbol": 200,
+    "pruned": true
+  },
+  "host_caveat": "Measured on the executing container, not the production reference host."
+}

@@ -2,11 +2,48 @@
 
 _Newest first. Each entry is a shipped, verified milestone._
 
+- [ ] **v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (**in progress**, started 2026-10-04)
 - [x] **v4.1 Partitioned Parquet Lake Deep Testing & Hardening** — Phases 22–27 (shipped 2026-10-03)
 - [x] **v4.0 Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)** — Phases 15–21 (shipped 2026-10-03)
 - [x] **v3.0 Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard** — Phases 10–14 (shipped 2026-09-26)
 - [x] **v2.0 Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard** — Phases 5–9 (shipped 2026-09-25)
 - [x] **v1.0 Local DuckDB & 24/7 Live Streaming Engine** — Phases 1–4 (shipped 2026-09-25)
+
+---
+
+## v4.2 Tick Lake Qualification & Scoped Signoff (In progress: started 2026-10-04)
+
+**Goal:** produce reproducible evidence for the v4.0/v4.1 requirements, resolve what that verification uncovers, and issue an explicitly scoped append-only release signoff. This milestone produces evidence, not features.
+
+**Status:** Phases 28–30, 32–34 and 36 complete; Phase 31 (24h endurance) deferred; Phase 35 remains.
+
+**Completed:**
+- **Phase 28 — CI evidence & traceability.** Hosted CI green on two candidate SHAs. Requirement matrix maps 51 archived requirement IDs to executable nodes (48 mapped, 3 gaps declared rather than assumed passing). Release report validator refuses gates with missing artifacts, stale SHAs, null metrics, skipped required tests, or an empty test selection.
+- **Phase 29 — Isolation & independent oracles.** The multiset oracle is now *proven* to detect a corrupted value, a removed duplicate, and a phantom row. The deterministic generator's contract is pinned (reproducibility, stable IDs, and the presence of ties, duplicates, nulls, late arrivals, UTC rollover, and session boundaries).
+- **Phase 36 — Contract repair and signoff documentation.** Published the **v4.2 audit report** (`docs/plans/milestone-4.2-audit-report.md`): 30 of 45 requirements complete, with the 15 incomplete named individually and explicitly excluded rather than omitted. Fixed the operations guide's flush-interval default (documented `2.0s`, actually `5.0s`) and the archived "8-column schema" error (there are nine), and documented the backend fail-closed rule that was implemented and tested but never written down. **Process finding F14:** Phase 29 had been reported complete while ISOL-01/ISOL-02 were still Pending in the matrix — the requirement matrix, not the phase status, is the authority, which is why the audit counts requirements rather than phases.
+- **Phase 34 — Migration, backup and restore rehearsal.** Every migration runs through the real CLI in a **fresh process**, crashed at export (SIGKILL then resume), at data-file promotion and at receipt write. Two gaps are pinned rather than fixed: **F10**, re-running with a different date filter duplicates already-migrated partitions (51 → 102 rows), and **F11**, `verify` reconciles the staged export against the source rather than the published lake — which is precisely why it does not detect F10. The suite therefore performs the required bidirectional `EXCEPT ALL` against `ticks/` independently, and asserts staging is empty so the check cannot read staging by accident. Migration publishes by **hard link**, not rename, which matters for any future crash injection.
+- **Phase 33 — Repo B contract.** The documented examples are extracted from the contract markdown and executed as tests, in a subprocess where `src` imports raise. Executing them found **five documentation defects**, including one that silently returned zero candles for any symbol containing a period or slash, plus two overstated behavioural claims — the shipped reader does **not** fail fast on a bad root, and a file removed between resolve and query is skipped **without error**, yielding partial results. All corrected at document version 1.2.0. The candle oracle was mutation-tested: 6 of 6 injected defects detected.
+- **Phase 32 — Durability boundary.** A writer subprocess is SIGKILLed at a chosen barrier and recovered in a fresh process: exactly the 150 acknowledged rows survive, the 250 held only in RAM are lost, and every surviving file keeps a valid footer. Faults injected at fsync, promotion and receipt write are never falsely claimed as commits, and a transient fault is retried into an exactly-once publish. The RAM-only window is now **documented as lossy** rather than assumed durable.
+- **Phase 30 — Production-scale benchmarks.** Measured at 200k / 1M / 10M rows on a deterministic dataset. The write path scales cleanly (CPU 37.0 → 40.6 s per million ticks, peak RSS flat at 180 → 185 MB). Query latency scales with **files per symbol**, not rows: 52 ms at 40 files, 184 ms at 200, 1,288 ms at 2,000. See finding F2.
+
+**Defects found and fixed:**
+- **D1** — `test_chaos_port_conflict_backoff_and_recovery` slept a fixed 0.8s and asserted crash detection, but the child needs ~0.615s to fail with EADDRINUSE; detection raced the assertion and the test failed on Linux. Replaced with a deterministic bounded poll. Failing before, passing after.
+
+**Findings:**
+- **F2 — query latency grows with file count.** Partition pruning works and is proven (10× file reduction), but the append-only design accumulates one file per micro-batch per symbol per day, and latency tracks that count. The retained `<100 ms` gate holds at 200k rows and is breached at 1M/10M on this container. Not a production-host verdict, but the shape of the curve is host-independent and is a direct input to the Q10b compaction decision.
+
+**Deferred (cannot be executed in this environment):**
+- 24-hour endurance run (Q04) — deferred by user instruction
+- Historical resampling benchmarks (PERF-07) — needs the production historical database
+- Operational migration and restore rehearsal (MIGR-01/02/04) — needs the production inventory
+- Real capacity model (CAPA-01) — needs the production lake
+- A named external "Repo B" repository (REPB-03) — the contract is verified for any third-party consumer instead
+
+**Excluded by instruction:** Q10a replay/rewind (RPLY-01–05) and Q10b offline compaction/purge (COMP-01–05), deferred to v4.3.
+
+**Current suite:** 823 passed, 11 deselected on Linux (was 745 passed / 1 failed at milestone start).
+
+**Evidence:** [Execution report](../../docs/plans/milestone-4.2-execution.md) · [Traceability matrix](../../docs/plans/milestone-4.2-traceability.md) · [Requirements](REQUIREMENTS.md) · [Roadmap](ROADMAP.md)
 
 ---
 

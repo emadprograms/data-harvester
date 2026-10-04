@@ -196,7 +196,17 @@ For a durable inbox, add tests for truncated final frames, corrupt nonfinal fram
 
 ## 11. Q09 — Repair contract and completion documentation
 
-**Observed discrepancies to resolve:** Archived v4.0 text calls the schema eight columns while the reader contract lists nine including `ingest_id`. The contract contains broad statements about zero contention and immutable publication, and illustrative migrated filenames that must be checked against current migration-scoped naming. The v4.1 audit mixes current and withdrawn historical verification claims. None should be copied into the final signoff without review.
+**Discrepancies observed at planning time, and their resolution in Phase 36:**
+
+| # | Discrepancy | Resolution |
+|---|---|---|
+| 1 | Archived v4.0 text called the schema **eight** columns while the reader contract lists **nine** including `ingest_id` | Corrected in `docs/plans/partitioned-parquet-tick-lake.md` and `.planning/milestones/v4.0-REQUIREMENTS.md`; `tests/docs/test_documentation_contract.py::test_no_document_claims_an_eight_column_schema` now fails if any document reintroduces it |
+| 2 | The Repo B contract listed `symbol` as Arrow `string` | Corrected to dictionary-encoded; found and fixed by executing the published examples in Phase 33 |
+| 3 | The operations guide documented the runner flush interval as `2.0s` | Corrected to `5.0s` (`DEFAULT_STREAM_FLUSH_INTERVAL_SECONDS`); now asserted against the code |
+| 4 | Backend fail-closed behaviour was implemented and tested (v4.1, F07) but undocumented for operators | Documented as §2.6 of the operations guide, and asserted by test |
+| 5 | The v4.1 audit mixes current and withdrawn historical verification claims | Not copied into this signoff; the signoff cites only artifacts produced in v4.2 |
+
+The eight-column count remains correct **only** for the legacy `streaming.duckdb` schema, which has no `ingest_id`; it is never correct for the tick lake.
 
 **Tests and implementation**
 

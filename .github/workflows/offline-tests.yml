@@ -17,5 +17,24 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
+      - name: Record candidate identity
+        run: |
+          echo "candidate_sha=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "Candidate SHA: $(git rev-parse HEAD)"
       - name: Run isolated offline suite
-        run: python -m pytest tests -m 'not live and not performance' -q
+        # pipefail keeps the pipeline's exit status equal to pytest's, so a
+        # failing suite still fails the job even with `tee`.
+        run: |
+          set -o pipefail
+          python -m pytest tests -m 'not live and not performance' -q -rf \
+            --junitxml=test-results.xml 2>&1 | tee pytest.log
+      - name: Upload test evidence
+        # Always upload: a failing run is exactly when the log is needed.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-test-results-${{ github.sha }}
+          path: |
+            pytest.log
+            test-results.xml
+          if-no-files-found: warn

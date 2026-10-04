@@ -91,7 +91,7 @@ Only the variables below are read by the runtime (verified against `src/storage/
 
 | Setting | Class / Call Site | Default |
 |---|---|---|
-| Flush interval | `StreamingEngine(flush_interval=…)` → `TickLakeWriter.flush_interval_seconds` | `2.0s` in the runner; `5.0s` writer-class default |
+| Flush interval | `StreamingEngine(flush_interval=…)` → `TickLakeWriter.flush_interval_seconds` | `5.0s` (runner default and writer-class default agree; `DEFAULT_STREAM_FLUSH_INTERVAL_SECONDS`) |
 | Max rows per batch | `TickLakeWriter(max_batch_rows=…)` | `5000` |
 | Queue capacity | `StreamingEngine(max_queue_size=…)` / `TickLakeWriter(max_queue_size=…)` | `10000` ticks |
 | Compression codec | `TickLakeWriter(compression=…)` | `snappy` |
@@ -153,7 +153,7 @@ The tick lake layout strictly segregates queryable data, staging areas, administ
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
 | `timestamp` | `TIMESTAMP` (naive UTC, µs) | No | Parquet `timestamp('us')` |
-| `symbol` | `VARCHAR` | No | Canonical uppercase display symbol |
+| `symbol` | `VARCHAR` | No | Canonical uppercase display symbol. Physically written dictionary-encoded (`dictionary<string, int32>`); reads back as text. |
 | `price` | `DOUBLE` | No | Observed quote/trade price |
 | `volume` | `DOUBLE` | Yes | Coalesces to `1.0` during resampling when null |
 | `bid` | `DOUBLE` | Yes | Best bid |
@@ -163,6 +163,28 @@ The tick lake layout strictly segregates queryable data, staging areas, administ
 | `ingest_id` | `VARCHAR` | No | Stable unique ingestion identity (writer-generated string; migrated rows use `mig_<symbol>_<YYYYMMDD>_<index:08d>`) |
 
 Rows are stored ordered by `(timestamp ASC, ingest_id ASC)`.
+
+### 2.6 Backend Selection and Fail-Closed Behaviour
+
+Read paths choose between the tick lake and the legacy `streaming.duckdb`
+database. The rule is asymmetric on purpose, and operators need to know which
+mode they are in:
+
+| Selection | Condition | Behaviour on failure |
+|---|---|---|
+| **Explicit lake** | `TICK_LAKE_ROOT` or `DATA_DIR` is set | **Fails closed.** Any fault — unresolvable root, missing or corrupt `lake.json`, maintenance active, publisher lock conflict — raises. It never falls back to `streaming.duckdb`. |
+| **Autodetected lake** | Neither variable is set, and the lake looks populated (`ticks/`, `_control/writer_status.json`, or `lake.json` exists) | Uses the lake |
+| **Legacy** | Neither variable is set and the lake is absent or empty | Uses `streaming.duckdb`; explicitly supported historical and legacy paths remain available |
+
+Implemented by `_get_lake_reader()` in `src/dashboard/analytics.py`, which loads
+and validates `lake.json` **before** choosing the reader, so an empty or damaged
+explicitly-selected lake cannot masquerade as "no data" and silently reopen the
+legacy tick database.
+
+**Operational consequence:** once `TICK_LAKE_ROOT` is set, a dashboard read error
+is a genuine configuration or storage fault. Do not "fix" it by unsetting the
+variable — that switches to autodetection, which may quietly serve historical
+data from the legacy database instead.
 
 ---
 
@@ -392,13 +414,13 @@ python tools/migrate_streaming_to_parquet.py \
 - **Root Cause:** Ingestion process was killed forcefully (`kill -9`, power outage, or OS reboot) during active PyArrow file serialization before the atomic rename step.
 - **Resolution:**
   Data Harvester includes an automated cleanup utility. Run the following Python command or incorporate it into daily maintenance:
-  ```python
-  from src.storage.publication import cleanup_orphaned_staging_files
-  # Deletes uncommitted staging files older than 1 hour (3600s, the default)
-  # Files referenced by an active publication intent in _control/intent/ are always preserved.
-  cleaned = cleanup_orphaned_staging_files("/Volumes/Crucial X9/data-harvester/data/tick_lake", max_age_seconds=3600)
-  print(f"Cleaned {cleaned} orphaned staging files.")
-  ```
+```python
+from src.storage.publication import cleanup_orphaned_staging_files
+# Deletes uncommitted staging files older than 1 hour (3600s, the default)
+# Files referenced by an active publication intent in _control/intent/ are always preserved.
+cleaned = cleanup_orphaned_staging_files("/Volumes/Crucial X9/data-harvester/data/tick_lake", max_age_seconds=3600)
+print(f"Cleaned {cleaned} orphaned staging files.")
+```
 
 ### 6.2 Crash Recovery & Uncommitted Publication Intents
 - **Mechanism:** Before renaming any `.tmp` file into production `ticks/`, `LakePublisher` writes an atomic publication intent (`_control/intent/<batch_id>.json`).

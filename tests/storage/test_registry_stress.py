@@ -703,8 +703,17 @@ def test_signal_storm_debouncing_coalesces_500_touches(tmp_path):
                 await asyncio.sleep(0.01)
             storm_thread.join()
 
-            # Wait for trailing debounce window and worker processing
-            await asyncio.sleep(0.15)
+            # Wait for the trailing debounce window to actually produce a reload
+            # instead of sleeping a fixed interval. Under a loaded host the fixed
+            # 0.15s sleep raced the debounce worker and observed zero reloads.
+            # The upper bound below remains the real coalescing assertion.
+            deadline = time.monotonic() + 5.0
+            call_count = 0
+            while time.monotonic() < deadline:
+                call_count = mock_streamer.update_subscriptions.call_count
+                if call_count >= 1:
+                    break
+                await asyncio.sleep(0.01)
 
             call_count = mock_streamer.update_subscriptions.call_count
             assert 1 <= call_count <= 3, (
