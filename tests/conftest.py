@@ -118,6 +118,12 @@ def _seed_isolated_session_registry():
         registry.add_symbol(symbol=sym, display_name=sym, capital_ticker=sym)
 
 
+# SYMB-01: the production default refuses symbols outside APPROVED_EQUITY_SYMBOLS
+# at the dashboard API. Suites that exercise CRUD mechanics with synthetic names
+# (TEST_API_*, NEW1, BASE1, PLTR, ...) lift exactly that check here; the production
+# behaviour is asserted in tests/test_symbol_authority.py with the override removed.
+os.environ.setdefault("ALLOW_UNSCOPED_SYMBOLS", "1")
+
 _seed_isolated_session_registry()
 
 _seed_isolated_session_tick_lake()

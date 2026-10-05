@@ -20,14 +20,14 @@ progress:
 See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 
 **Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage.
-**Current focus:** Phase 48: Schedule, Off-Hours Compaction, Notifications & Test Disposition (test-driven)
+**Current focus:** Phase 49 handoff — owner-run migration, deletion and milestone close (code phases 46–48 are complete)
 
 ## Current Position
 
-Phase: 48 — Schedule, Off-Hours Compaction, Notifications & Test Disposition
-Plan: — (researching; TDD per owner directive)
-Status: Phase 46 complete (STOR-01..05, DASH-01..03, BASE-01). Phase 47 complete 8/8 (RMV-01/02/03/04/06/07/08/09 + RMV-10 crypto-stream removal). Phase 48 requirements SCHED-01..05, SYMB-01, NOTIF-01, CO-01, CO-02 are open.
-Last activity: 2026-10-05 — Phase 47 closed: disk-DB references cleaned, crypto streaming removed, docs/README rewritten for Parquet-only storage; full offline suite 872 passed with 4 host-load timing flakes (3 timing gates plus the pre-existing `test_off_loop_event_loop_responsiveness`).
+Phase: 49 — Final Gate, Deletion & Closure (owner's machine)
+Plan: — (handoff prepared; the agent cannot run MIG-01..03, RMV-05 or CO-03)
+Status: Phases 46, 47 and 48 complete. Full offline suite 988 passed. Remaining: owner runs the migration gate (MIG-01/02/03), deletes the two `.duckdb` files (RMV-05), and writes the single completion report (CO-03) — then v5.0 stops.
+Last activity: 2026-10-05 — Phase 48 closed (988 passed): disk-DB references cleaned, crypto streaming removed, docs/README rewritten for Parquet-only storage; full offline suite 872 passed with 4 host-load timing flakes (3 timing gates plus the pre-existing `test_off_loop_event_loop_responsiveness`).
 
 Progress: [░░░░░░░░░░] 0%
 

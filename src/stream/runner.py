@@ -173,6 +173,10 @@ class StreamingEngine:
         # SCHED-04: the window owns admission. Once it closes, no new tick is
         # accepted; everything already accepted still drains exactly once.
         self.admission_open = True
+        # SYMB-01: the lake registry is the only symbol authority. Stream
+        # identifiers that are not in it are rejected at the callback boundary.
+        self.ticks_rejected_out_of_scope = 0
+        self._rejected_symbols_logged = set()
         self.storage_error_event = asyncio.Event()
         self._storage_resume_event = asyncio.Event()
         self._storage_resume_event.set()
@@ -247,6 +251,51 @@ class StreamingEngine:
         """Queue items still owned by the writer, whether queued or in-flight."""
         return self._pending_accepted_items
 
+    def _registry_identifiers(self) -> Dict[str, str]:
+        """{stream identifier -> canonical display symbol} for active registry entries."""
+        if self.registry is None:
+            return {}
+        try:
+            entries = self.registry.get_active_symbols()
+        except Exception:
+            return {}
+        mapping: Dict[str, str] = {}
+        for entry in entries:
+            mapping[str(entry.symbol).strip().upper()] = entry.symbol
+            if entry.capital_ticker:
+                mapping[str(entry.capital_ticker).strip().upper()] = entry.symbol
+        return mapping
+
+    def _resolve_stream_symbol(self, raw_symbol):
+        """Canonical display symbol for a stream identifier, or None when unauthorized.
+
+        Once the subscription set is known (after `start()`/`reload_symbols()`),
+        that set is the authority. Before then, the registry itself stands in for
+        it — a lake with no active symbols has no authority and accepts as before.
+        """
+        key = str(raw_symbol or "").strip().upper()
+        if not key:
+            return None
+        if self._subscriptions_initialized or self.active_streaming_symbols:
+            if key not in self.active_streaming_symbols:
+                return None
+            return self.epic_to_display.get(key, key)
+        authorized = self._registry_identifiers()
+        if authorized:
+            return authorized.get(key)
+        return self.epic_to_display.get(key, key)
+
+    def _reject_out_of_scope(self, raw_symbol) -> None:
+        """Count and log (once per identifier) an unsolicited stream symbol."""
+        self.ticks_rejected_out_of_scope += 1
+        key = str(raw_symbol or "").strip().upper()
+        if key not in self._rejected_symbols_logged:
+            self._rejected_symbols_logged.add(key)
+            logger.warning(
+                "Rejected out-of-scope symbol %r: the lake registry is the only symbol authority",
+                key,
+            )
+
     def close_admission(self, reason: str = "window closed") -> None:
         """Stop accepting new ticks (window closed); already-accepted work still drains."""
         if self.admission_open:
@@ -311,12 +360,10 @@ class StreamingEngine:
         """Feeds a tick from Capital.com directly into the write queue, filtering out excluded/purged assets."""
         if isinstance(tick, dict):
             raw_epic = tick.get("epic", "") or tick.get("symbol", "")
-            # Subscription fencing: drop if symbol is not active
-            if self._subscriptions_initialized or self.active_streaming_symbols:
-                if raw_epic not in self.active_streaming_symbols:
-                    return
-
-            symbol = self.epic_to_display.get(raw_epic, raw_epic)
+            symbol = self._resolve_stream_symbol(raw_epic)
+            if symbol is None:
+                self._reject_out_of_scope(raw_epic)
+                return
             price = float(tick.get("price", 0.0))
             ts = tick.get("timestamp")
             ts_str = ts.strftime('%Y-%m-%d %H:%M:%S.%f') if isinstance(ts, datetime) else str(ts)
@@ -332,17 +379,17 @@ class StreamingEngine:
                 tick_tuple = (ts_str, symbol, price, vol, bid, ask, src, sess)
         elif hasattr(tick, "symbol") and hasattr(tick, "timestamp"):
             sym = getattr(tick, "symbol")
-            if self._subscriptions_initialized or self.active_streaming_symbols:
-                if sym not in self.active_streaming_symbols:
-                    return
+            if self._resolve_stream_symbol(sym) is None:
+                self._reject_out_of_scope(sym)
+                return
             tick_tuple = tick
         else:
             tick_tuple = tick
             if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1:
                 sym = tick_tuple[1]
-                if self._subscriptions_initialized or self.active_streaming_symbols:
-                    if sym not in self.active_streaming_symbols:
-                        return
+                if self._resolve_stream_symbol(sym) is None:
+                    self._reject_out_of_scope(sym)
+                    return
         await self._enqueue_tick_async(tick_tuple)
 
     async def _lake_writer_worker(self):
@@ -458,6 +505,7 @@ class StreamingEngine:
                 self.active_streaming_symbols.add(c_ticker)
                 capital_symbols.append(c_ticker)
                 self.epic_to_display[c_ticker] = sym
+                self.epic_to_display[sym] = sym
         logger.info(f"🔄 Reloading active Capital.com streaming symbols ({len(capital_symbols)}): {capital_symbols}")
         if self.capital_streamer:
             success = await self.capital_streamer.update_subscriptions(capital_symbols)
@@ -591,6 +639,7 @@ class StreamingEngine:
                 self.active_streaming_symbols.add(c_ticker)
                 capital_symbols.append(c_ticker)
                 self.epic_to_display[c_ticker] = sym
+                self.epic_to_display[sym] = sym
         logger.info(f"🎯 Target Capital.com symbols for live quotes ({len(capital_symbols)}): {capital_symbols[:6]}...")
 
         # Initialize Capital.com streamer (or MockStreamer in mock_mode)

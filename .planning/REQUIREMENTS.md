@@ -41,15 +41,15 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 
 ### Phase 48: Schedule, Off-Hours Compaction, Notifications & Test Disposition
 
-- [ ] **SCHED-01**: A single timezone policy module computes ingestion eligibility in `ZoneInfo("America/New_York")` over `[04:00, 20:00)`, using an injectable clock. Behaviour is identical under DST transitions and when the host is not in ET.
-- [ ] **SCHED-02**: The supervisor owns lifecycle states (`WAITING_FOR_WINDOW`, `STARTING`, `INGESTING`, `DRAINING`, `MAINTENANCE`, `ERROR`). No provider authentication or subscription occurs outside the window, and an intentional off-hours stop is never treated as a crash.
-- [ ] **SCHED-03**: The direct runner entry point enforces the same window, so a manual start cannot bypass the schedule.
-- [ ] **SCHED-04**: At 20:00 admission stops, accepted ticks drain exactly once, and a failed drain blocks compaction and is reported honestly.
-- [ ] **SCHED-05**: Compaction runs unattended once per eligible closed interval, idempotently, after confirmed drain. A no-op interval counts as success, and a single maintenance lease prevents duplicate launchers.
-- [ ] **SYMB-01**: `_control/registry.json` is the single symbol authority containing exactly the 19 approved equities. Unsolicited and out-of-scope symbols are rejected at the callback boundary and cannot be added through the UI.
-- [ ] **NOTIF-01**: Operational notifications reach Discord for: session started, session stopped, **session failed to start**, supervisor restart/crash, and drain or compaction failure. Notifications are best-effort — a webhook failure must never block or crash ingestion.
-- [ ] **CO-01**: Tests are dispositioned retain / retarget / delete with a one-line reason each; the retained offline suite passes with no required xfails.
-- [ ] **CO-02**: Candle behaviour is verified unchanged against the Phase 46 baseline — the query engine was not modified.
+- [x] **SCHED-01**: A single timezone policy module computes ingestion eligibility in `ZoneInfo("America/New_York")` over `[04:00, 20:00)`, using an injectable clock. Behaviour is identical under DST transitions and when the host is not in ET.
+- [x] **SCHED-02**: The supervisor owns lifecycle states (`WAITING_FOR_WINDOW`, `STARTING`, `INGESTING`, `DRAINING`, `MAINTENANCE`, `ERROR`). No provider authentication or subscription occurs outside the window, and an intentional off-hours stop is never treated as a crash.
+- [x] **SCHED-03**: The direct runner entry point enforces the same window, so a manual start cannot bypass the schedule.
+- [x] **SCHED-04**: At 20:00 admission stops, accepted ticks drain exactly once, and a failed drain blocks compaction and is reported honestly.
+- [x] **SCHED-05**: Compaction runs unattended once per eligible closed interval, idempotently, after confirmed drain. A no-op interval counts as success, and a single maintenance lease prevents duplicate launchers.
+- [x] **SYMB-01**: `_control/registry.json` is the single symbol authority containing exactly the 19 approved equities. Unsolicited and out-of-scope symbols are rejected at the callback boundary and cannot be added through the UI.
+- [x] **NOTIF-01**: Operational notifications reach Discord for: session started, session stopped, **session failed to start**, supervisor restart/crash, and drain or compaction failure. Notifications are best-effort — a webhook failure must never block or crash ingestion.
+- [x] **CO-01**: Tests are dispositioned retain / retarget / delete with a one-line reason each; the retained offline suite passes with no required xfails.
+- [x] **CO-02**: Candle behaviour is verified unchanged against the Phase 46 baseline — the query engine was not modified.
 
 ### Phase 49: Final Gate, Deletion & Closure *(owner's machine)*
 
@@ -96,15 +96,15 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 | RMV-07 | 47 | Complete |
 | RMV-08 | 47 | Complete |
 | RMV-09 | 47 | Complete |
-| SCHED-01 | 48 | Pending |
-| SCHED-02 | 48 | Pending |
-| SCHED-03 | 48 | Pending |
-| SCHED-04 | 48 | Pending |
-| SCHED-05 | 48 | Pending |
-| SYMB-01 | 48 | Pending |
-| NOTIF-01 | 48 | Pending |
-| CO-01 | 48 | Pending |
-| CO-02 | 48 | Pending |
+| SCHED-01 | 48 | Complete |
+| SCHED-02 | 48 | Complete |
+| SCHED-03 | 48 | Complete |
+| SCHED-04 | 48 | Complete |
+| SCHED-05 | 48 | Complete |
+| SYMB-01 | 48 | Complete |
+| NOTIF-01 | 48 | Complete |
+| CO-01 | 48 | Complete |
+| CO-02 | 48 | Complete |
 | MIG-01 | 49 | Pending |
 | MIG-02 | 49 | Pending |
 | MIG-03 | 49 | Pending |
@@ -113,6 +113,8 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 
 **Coverage:** 33 requirements, 33 mapped, 0 unmapped ✓  
 **Phase order equals execution order** (renumbered 2026-10-05): code phases 46–48 first, owner-machine gate 49 last.
+
+**Phase 48 complete (2026-10-05):** SCHED-01 (`src/utils/session_window.py`), SCHED-02 (`src/utils/lifecycle.py` + supervisor `--enforce-window`/`--maintenance`), SCHED-03 (runner window gate, exit 3 off-hours), SCHED-04 (close-time watchdog, admission closed at 20:00, exactly one drain), SCHED-05 (`src/storage/offhours.py`: interval ledger, `O_EXCL` lease, drain gate), SYMB-01 (registry authority + callback/UI scope boundary), NOTIF-01 (Discord session/restart/failure events, best-effort), CO-01/CO-02 (test disposition ledger + unchanged candle engine). Full offline suite: **988 passed**.
 
 **Phase 47 close-out (2026-10-05):** RMV-01/02/03/04/06/07/08/09 verified; RMV-10 (crypto/Binance streaming, `CandleAggregator`, `binance_ticker`) removed as residue of the equity-only ticket. Full offline suite: 872 passed, 4 host-load timing flakes (documented, reproduce green in isolation).
 

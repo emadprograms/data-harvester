@@ -25,6 +25,26 @@ from src.storage.registry import (
 )
 
 
+def _unscoped_symbols_allowed() -> bool:
+    """Test/debug seam. Production keeps the 19-equity ticket as the authority."""
+    return os.getenv("ALLOW_UNSCOPED_SYMBOLS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _symbol_scope_rejection(symbol: str):
+    """Return an error string when `symbol` is outside the approved equity ticket."""
+    if _unscoped_symbols_allowed():
+        return None
+    from src.config import APPROVED_EQUITY_SYMBOLS
+
+    approved = {str(item).strip().upper() for item in APPROVED_EQUITY_SYMBOLS}
+    if str(symbol).strip().upper() in approved:
+        return None
+    return (
+        f"Symbol {symbol} is outside the approved equity scope "
+        f"({len(approved)} symbols). Update APPROVED_EQUITY_SYMBOLS in src/config.py to widen it."
+    )
+
+
 def _registry_symbols(reg):
     """Symbols from the lake registry; an uninitialised lake reads as empty."""
     try:
@@ -390,6 +410,19 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             disp = (payload.get("display_name") or payload.get("symbol") or "").strip().upper() if isinstance(payload, dict) else ""
             if not disp:
                 self._send_json({"success": False, "error": "display_name is required"}, status=400)
+                return
+
+            scope_error = _symbol_scope_rejection(disp)
+            if scope_error:
+                self._send_json(
+                    {
+                        "status": "error",
+                        "success": False,
+                        "error": scope_error,
+                        "message": scope_error,
+                    },
+                    status=400,
+                )
                 return
 
             reg = _get_lake_registry()
