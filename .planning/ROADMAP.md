@@ -8,7 +8,8 @@
 - ✅ **v4.0 Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)** — Phases 15–21 (shipped 2026-10-03)
 - ✅ **v4.1 Partitioned Parquet Lake Deep Testing & Hardening** — Phases 22–27 (shipped 2026-10-03)
 - ✅ **v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (closed 2026-10-04)
-- 🟡 **v4.3 Final Tick-Lake Implementation and Verification** — Phases 37–45 (in progress)
+- ✅ **v4.3 Final Tick-Lake Implementation and Verification** — Phases 37–43 (44–45 waived; closed 2026-10-05)
+- 🟡 **v5.0 DuckDB-Free Tick-Only Parquet** — Phases 46–51 (in progress)
 
 ## Phases
 
@@ -102,229 +103,134 @@ See: [.planning/milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 </details>
 
-### 🟡 v4.3 Final Tick-Lake Implementation and Verification (In Progress)
+### ✅ v4.3 Final Tick-Lake Implementation and Verification — CLOSED 2026-10-05
 
-**Milestone Goal:** Finish the historical DuckDB-to-Parquet migration and concurrent ingestion/analytics work, correct incomplete qualification, implement the remaining operational capabilities (capacity monitoring, offline compaction/purge if needed, market rewind decision & replay iterator, 24-hour endurance), and produce one final evidence-backed signoff with zero required unresolved gates.
+Phases 37–43 completed: fail-closed release validator, migration coverage ledger and provenance-scoped verification, reader fail-fast with no legacy fallback, durability barrier crash matrix, capacity monitoring and offline compaction, bounded replay iterator, and corrected benchmarks.
 
-**Source Plan:** [`docs/plans/milestone-4.3-final-concurrency-closeout.md`](../docs/plans/milestone-4.3-final-concurrency-closeout.md)
+**Waived by owner:** Phase 44 (24-hour endurance) and Phase 45 (hosted CI + closeout audit). Neither adds capability; both require external infrastructure.
 
-#### Scope & Agreed Adjustments
+**Honest note:** the Phase 43 writer-CPU gate (`>= 50%` reduction vs legacy) was **not met** — measured `−14.4%`, and `reports/benchmarks/pass2_qualification_report.json` records `"overall_passed": false`. It is recorded as a measured characterization, not a pass.
 
-1. **Phase 37: Preflight, Test Isolation & Fail-Closed Validator (Package A)**: Safe run directories outside tracked artifacts; verify write guards; reject `--allow-deferred` on required failures in `tools/validate_release_report.py`; table-driven report mutation tests (C43-06).
-2. **Phase 38: Migration Overlap Protection & Provenance-Scoped Verification (Package B)**: Source-coverage ledger independent of run scope (resolves C43-01 without payload deduplication); provenance-scoped final verification replacing C43-02 xfail (concurrent live rows outside migration do not trigger error); separate whole-lake audit detecting foreign/unowned files across namespaces; cutover and rollback rehearsal under real coordinator.
-3. **Phase 39: Reader Root Correctness & Portable Executable Contract (Package C)**: Distinguish uninitialized/unavailable roots from legitimate empty lakes (no silent fallback to legacy DuckDB); barrier-controlled snapshot race test (C43-07) asserting complete snapshot or explicit snapshot-unavailable error (never partial silent reads); execute published markdown reader contract examples in isolated subprocess with zero internal repo imports.
-4. **Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D)**: Real OS SIGINT/SIGTERM runner lifecycle test verifying `_shutdown_signal_handler` and queue drain; assertion-bearing barriers at admission, intent, staged fsync, promotion, receipt, and ack; honest gap reporting recording explicit visible gap start/end and loss unknown when unquantifiable; guaranteed documented RAM loss boundary.
-5. **Phase 43 (Pass 1): Initial Corrected Benchmarks & Baseline Measurement (Package G)**: Run initial corrected benchmarks before the Phase 41 compaction decision; >=19-symbol hot-skew datasets at 1M/10M scale to measure raw-partition query latency and fan-out; continuous background peak RSS/CPU sampling; real arrival-to-visible p99 latency through actual runner and separate reader; enforced qualification upper limits.
-6. **Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E) [x]**: Required capacity monitoring (files/day per symbol, small-file sizes, free space, rate-limited threshold warnings); conditional compaction implementation and tests if required by Phase 43 Pass 1 benchmark SLAs (with maintenance journal, consumer drain, multiset equivalence verification, immutable receipt lineage, and crash-safe promotion).
-7. **Phase 42 (Decision): Market Rewind & Bounded Replay Iterator (Package F) [x]**: Route Phase 41 into Phase 42 unconditionally. Decision branch YES evaluated, implemented, and fully qualified: `src/storage/replay.py` provides `ReplaySnapshot`, `ReplayCursor`, and `TickLakeReplayIterator` with keyset pagination over frozen file inventories, deterministic `(timestamp, symbol, ingest_id)` order, stable tie-breaking, and cross-process cursor resumption. (completed 2026-10-05, commit `42a7c0fa`).
-8. **Phase 43 (Pass 2): Re-run Performance Qualification (Package G)**: Re-run qualification suite after any relevant runtime changes (e.g. compaction).
-9. **Phase 44: 24-Hour Sustained Multi-Process Endurance Run (Package H)**: Duration-driven multi-process harness running continuously for at least 24 hours with real runner, dashboard, and independent reader under live synthetic ingestion; separate reconciliation for admitted, durable, published, and rejected records (ticks during documented provider gaps are not mistaken for lost durable records); bounded memory/handles; zero zombie processes.
-10. **Phase 45: Operational Rehearsal, Candidate CI & Milestone Closeout Audit (Package I)**: Final candidate code freeze; execution of full offline test suite; authenticated candidate CI log verification; requirement-level traceability reconciliation; publish machine-readable release report and final evidence audit with no required unresolved gates.
+Archive: [milestones/v4.3-ROADMAP.md](milestones/v4.3-ROADMAP.md) · [milestones/v4.3-REQUIREMENTS.md](milestones/v4.3-REQUIREMENTS.md) · [milestones/v4.3-phases/](milestones/v4.3-phases/)
+
+---
+
+### 🟡 v5.0 DuckDB-Free Tick-Only Parquet (In Progress)
+
+**Milestone Goal:** Reduce the system to one storage format, one query engine, and one data type — ticks in Parquet, read with PyArrow. DuckDB is removed entirely, including as the analytical engine. Ingestion is restricted to 04:00–20:00 ET for the 19 approved equity symbols, with compaction running unattended in the closed window.
+
+**Source plan:** [`PLAN-MILESTONE-5.0.md`](../PLAN-MILESTONE-5.0.md)
+
+**⚠ Hard sequencing constraint:** the legacy tick migration must complete and verify (Phase 46) **before** any DuckDB removal (Phase 50). The migration tool uses DuckDB to read the legacy source file.
 
 #### Execution Flowchart
 
 ```mermaid
 flowchart TD
-    P37["Phase 37: Preflight, Test Isolation & Fail-Closed Validator (Package A)"] --> P38["Phase 38: Migration Overlap Protection & Provenance-Scoped Verification (Package B)"]
-    P38 --> P39["Phase 39: Reader Root Correctness & Portable Executable Contract (Package C)"]
-    P39 --> P40["Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D)"]
-    P40 --> P43_1["Phase 43 (Pass 1): Initial Corrected Benchmarks & Baseline Measurement (Package G)"]
-    P43_1 --> P41["Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E)"]
-    P41 --> P42{"Phase 42 (Decision): Market Rewind & Bounded Replay Iterator (Package F)"}
-    P42 -- "Yes: Market Rewind Included" --> P42_IMPL["Implement Replay Iterator & Tests"]
-    P42_IMPL --> P43_2["Phase 43 (Pass 2): Re-run Performance Qualification (Package G)"]
-    P42 -- "No: Market Rewind Omitted" --> P43_2
-    P43_2 --> P44["Phase 44: 24-Hour Sustained Multi-Process Endurance Run (Package H)"]
-    P44 --> P45["Phase 45: Operational Rehearsal, Candidate CI & Milestone Closeout Audit (Package I)"]
+    P46["Phase 46: Baseline + Legacy Migration Verify (HARD GATE)"] --> P47["Phase 47: PyArrow Reader Core"]
+    P47 --> P48["Phase 48: Arrow Resampling + Multiset Verification"]
+    P48 --> P49["Phase 49: Dashboard, Analytics + Reader Contract"]
+    P49 --> P50["Phase 50: Removal + Databento Rewire"]
+    P50 --> P51["Phase 51: Schedule, Unattended Compaction, Closure"]
 ```
 
----
+#### Phase 46: Baseline Capture & Legacy Tick Migration Verification
 
-#### Phase 37: Preflight, Test Isolation & Fail-Closed Validator (Package A) [x]
+**Goal:** Record the reference behaviour the PyArrow implementation must match, and complete + verify the legacy tick migration while DuckDB is still present.
+**Depends on:** Nothing (entry phase)
+**Requirements:** [BASE-01, MIG-01, MIG-02, MIG-03]
+**Success criteria:**
+1. A single recorded baseline exists — candle edge-case matrix (DST, ties, duplicates, nulls) plus query/tape latency.
+2. Migration completes with `verify-published` and `audit-lake` clean, reconciled per symbol and per date.
+3. Re-running over an overlapping scope publishes no duplicate rows.
+4. Owner confirmation is recorded before any DuckDB removal.
 
-**Status**: Completed 2026-10-04 (commit `a975647a`)
-**Goal**: Establish safe test and benchmark execution outside tracked artifacts, enforce write guards, harden the release report validator against invalid evidence/omissions, and implement table-driven mutation tests.
-**Depends on**: Nothing (entry phase of Milestone 4.3)
-**Requirements**: [VALD-01, VALD-02, VALD-03, VALD-04]
-**Success Criteria** (what must be TRUE):
-  1. Unique run directory outside tracked artifacts is used for evidence; production write guards block dangerous paths and symlink aliases before writes.
-  2. The release report validator consumes an authoritative required-gate inventory and strictly fails closed on missing gates, empty metrics, or required FAIL/BLOCKED gates.
-  3. `--allow-deferred` waiver option strictly rejects FAIL or BLOCKED gates and never blesses an incomplete report for release.
-  4. Table-driven report mutation tests demonstrate that the validator detects missing artifacts, directory inputs, zero latency, count mismatches, and mutated metrics (resolving C43-06).
+#### Phase 47: PyArrow Reader Core
 
-**Plans**: 1 plan complete (commit `a975647a`)
+**Goal:** Reimplement `TickLakeReader` on PyArrow with an identical public API and identical error semantics.
+**Depends on:** Phase 46
+**Requirements:** [READ-01, READ-02, READ-03, READ-04, READ-05]
+**Success criteria:**
+1. No DuckDB import in the reader module; all public method names and return shapes preserved.
+2. Partition pruning and structured lake errors unchanged; no silent fallback.
+3. Duplicate multiplicity, null volume and `(timestamp, ingest_id)` ordering preserved.
+4. Memory bounded per symbol/day partition.
 
----
+#### Phase 48: Arrow Resampling & Multiset Verification
 
-#### Phase 38: Migration Overlap Protection & Provenance-Scoped Verification (Package B) [x]
+**Goal:** Replace `time_bucket` / `arg_min` / `arg_max` resampling and `EXCEPT ALL` reconciliation with Arrow and Counter equivalents that match the oracle exactly.
+**Depends on:** Phase 47
+**Requirements:** [CAND-01, CAND-02, VER-01, VER-02, VER-03]
+**Success criteria:**
+1. Candle output identical to the Phase 46 baseline across the full edge-case matrix.
+2. Deterministic open/close tie-break proven by test.
+3. Multiset equivalence preserves multiplicity, float precision and nulls; a mismatch blocks compaction replacement.
 
-**Status**: Completed 2026-10-04 (commit `0b76bad1`)
-**Goal**: Implement source-coverage idempotence independent of run scope, replace the staging-only verification xfail with provenance-scoped final verification, and prove real coordinator cutover/rollback.
-**Depends on**: Phase 37
-**Requirements**: [MIGR-01, MIGR-02, MIGR-03, MIGR-04]
-**Success Criteria** (what must be TRUE):
-  1. Migration source-coverage ledger tracks covered source ranges independently of run UUID or query filters, preventing duplicate row publication (resolving C43-01 without payload deduplication).
-  2. Final publication verification inspects the published Parquet inventory against the frozen source using bidirectional `EXCEPT ALL`, scoped strictly to migration-owned inventory so concurrent live rows do not cause false failures (resolving C43-02 without xfail).
-  3. A separate complete-inventory audit detects foreign, unowned, or corrupted files across all lake namespaces.
-  4. Cutover and rollback rehearsals pass through `MigrationHandoffCoordinator` and `ProcessSupervisor` with injected stalled drain and restart failures, preserving live post-cutover data.
+#### Phase 49: Dashboard, Analytics & Reader Contract
 
-**Plans**: 1 plan complete (commit `0b76bad1`)
+**Goal:** Serve retained dashboard routes from the PyArrow reader, remove bar-era surfaces, and publish a pyarrow-only reader contract.
+**Depends on:** Phase 48
+**Requirements:** [DASH-01, DASH-02, DASH-03, DASH-04, CONT-01, CONT-02]
+**Success criteria:**
+1. `/api/historical/*` and frontend callers removed; retained tick routes served from the lake.
+2. Charts render tick-derived candles, with an honest empty state before capture history.
+3. Contract examples execute in an isolated subprocess with zero `src` imports.
+4. Repo B's consumption path is confirmed (gate G1).
 
----
+#### Phase 50: Removal
 
-#### Phase 39: Reader Root Correctness & Portable Executable Contract (Package C) [x]
+**Goal:** Delete DuckDB, the bar subsystem and dead providers; rewire Databento gap-fill into the lake.
+**Depends on:** Phases 46–49
+**Requirements:** [RMV-01, RMV-02, RMV-03, RMV-04, RMV-05, GAP-01, GAP-02]
+**Success criteria:**
+1. `grep -r duckdb` returns nothing across code and requirements.
+2. No code path can open or create a disk-backed DuckDB database.
+3. Databento publishes to the lake, reads `_control/registry.json`, and respects maintenance fences.
+4. Owner deletes both `.duckdb` files; the agent never copies, exports or deletes them.
 
-**Status**: Completed 2026-10-04 (commit `4c18243b`)
-**Goal**: Ensure the lake reader fails fast on uninitialized or unavailable roots without legacy DuckDB fallback, replace the file-deletion test with a barrier-controlled snapshot race, and execute the portable contract suite.
-**Depends on**: Phase 37
-**Requirements**: [READ-01, READ-02, READ-03, READ-04]
-**Success Criteria** (what must be TRUE):
-  1. The reader raises specific structured exceptions on uninitialized roots, lost mounts, corrupted metadata, or unreadable partitions, with zero silent fallback to `streaming.duckdb`.
-  2. Valid empty lakes (no symbols or date ranges) return legitimate empty results without raising errors.
-  3. Barrier-controlled snapshot race test captures the exact file list, removes a file during execution barrier, and asserts either complete results or an explicit snapshot-unavailable error (never silent partial reads; resolving C43-07).
-  4. Published markdown contract examples execute in an isolated subprocess with zero internal `src` imports, verifying candle resampling accuracy across DST, timestamp ties, null volume, and late data.
+#### Phase 51: Schedule, Maintenance & Closure
 
-**Plans**: 1 plan complete (commit `4c18243b`)
-
----
-
-#### Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D) [x]
-
-**Status**: Completed 2026-10-05 (commit `3d7dd385`)
-**Goal**: Pin the runner lifecycle and durability barrier crash matrix with real OS signals and subprocesses, and implement an honest sequence-ledgered provider gap reporting contract.
-**Depends on**: Phase 37, Phase 38
-**Requirements**: [DURB-01, DURB-02, DURB-03, DURB-04]
-**Success Criteria** (what must be TRUE):
-  1. Real OS SIGINT and SIGTERM lifecycle tests verify runner signal handling, cooperative queue drain, and clean exit codes.
-  2. Crash matrix kills the writer at admission, intent durability, staged fsync, final promotion, directory fsync, receipt durability, and acknowledgment, reconciling against an independent external ledger in a fresh process.
-  3. A fake provider with sequence ledgers and controllable disconnect/reconnect records explicit visible gap intervals with "loss unknown" when unquantifiable.
-  4. The RAM-only loss boundary is verified and signed honestly as the guarantee limit; no power-loss or live zero-loss claims are made.
-
-**Plans**: 1 plan complete (commit `3d7dd385`)
-
----
-
-#### Phase 43: Production-Scale Benchmarks & Performance Qualification (Package G - Pass 1 & Pass 2) [x]
-
-**Status**: Completed 2026-10-05 (Pass 1 commit `e6414f78`; Pass 2 commit `632458a5`)
-**Goal**: Implement continuous resource sampling, real receive-to-visible p99 latency, and enforced qualification thresholds at 1M and 10M scales; execute Pass 1 to measure raw-partition query latency and fan-out before the compaction decision, and Pass 2 after runtime changes.
-**Depends on**: Pass 1 depends on Phase 40; Pass 2 depends on Phase 42
-**Requirements**: [PERF-01, PERF-02, PERF-03, PERF-04, PERF-05]
-**Success Criteria** (what must be TRUE):
-  1. Datasets generated with >=19 symbols, hot-symbol skew, and session/month windows at 1M and 10M rows reproduce with recorded manifests (resolving C43-05).
-  2. Peak RSS and CPU are sampled continuously in the background throughout benchmarks, replacing `max(start, end)` snapshots.
-  3. Real receive-to-visible freshness is measured through the actual runner and an independent reader process (healthy load p99 <= configured flush interval + 1 second; resolving C43-04).
-  4. Qualification harness strictly enforces upper limits: warm session 1m/5m queries p95 <100ms, warm month daily candles p95 <250ms, writer CPU >=50% reduction vs legacy baseline, and event loop lag p99 <20ms (resolving C43-03).
-  5. Pass 1 measures raw-partition fan-out latency to inform Phase 41 compaction; Pass 2 re-qualifies performance after compaction/replay changes.
-
-**Plans**: 2 plans complete (Pass 1 commit `e6414f78`; Pass 2 commit `632458a5`)
-
----
-
-#### Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E) [x]
-
-**Status**: Completed 2026-10-05 (commit `ef9e57fe`)
-**Goal**: Deliver actionable capacity monitoring and alert thresholds; implement recoverable offline compaction and physical purge under a durable maintenance journal if required by Phase 43 Pass 1 benchmark SLAs.
-**Depends on**: Phase 43 (Pass 1)
-**Requirements**: [CAPA-01, CAPA-02, CAPA-03, CAPA-04]
-**Success Criteria** (what must be TRUE):
-  1. Capacity monitor tracks files/day by symbol, small-file distribution, intent/receipt growth, free disk space, and query discovery cost, with rate-limited warning and critical alerts.
-  2. Maintenance journal and consumer drain protocol stops reader admission, drains active queries, pauses supervisor restarts, and refuses unmanaged external readers during maintenance.
-  3. Offline compaction (if enabled by Pass 1 SLAs) writes consolidated files outside active globs, verifies multiset equivalence before replacement, and preserves an immutable receipt lineage map.
-  4. Administrative symbol purge removes files only under an inactive fenced generation, with crash-safe recovery and rollback.
-
-**Plans**: 1 plan complete (commit `ef9e57fe`)
-
----
-
-#### Phase 42: Market Rewind & Bounded Replay Iterator Decision (Package F - Decision Gated) [x]
-
-**Status**: Completed 2026-10-05 (commit `42a7c0fa`)
-**Goal**: Formally evaluate the Market Rewind release inclusion decision: if YES, implement and test the bounded deterministic replay iterator; if NO, document the omission and route directly to Pass 2 qualification.
-**Depends on**: Phase 41
-**Requirements**: [RPLY-01, RPLY-02, RPLY-03, RPLY-04]
-**Success Criteria** (what must be TRUE):
-  1. Release decision for Market Rewind / replay iterator is explicitly recorded (Yes -> implement; No -> omit and proceed).
-  2. If included: `src/storage/replay.py` provides an iterator over explicit snapshot file inventories yielding Arrow batches without full-history RAM materialization.
-  3. If included: deterministic total ordering `(timestamp, symbol, ingest_id)` with stable tie-breaking and cursor resumption survives fresh process restarts.
-  4. Portable reader contract remains fully verified and operational regardless of the replay iterator inclusion decision.
-
-**Plans**: 1 plan complete (commit `42a7c0fa`)
-
----
-
-#### Phase 44: 24-Hour Sustained Multi-Process Endurance Run (Package H)
-
-**Goal**: Complete a duration-driven, continuous >=24-hour multi-process endurance run with live synthetic ingestion, periodic checkpointing, scheduled fault recovery, and exact four-category reconciliation.
-**Depends on**: Phase 43 (Pass 2)
-**Requirements**: [ENDR-01, ENDR-02, ENDR-03, ENDR-04, ENDR-05]
-**Success Criteria** (what must be TRUE):
-  1. The multi-process endurance harness runs continuously for at least 24 hours with real runner, dashboard, and independent reader under live synthetic ingestion.
-  2. Telemetry continuously tracks per-process/aggregate CPU, RSS, handle counts, thread counts, and queue depth with bounded growth and zero zombie processes.
-  3. Reconciliation separates admitted, durable, published, and rejected records against an external producer ledger; provider ticks during documented gaps are not misclassified as lost durable records.
-  4. Scheduled faults (disconnects, restarts, transient I/O errors, maintenance windows) recover within declared deadlines with zero durable record loss.
-  5. Harness fails closed: deliberate premature aborts or absent telemetry produce `INCOMPLETE` / failed qualification, never green.
-
-**Plans**: 0 plans (run `/gsd-plan-phase 44` to break down)
-
----
-
-#### Phase 45: Operational Rehearsal, Candidate CI & Milestone Closeout Audit (Package I)
-
-**Goal**: Freeze the release candidate, verify hosted CI run logs, perform complete requirement-level traceability reconciliation, and publish the validated machine-readable release report and final milestone audit.
-**Depends on**: Phases 37–44
-**Requirements**: [AUDT-01, AUDT-02, AUDT-03, AUDT-04]
-**Success Criteria** (what must be TRUE):
-  1. Final candidate code freeze is established; full offline test suite executes with zero required xfails, skips, or unhandled errors.
-  2. Authenticated hosted CI run URL, commit SHA, and test logs are verified.
-  3. Requirement-level traceability matrix reconciles all Milestone 4.3 requirements, test nodes, and artifacts with zero contradictions.
-  4. Machine-readable release report passes hardened validation with zero required unresolved gates; final `milestone-4.3-audit-report.md` is published.
-
-**Plans**: 0 plans (run `/gsd-plan-phase 45` to break down)
+**Goal:** Enforce the 04:00–20:00 ET window, run compaction unattended in the closed interval, and close the milestone.
+**Depends on:** Phase 50
+**Requirements:** [SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SYMB-01, CO-01, CO-02, CO-03, CO-04]
+**Success criteria:**
+1. Eligibility computed in `America/New_York` with DST correctness and an injectable clock.
+2. Supervisor lifecycle states; no provider activity outside the window; intentional stop is not a crash.
+3. Admission stops at 20:00, accepted ticks drain exactly once, a failed drain blocks compaction and is reported.
+4. Compaction is idempotent per closed interval under a single maintenance lease.
+5. Registry holds exactly the 19 approved symbols; out-of-scope symbols are rejected.
+6. One completion report; the milestone stops.
 
 ---
 
 ## Progress
 
-**Completed milestones:** v1.0 4/4 plans · v2.0 5/5 · v3.0 5/5 · v4.0 7/7 · v4.1 6/6 · v4.2 7/9 (scoped signoff closed; remaining scope carried into v4.3).
+**Completed milestones:** v1.0 4/4 plans · v2.0 5/5 · v3.0 5/5 · v4.0 7/7 · v4.1 6/6 · v4.2 7/9 · v4.3 7/9 (phases 44–45 waived; closed 2026-10-05).
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 37. Preflight, Isolation & Fail-Closed Validator | v4.3 | 1/1 | Complete | 2026-10-04 |
-| 38. Migration Overlap & Provenance Verification | v4.3 | 1/1 | Complete | 2026-10-04 |
-| 39. Reader Root Correctness & Executable Contract | v4.3 | 1/1 | Complete | 2026-10-04 |
-| 40. Durability Boundaries & Provider Gap Ledger | v4.3 | 1/1 | Complete | 2026-10-05 |
-| 43. Performance Benchmarks (Pass 1) | v4.3 | 1/1 | Complete | 2026-10-05 |
-| 41. Capacity Monitoring, Offline Compaction & Purge | v4.3 | 1/1 | Complete | 2026-10-05 |
-| 42. Market Rewind & Replay Iterator Decision | v4.3 | 1/1 | Complete | 2026-10-05 |
-| 43. Performance Qualification (Pass 2) | v4.3 | 1/1 | Complete | 2026-10-05 |
-| 44. 24-Hour Sustained Endurance Run | v4.3 | 0/TBD | Not started | - |
-| 45. Candidate CI & Milestone Closeout Audit | v4.3 | 0/TBD | Not started | - |
+| 46. Baseline & Legacy Migration Verification | v5.0 | 0/TBD | Not started | - |
+| 47. PyArrow Reader Core | v5.0 | 0/TBD | Not started | - |
+| 48. Arrow Resampling & Multiset Verification | v5.0 | 0/TBD | Not started | - |
+| 49. Dashboard, Analytics & Reader Contract | v5.0 | 0/TBD | Not started | - |
+| 50. Removal + Databento Rewire | v5.0 | 0/TBD | Not started | - |
+| 51. Schedule, Maintenance & Closure | v5.0 | 0/TBD | Not started | - |
 
 ---
 
 ## Milestone Backlog
 
-Follow-up triage against Milestone 4.3:
+v4.3 backlog items are archived with that milestone. Active backlog for v5.0:
 
 | Candidate | Disposition | Phase |
 |-----------|-------------|-------|
-| Fail-closed release report validator & mutation tests (C43-06) | **Required** | Phase 37 |
-| Source-coverage idempotence without payload deduplication (C43-01) | **Required** | Phase 38 |
-| Provenance-scoped final publication verification & whole-lake audit (C43-02) | **Required** | Phase 38 |
-| Production cutover, rollback & restore rehearsal under supervisor | **Required** | Phase 38 |
-| Fast reader fail on invalid roots without legacy fallback | **Required** | Phase 39 |
-| Barrier-controlled snapshot race test & doc correction (C43-07) | **Required** | Phase 39 |
-| Subprocess-isolated executable reader contract tests | **Required** | Phase 39 |
-| Real OS SIGINT/SIGTERM runner lifecycle & queue drain test | **Required** | Phase 40 |
-| Durability barrier crash matrix & external producer ledger (C43-08) | **Required** | Phase 40 |
-| Fake provider sequence ledger & honest gap accounting | **Required** | Phase 40 |
-| Corrected benchmarks: >=19 symbols, continuous peak RSS/CPU sampling (C43-03, C43-05) | **Required** | Phase 43 |
-| Arrival-to-visible p99 latency through actual runner & reader (C43-04) | **Required** | Phase 43 |
-| Capacity monitoring, files/day, small-file sizes, and disk alerts | **Required** | Phase 41 |
-| Coordinated offline compaction & physical purge (conditional on Pass 1 SLAs) | **Conditional** | Phase 41 |
-| Market Rewind release decision & bounded replay iterator | **Decision-Gated** | Phase 42 |
-| 24-hour continuous multi-process endurance qualification | **Required** | Phase 44 |
-| Authenticated hosted candidate CI log verification | **Required** | Phase 45 |
-| Full traceability reconciliation & fail-closed final release report | **Required** | Phase 45 |
-| Durable disk spool (`_spool/`) for power failure zero-loss | **Out of scope** | RAM loss boundary is guaranteed; spooling is optional extension |
+| Verify legacy tick migration before any DuckDB removal | **Required (gate)** | 46 |
+| PyArrow reader + candle resampling parity with baseline | **Required** | 47–48 |
+| Multiset verification replacing `EXCEPT ALL` | **Required** | 48 |
+| Dashboard/analytics migration off DuckDB | **Required** | 49 |
+| Repo B consumption-path confirmation | **Decision (G1)** | 49 |
+| Databento gap-fill rewired to the Parquet lake | **Required** | 50 |
+| Owner deletion of `historical.duckdb` + `streaming.duckdb` | **Owner action** | 50 |
+| 04:00–20:00 ET schedule + unattended off-hours compaction | **Required** | 51 |
+| 24-hour endurance run, hosted CI log verification | **Out of scope** (waived in v4.3) | — |
+| Postgres / SQLite migration | **Out of scope** (rejected) | — |
