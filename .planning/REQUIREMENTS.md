@@ -6,7 +6,7 @@
 
 **Source of truth for scope:** [`PLAN-MILESTONE-5.0.md`](../PLAN-MILESTONE-5.0.md) — four phases (46–49).
 
-> **Scope decision (owner, 2026-10-05):** remove DuckDB as **storage** only. No `.duckdb` files may exist; all persisted data is Parquet. DuckDB remains as the **in-memory query engine** reading Parquet. The larger alternative — removing the DuckDB library and reimplementing resampling in PyArrow — was considered and **rejected**. `src/storage/reader.py`, `compaction.py` and `replay.py` are therefore **out of scope for modification**.
+> **Scope decision (owner, 2026-10-05):** remove DuckDB as **storage** only. No `.duckdb` files may exist; all persisted data is Parquet. DuckDB remains as the **in-memory query engine** reading Parquet. The larger alternative — removing the DuckDB library and reimplementing resampling in PyArrow — was considered and **rejected**. `src/storage/reader.py` and `compaction.py` are therefore **out of scope for modification**; `src/storage/replay.py` was later deleted outright in Phase 47 (RMV-08), which removes code rather than rewriting the engine.
 
 A requirement is **Complete** only when its stated evidence exists. Shortfalls are recorded honestly, never rounded up.
 
@@ -70,7 +70,7 @@ a tampered published file was refused, and `--purge` retired an out-of-scope sym
 
 | Item | Reason |
 |---|---|
-| Removing the DuckDB **library** / reimplementing resampling in PyArrow | Considered and rejected by owner 2026-10-05. `reader.py`, `compaction.py`, `replay.py` unmodified. |
+| Removing the DuckDB **library** / reimplementing resampling in PyArrow | Considered and rejected by owner 2026-10-05. `reader.py` and `compaction.py` unmodified; `replay.py` deleted in Phase 47 (RMV-08). |
 | 24-hour endurance run, hosted CI log verification | Waived in v4.3; not revived. |
 | Postgres / SQLite migration | Rejected — Parquet stays. |
 | Editing `.planning/` historical archives | Falsifying past audit records is not permitted. |
