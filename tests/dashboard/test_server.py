@@ -41,13 +41,13 @@ def test_dashboard_static_index_html_served(dashboard_test_server):
 
 
 def test_api_status_endpoint(dashboard_test_server):
-    """Verify GET /api/status returns operational metrics and DB health."""
+    """Verify GET /api/status returns operational metrics and lake health."""
     resp = requests.get(f"{dashboard_test_server}/api/status")
     assert resp.status_code == 200
     data = resp.json()
     assert "status" in data
-    assert "historical" in data
-    assert "streaming" in data
+    assert "lake" in data
+    assert "stream" in data
     assert data["status"] in ["HEALTHY", "DEGRADED", "CRITICAL"]
 
 
@@ -93,16 +93,14 @@ def test_api_symbols_add_and_delete_lifecycle(dashboard_test_server):
 
 
 def test_api_integrity_audit_endpoint(dashboard_test_server):
-    """Verify GET /api/integrity runs audits and returns structured results."""
+    """Verify GET /api/integrity runs lake tick-health checks and returns structured results."""
     resp = requests.get(f"{dashboard_test_server}/api/integrity?symbol=SPY")
     assert resp.status_code == 200
     data = resp.json()
     assert "overall_passed" in data
-    assert "anomalies" in data
-    assert "gaps" in data
-    assert "quiet_intervals" in data
-    assert "drift" in data
-    assert isinstance(data["gaps"], list)
+    assert data["symbols_audited"] == ["SPY"]
+    assert isinstance(data["quiet_intervals"], list)
+    assert data["quiet_intervals"][0]["symbol"] == "SPY"
 
 
 def test_api_streamer_reload_endpoint(dashboard_test_server):

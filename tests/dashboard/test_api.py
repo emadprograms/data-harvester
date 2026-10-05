@@ -33,15 +33,14 @@ def api_test_server():
 
 
 def test_api_status(api_test_server):
-    """GET /api/status returns overall status, historical health, and streaming health."""
+    """GET /api/status reports lake health and stream status (Parquet-only)."""
     resp = requests.get(f"{api_test_server}/api/status")
     assert resp.status_code == 200
     data = resp.json()
-    assert "status" in data
-    assert "historical" in data
-    assert "streaming" in data
-    assert "size_mb" in data["historical"]
-    assert "ticks_rows" in data["streaming"]
+    assert data["status"] in ["HEALTHY", "DEGRADED", "CRITICAL"]
+    assert "lake" in data
+    assert "stream" in data
+    assert "total_size_bytes" in data["lake"]
 
 
 def test_api_symbols(api_test_server):

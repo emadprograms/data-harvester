@@ -48,13 +48,10 @@ def _get_lake_registry():
                 pass
         return None
 from src.utils.integrity import (
-    get_database_health_report,
-    detect_1m_gaps,
     detect_stream_quiet_intervals,
-    validate_ohlcv_anomalies,
-    analyze_price_drift,
 )
 from src.dashboard.analytics import (
+    _get_lake_reader,
     get_candles,
     get_historical_candles,
     get_streaming_candles,
@@ -196,8 +193,21 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
         # 2. API: System & Database Health Status
         if path == "/api/status":
-            report = get_database_health_report()
-            self._send_json(report)
+            reader = _get_lake_reader()
+            if reader is None:
+                self._send_json({"status": "CRITICAL", "healthy": False, "error": "tick lake unavailable"})
+                return
+            lake = reader.get_lake_health_report()
+            try:
+                stream = reader.get_stream_status()
+            except Exception as exc:
+                stream = {"status": "UNKNOWN", "error": str(exc)}
+            self._send_json({
+                "status": "HEALTHY" if lake.get("healthy") else "DEGRADED",
+                "healthy": bool(lake.get("healthy")),
+                "lake": lake,
+                "stream": stream,
+            })
             return
 
         # 3. API: Symbol Inventory
@@ -240,76 +250,30 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         # 4. API: Data Integrity & Health Audits
         if path == "/api/integrity":
             target_symbol = query.get("symbol", [None])[0]
-            start_param = query.get("start", [None])[0]
-            end_param = query.get("end", [None])[0]
-
-            smap = get_symbol_map_from_db()
-            symbol_list = [target_symbol] if target_symbol else list(smap.keys())[:5]
-
             now_utc = datetime.now(timezone.utc)
-            gap_results = []
-            quiet_results = []
-            drift_results = []
 
-            # Smart date range resolution per symbol or user-provided
-            client = get_historical_db_connection()
-
-            for sym in symbol_list:
-                sym_start = None
-                sym_end = None
-
-                if start_param and end_param:
+            if target_symbol:
+                symbols = [target_symbol]
+            else:
+                symbols = []
+                registry = _get_lake_registry()
+                if registry is not None:
                     try:
-                        sym_start = datetime.fromisoformat(start_param.replace("Z", "+00:00"))
-                        sym_end = datetime.fromisoformat(end_param.replace("Z", "+00:00"))
-                    except Exception:
-                        pass
+                        symbols = [entry.symbol for entry in registry.get_active_symbols()][:5]
+                    except Exception as exc:
+                        logger.warning(f"Integrity symbol lookup failed: {exc}")
 
-                if not sym_start or not sym_end:
-                    # Discover latest recorded timestamp for this symbol
-                    if client:
-                        try:
-                            max_ts_row = client.execute("SELECT MAX(timestamp) FROM minute_data WHERE symbol = ?", [sym]).fetchone()
-                            if max_ts_row and max_ts_row[0]:
-                                max_dt = max_ts_row[0]
-                                if isinstance(max_dt, str):
-                                    max_dt = datetime.strptime(max_dt.split('.')[0], "%Y-%m-%d %H:%M:%S")
-                                if max_dt.tzinfo is None:
-                                    max_dt = max_dt.replace(tzinfo=timezone.utc)
-                                sym_end = max_dt
-                                sym_start = max_dt - timedelta(days=5)
-                        except Exception:
-                            pass
+            quiet_results = [
+                detect_stream_quiet_intervals(sym, lookback_minutes=60, threshold_seconds=120)
+                for sym in symbols
+            ]
 
-                if not sym_start or not sym_end:
-                    sym_end = now_utc
-                    sym_start = now_utc - timedelta(days=5)
-
-                gap_results.append(detect_1m_gaps(sym, sym_start, sym_end, client=client))
-                quiet_results.append(detect_stream_quiet_intervals(sym, lookback_minutes=60, threshold_seconds=120))
-                drift_results.append(analyze_price_drift(sym))
-
-            if client:
-                client.close()
-
-            anomaly_result = validate_ohlcv_anomalies(symbol=target_symbol)
-
-            all_passed = (
-                anomaly_result["passed"] and
-                all(g.get("passed", True) for g in gap_results) and
-                all(d.get("passed", True) for d in drift_results)
-            )
-
-            audit_response = {
-                "overall_passed": all_passed,
+            self._send_json({
+                "overall_passed": bool(quiet_results) and all(q.get("passed", False) for q in quiet_results),
                 "timestamp": now_utc.strftime('%Y-%m-%d %H:%M:%S UTC'),
-                "symbols_audited": symbol_list,
-                "anomalies": anomaly_result,
-                "gaps": gap_results,
+                "symbols_audited": symbols,
                 "quiet_intervals": quiet_results,
-                "drift": drift_results
-            }
-            self._send_json(audit_response)
+            })
             return
 
         # 5. API: OHLCV Candlestick Query (with native time_bucket)
