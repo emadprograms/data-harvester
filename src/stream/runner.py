@@ -32,6 +32,24 @@ class DrainFailedError(RuntimeError):
 DEFAULT_STREAM_FLUSH_INTERVAL_SECONDS = 5.0
 DEFAULT_STREAM_MAX_BATCH_ROWS = 5000
 
+# Process exit codes the supervisor distinguishes (SCHED-02/03).
+EXIT_START_FAILED = 1
+EXIT_OUTSIDE_WINDOW = 3
+EXIT_DRAIN_FAILED = 4
+
+
+def check_ingestion_window(now=None, mock_mode: bool = False):
+    """(may_start, message) for the weekday 04:00-20:00 ET ingestion window.
+
+    ``mock_mode`` never authenticates or subscribes to a provider, so it is exempt
+    from the gate; the honest window state is still returned for the log line.
+    """
+    current = now if now is not None else now_et()
+    message = describe_window(current)
+    if mock_mode or is_eligible(current):
+        return True, message
+    return False, message
+
 
 def _is_fresh_lake_path(path: Union[str, Path]) -> bool:
     """A lake can bootstrap an empty registry only before any lake artifact exists."""
@@ -75,6 +93,16 @@ def _positive_int(value: Any, env_name: str, default: int) -> int:
         raise ValueError(f"{env_name} must be a positive integer, got {raw!r}")
     return int(numeric)
 
+
+from src.utils.notifications import (
+    DRAIN_FAILED,
+    SESSION_STARTED,
+    SESSION_START_FAILED,
+    SESSION_STOPPED,
+    notify_detached,
+)
+from src.utils.session_window import describe as describe_window
+from src.utils.session_window import is_eligible, now_et
 
 from src.stream.fake_provider import FakeProvider
 
@@ -562,6 +590,20 @@ class StreamingEngine:
                 on_tick_callback=self._handle_capital_tick
             )
 
+        notify_detached(
+            SESSION_STARTED,
+            detail=(
+                f"{len(capital_symbols)} subscribed symbols; "
+                f"{'MOCK provider' if self.mock_mode else 'Capital.com live'}; "
+                f"{describe_window(now_et())}"
+            ),
+            fields={
+                "Symbols": len(capital_symbols),
+                "Mode": "MOCK" if self.mock_mode else "LIVE",
+                "Window": "weekdays 04:00-20:00 ET",
+            },
+        )
+
         writer_worker_task = asyncio.create_task(self._lake_writer_worker())
 
         tasks = [
@@ -644,6 +686,7 @@ class StreamingEngine:
                     self.writer.set_operational_status("DRAIN_FAILED", queue_depth=self.pending_accepted_ticks)
                 except Exception:
                     pass
+            notify_detached(DRAIN_FAILED, detail=message)
             raise DrainFailedError(message) from exc
 
         if self.writer is not None:
@@ -670,43 +713,30 @@ class StreamingEngine:
                     self.writer.set_operational_status("DRAIN_FAILED", queue_depth=self.pending_accepted_ticks)
                 except Exception:
                     pass
+                notify_detached(
+                    DRAIN_FAILED,
+                    detail=f"Streaming writer failed during final drain: {exc}",
+                )
                 raise DrainFailedError(f"Streaming writer failed during final drain: {exc}") from exc
 
         if self.db_conn:
             self.db_conn.close()
             self.db_conn = None
         self.drain_succeeded = True
+        notify_detached(
+            SESSION_STOPPED,
+            detail="graceful drain complete; every accepted tick is durable in the lake",
+            fields={"Dropped": self.ticks_dropped},
+        )
 
 
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="24/7 Capital.com Tick Streaming Engine")
-    parser.add_argument("--lake-root", type=str, default=None, help="Path to tick lake root")
-    parser.add_argument("--writer-id", type=str, default="writer_1", help="Writer ID for LakePublisher")
-    parser.add_argument("--flush-interval", type=float, default=None, help="Batch flush interval in seconds")
-    parser.add_argument("--max-batch-rows", type=int, default=None, help="Maximum rows per publication batch")
-    parser.add_argument("--max-queue-size", type=int, default=10000, help="Max bounded queue size")
-    parser.add_argument("--mock", action="store_true", help="Run with MockStreamer generating synthetic ticks")
-    parser.add_argument("--fail-immediately", action="store_true", help="Exit immediately with returncode 1 (for supervisor flapping chaos)")
-    parser.add_argument("--drain-delay", type=float, default=0.0, help="Artificial delay during shutdown drain in seconds")
-    parser.add_argument("--ticks-per-sec", type=float, default=50.0, help="Tick production rate in mock mode")
+def _run_streamer(engine, lake_root=None) -> int:
+    """Run the engine until a signal, mapping the outcome to an exit code.
 
-    args, _ = parser.parse_known_args()
-
-    if args.fail_immediately:
-        sys.exit(1)
-
-    lake_root = Path(args.lake_root).resolve() if args.lake_root else None
-    engine = StreamingEngine(
-        lake_root=lake_root,
-        writer_id=args.writer_id,
-        flush_interval=args.flush_interval,
-        max_batch_rows=args.max_batch_rows,
-        max_queue_size=args.max_queue_size,
-        mock_mode=args.mock,
-        drain_delay=args.drain_delay,
-        mock_ticks_per_sec=args.ticks_per_sec,
-    )
+    Exit codes (imported by the supervisor, SCHED-02/04):
+    ``0`` clean drain, ``EXIT_DRAIN_FAILED`` accepted ticks were lost,
+    ``EXIT_START_FAILED`` the engine never reached ingestion.
+    """
 
     async def _async_main():
         stop_event = asyncio.Event()
@@ -751,10 +781,70 @@ def main():
             except asyncio.CancelledError:
                 pass
 
+        if engine_task in done and not stop_event.is_set():
+            # The engine finished on its own: surface whatever ended it.
+            await engine_task
+
     try:
         asyncio.run(_async_main())
+    except DrainFailedError as exc:
+        notify_detached(DRAIN_FAILED, detail=str(exc))
+        logger.error("Streaming engine drained unsaved work: %s", exc)
+        return EXIT_DRAIN_FAILED
     except KeyboardInterrupt:
         logger.info("Streaming Engine process stopped.")
+        return 0
+    except Exception as exc:
+        notify_detached(
+            SESSION_START_FAILED,
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+        logger.exception("Streaming engine failed to start")
+        return EXIT_START_FAILED
+    return 0
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Capital.com Tick Streaming Engine (weekdays 04:00-20:00 ET)")
+    parser.add_argument("--lake-root", type=str, default=None, help="Path to tick lake root")
+    parser.add_argument("--writer-id", type=str, default="writer_1", help="Writer ID for LakePublisher")
+    parser.add_argument("--flush-interval", type=float, default=None, help="Batch flush interval in seconds")
+    parser.add_argument("--max-batch-rows", type=int, default=None, help="Maximum rows per publication batch")
+    parser.add_argument("--max-queue-size", type=int, default=10000, help="Max bounded queue size")
+    parser.add_argument("--mock", action="store_true", help="Run with MockStreamer generating synthetic ticks (never subscribes; exempt from the window gate)")
+    parser.add_argument("--fail-immediately", action="store_true", help="Exit immediately with returncode 1 (for supervisor flapping chaos)")
+    parser.add_argument("--drain-delay", type=float, default=0.0, help="Artificial delay during shutdown drain in seconds")
+    parser.add_argument("--ticks-per-sec", type=float, default=50.0, help="Tick production rate in mock mode")
+
+    args, _ = parser.parse_known_args()
+
+    if args.fail_immediately:
+        sys.exit(EXIT_START_FAILED)
+
+    allowed, window_message = check_ingestion_window(mock_mode=args.mock)
+    if not allowed:
+        logger.error("Refusing to start outside the ingestion window (weekdays 04:00-20:00 ET): %s", window_message)
+        print(
+            "Refusing to start: outside the ingestion window (weekdays 04:00-20:00 ET). "
+            f"{window_message}",
+            file=sys.stderr,
+        )
+        sys.exit(EXIT_OUTSIDE_WINDOW)
+
+    lake_root = Path(args.lake_root).resolve() if args.lake_root else None
+    engine = StreamingEngine(
+        lake_root=lake_root,
+        writer_id=args.writer_id,
+        flush_interval=args.flush_interval,
+        max_batch_rows=args.max_batch_rows,
+        max_queue_size=args.max_queue_size,
+        mock_mode=args.mock,
+        drain_delay=args.drain_delay,
+        mock_ticks_per_sec=args.ticks_per_sec,
+    )
+
+    sys.exit(_run_streamer(engine, lake_root=lake_root))
 
 
 if __name__ == "__main__":

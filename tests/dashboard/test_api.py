@@ -100,7 +100,7 @@ def test_api_candles_historical_source(api_test_server):
 
 
 def test_api_candles_streaming_source(api_test_server):
-    """GET /api/candles with source=streaming queries streaming.duckdb."""
+    """GET /api/candles with source=streaming queries the tick lake."""
     resp = requests.get(f"{api_test_server}/api/candles?symbol=NVDA&tf=1m&limit=5&source=streaming")
     assert resp.status_code == 200
     data = resp.json()

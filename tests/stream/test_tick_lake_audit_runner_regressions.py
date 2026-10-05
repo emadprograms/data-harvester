@@ -295,13 +295,18 @@ def test_runner_cli_overrides_env_and_reaches_engine(tmp_path, monkeypatch):
     ])
     monkeypatch.setenv("STREAM_FLUSH_INTERVAL_SECONDS", "3.5")
     monkeypatch.setenv("STREAM_MAX_BATCH_ROWS", "321")
+    # Pin the clock: `main()` refuses to start outside the weekday 04:00-20:00 ET window.
+    monkeypatch.setenv("STREAM_NOW_OVERRIDE", "2026-10-07T12:00:00")
 
     original_run = runner_module.asyncio.run
     monkeypatch.setattr(runner_module.asyncio, "run", lambda coroutine: coroutine.close())
     try:
-        runner_module.main()
+        with pytest.raises(SystemExit) as exit_info:
+            runner_module.main()
     finally:
         monkeypatch.setattr(runner_module.asyncio, "run", original_run)
+
+    assert exit_info.value.code == 0
 
     assert captured["flush_interval"] == 4.25
     assert captured["max_batch_rows"] == 2345
