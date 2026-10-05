@@ -2,15 +2,15 @@
 gsd_state_version: "1.0"
 milestone: v5.0
 milestone_name: DuckDB-Free Tick-Only Parquet
-status: planning
-last_updated: "2026-10-05T07:44:47.827Z"
+status: handoff
+last_updated: "2026-10-05T15:40:00.000Z"
 last_activity: 2026-10-05
 progress:
-  total_phases: 0
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 4
+  completed_phases: 3
+  total_plans: 4
+  completed_plans: 3
+  percent: 75
 ---
 
 # Project State: Data Harvester
@@ -27,9 +27,9 @@ See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 Phase: 49 — Final Gate, Deletion & Closure (owner's machine)
 Plan: — (handoff prepared; the agent cannot run MIG-01..03, RMV-05 or CO-03)
 Status: Phases 46, 47 and 48 complete. Full offline suite 988 passed. Remaining: owner runs the migration gate (MIG-01/02/03), deletes the two `.duckdb` files (RMV-05), and writes the single completion report (CO-03) — then v5.0 stops. The owner handoff is `docs/operations/phase49_migration_runbook.md`, rehearsal-tested end to end in the sandbox (all six stages, re-run idempotence, tamper refusal, symbol purge).
-Last activity: 2026-10-05 — Phase 48 closed (988 passed): disk-DB references cleaned, crypto streaming removed, docs/README rewritten for Parquet-only storage; full offline suite 872 passed with 4 host-load timing flakes (3 timing gates plus the pre-existing `test_off_loop_event_loop_responsiveness`).
+Last activity: 2026-10-05 — Phase 48 closed and Phase 49 handed off: SYMB-01 made `_control/registry.json` the single symbol authority at both the callback boundary and the add-symbol UI, CO-01 recorded the disposition of every removed/retargeted test, CO-02 proved the candle engine unchanged, and the owner runbook was rehearsed end to end. Full offline suite **988 passed** (no failures, no xfails).
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███████░░░] 75% (code phases 46–48 of 46–49; Phase 49 is owner-run)
 
 ## Accumulated Context
 
@@ -43,7 +43,7 @@ Progress: [░░░░░░░░░░] 0%
 - **Phases 46–49, numbered in execution order (renumbered 2026-10-05).** The former Phase 46 (migration gate) is now Phase 49; the former Phase 47 (rewiring) is now Phase 46. Code phases 46-48 run in this checkout; the owner-machine gate runs last.
 - **Sequencing:** code phases 46-48 need no `data/` directory. The legacy migration verify and the deletion both happen in Phase 49, on the owner's machine, at the end.
 - **Owner actions only:** the agent never copies, exports, archives or deletes the owner's `.duckdb` files.
-- **Data sources:** Capital.com for live ticks; Databento for gap repair, writing into the lake. Massive/Polygon, Yahoo, Binance and Discord are removed with the bar subsystem.
+- **Data sources:** Capital.com for live ticks; Databento for gap repair, writing into the lake. Massive/Polygon, Yahoo and Binance are removed with the bar subsystem; Discord is **retained** for streamer notifications (see below).
 - **Symbols:** exactly 19 approved equities — AAPL, ADBE, AMD, AMZN, APP, AVGO, BABA, GOOGL, META, MSFT, MU, NDAQ, NVDA, ORCL, PANW, QCOM, SHOP, TSLA, TSM. `_control/registry.json` is the single authority.
 - **Schedule:** ingestion 04:00–20:00 ET (Mon–Fri); compaction unattended in the closed interval.
 - **Remove the unused replay subsystem (owner decision, 2026-10-05):** `src/storage/replay.py` (819 lines), its 693 lines of tests, its exports, and the two `create_replay_*` methods on `TickLakeReader`. It was built in v4.3 Phase 42 against `PROJECT.md`'s explicit out-of-scope placement of market-rewind, has no UI, no API endpoint and no runner integration, and was never requested by the owner.
@@ -61,20 +61,36 @@ Progress: [░░░░░░░░░░] 0%
 
 ### Pending Todos
 
-- Execute Phase 46 test-driven: research, write failing tests, implement, verify.
+- Nothing on the agent side. Phase 49 is owner-run and its procedure is
+  `docs/operations/phase49_migration_runbook.md`: run the six-stage migration gate,
+  delete `data/historical.duckdb` and `data/streaming.duckdb` (no retention), write the
+  single completion report, stop.
 
 ### Blockers/Concerns
 
-- **Legacy file access:** only Phase 49 needs the owner's machine; Phases 46-48 run entirely in this checkout.
-- **Repo B contract:** resolved 2026-10-05 — consumers read the Parquet `ticks/` tree with their own duckdb or pyarrow. Only a consumer of the legacy `.duckdb` files themselves would be affected, and none is known.
+- **Owner-machine access:** only Phase 49 needs the owner's Mac; everything the agent can
+  do in this checkout (Phases 46–48) is complete and pushed.
+- **Partially verified by design:** the runbook's commands were rehearsed against a
+  synthetic legacy database, not the owner's real 8.9M-row bar store; the acceptance table
+  in runbook §1 is what confirms the real migration.
 
 ## Session Continuity
 
 Last session: 2026-10-05
-Stopped at: the bar era is deleted — harvest CLI, bar providers, harvester job, dead tools and the replay subsystem are gone; Discord is transport-only. Guarded by `tests/test_bar_era_removal.py` (17 tests). The dashboard renders one Parquet-only view and `src/dashboard/server.py` imports no `src.database` module. `tests/dashboard` 86 passed; spectrum+dashboard+planning+docs 168 passed.
-Resume file: PLAN-MILESTONE-5.0.md
+Stopped at: v5.0 code phases complete at `a706406` (PR #9, branch
+`arena/01a10aa6-data-harvester`, clean tree). The lake is the only store, the bar era and
+the disk-database layer are gone (guarded by `tests/test_bar_era_removal.py` and
+`tests/test_disk_database_layer_removed.py`), the streamer runs Mon–Fri 04:00–20:00 ET with
+close-time drain and off-hours compaction, `_control/registry.json` is the symbol
+authority, and Discord reports session start/stop/failure. Full offline suite: 988 passed.
+Resume file: PLAN-MILESTONE-5.0.md (historical); live procedure in
+`docs/operations/phase49_migration_runbook.md`.
 
 ## Operator Next Steps
 
-- Then STOR-03/05: move the last legacy in-memory DuckDB tests onto the lake, drop the `client=` seam in `analytics.py`, delete `src/database` (part 2 falls out of Phase 47's file deletions).
-- Phase 49 (final gate + deletion) runs later, on the owner's machine.
+1. Stop the services (`./STOP_SERVICES.sh`), then work through
+   `docs/operations/phase49_migration_runbook.md` §1–§2: `--dry-run`, the six migration
+   stages, the acceptance table, then the duplicate-safe re-run.
+2. Only after the gate passes: `rm -f data/streaming.duckdb data/historical.duckdb`, start
+   the services and confirm `./VIEW_STATUS.sh` is healthy (runbook §3).
+3. Write the one completion report (runbook §5) and stop — v5.0 adds no further phases.

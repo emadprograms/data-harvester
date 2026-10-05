@@ -1,63 +1,33 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v5.0",
+  "milestone": "v5.0 \u2014 Parquet-Only Storage (DuckDB retained as query engine)",
   "phases": [
     {
-      "number": "37",
-      "name": "Preflight, Isolation & Fail-Closed Validator",
+      "number": "46",
+      "name": "Rewire Off the Disk Databases",
       "status": "complete"
     },
     {
-      "number": "38",
-      "name": "Migration Overlap & Provenance Verification",
+      "number": "47",
+      "name": "Remove Bar Subsystem & Dead Providers",
       "status": "complete"
     },
     {
-      "number": "39",
-      "name": "Reader Root Correctness & Executable Contract",
+      "number": "48",
+      "name": "Schedule, Compaction, Notifications & Test Disposition",
       "status": "complete"
     },
     {
-      "number": "40",
-      "name": "Durability Boundaries & Provider Gap Ledger",
-      "status": "complete"
-    },
-    {
-      "number": "43",
-      "name": "Performance Benchmarks (Pass 1)",
-      "status": "complete"
-    },
-    {
-      "number": "41",
-      "name": "Capacity Monitoring, Offline Compaction & Purge",
-      "status": "complete"
-    },
-    {
-      "number": "42",
-      "name": "Market Rewind & Replay Iterator Decision",
-      "status": "complete"
-    },
-    {
-      "number": "43",
-      "name": "Performance Qualification (Pass 2)",
-      "status": "complete"
-    },
-    {
-      "number": "44",
-      "name": "24-Hour Sustained Endurance Run",
-      "status": "pending"
-    },
-    {
-      "number": "45",
-      "name": "Candidate CI & Milestone Closeout Audit",
+      "number": "49",
+      "name": "Final Gate, Deletion & Closure (owner machine)",
       "status": "pending"
     }
   ],
   "next": {
-    "command": "/gsd:discuss-phase",
-    "label": "Discuss the first phase",
-    "reason": "Project initialized — plan your first phase"
+    "command": "phase-49-runbook",
+    "label": "Owner-run: migrate the legacy ticks, verify, delete the two .duckdb files, close",
+    "reason": "Phases 46-48 are complete; Phase 49 runs on the owner's machine (docs/operations/phase49_migration_runbook.md)"
   },
-  "updated_at": "2026-10-05T07:44:47.830Z"
+  "updated_at": "2026-10-05T15:45:00.000Z"
 }
