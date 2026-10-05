@@ -5,11 +5,11 @@
 // Host and API configuration
 const API_BASE = window.location.origin;
 
-// Application State - Historical Dashboard
+// Application State - Parquet Tick Lake Dashboard
 var currentSymbol = 'NVDA';
 var currentTimeframe = '1m';
 var currentLimit = 500;
-var currentDbSource = 'historical'; // Canonical Historical DB
+var currentDbSource = 'streaming'; // The Parquet tick lake is the only store
 var loadedCandles = [];
 var allSymbolsCoverage = [];
 var previousTicks = {};
@@ -22,10 +22,10 @@ if (typeof window !== 'undefined') window.currentStreamingLimit = currentStreami
 if (typeof global !== 'undefined') global.currentStreamingLimit = currentStreamingLimit;
 var loadedStreamingCandles = [];
 var streamingSymbolsList = [];
-var currentDashboardView = 'historical'; // 'historical' or 'streaming'
+var currentDashboardView = 'streaming'; // single view: the lake
 var currentStreamingTab = 'chart'; // 'chart', 'tape', or 'daemon'
 
-// TradingView Chart reference handles - Historical
+// TradingView Chart reference handles - Lake
 var tvChart = null;
 var candleSeries = null;
 var volumeSeries = null;

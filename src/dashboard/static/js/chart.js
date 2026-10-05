@@ -5,7 +5,7 @@
  *   1. Historical Chart Controller:
  *      - Dedicated to data/historical.duckdb (canonical minute_data archive).
  *      - Renders in US Eastern Time (NYSE: America/New_York, EST/EDT).
- *      - Controlled by initHistoricalChart() and loadHistoricalChart().
+ *      - Controlled by initStreamingChart() and loadStreamingChart().
  *   2. Streaming Chart Controller:
  *      - Dedicated to data/streaming.duckdb (live raw tick_data buffer).
  *      - Dynamic real-time candlestick aggregation from streaming ticks.
@@ -138,232 +138,6 @@ function findCandleByTime(time) {
 
 // ============================================================================
 // 1. DEDICATED HISTORICAL CHART CONTROLLER
-// ============================================================================
-
-function initHistoricalChart() {
-  const container = document.getElementById('tv-chart-container');
-  if (!container || tvChart) return;
-
-  tvChart = LightweightCharts.createChart(container, {
-    layout: {
-      background: { color: '#090d16' },
-      textColor: '#94a3b8',
-      fontSize: 11,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
-    },
-    grid: {
-      vertLines: { color: '#1e293b' },
-      horzLines: { color: '#1e293b' }
-    },
-    crosshair: {
-      mode: LightweightCharts.CrosshairMode.Normal,
-      vertLine: { color: '#475569', width: 1, style: 1 },
-      horzLine: { color: '#475569', width: 1, style: 1 }
-    },
-    localization: {
-      locale: 'en-US',
-      // Crosshair time badge: exchange-local label (backend `time_str` when the bar is known)
-      timeFormatter: (time) => {
-        if (typeof time !== 'number') return time ? String(time) : '--';
-        return candleTimeLabel(findCandleByTime(time) || { time });
-      }
-    },
-    timeScale: {
-      borderColor: '#334155',
-      timeVisible: true,
-      secondsVisible: false,
-      tickMarkFormatter: (time, tickMarkType, locale) => {
-        if (typeof time !== 'number') return null;
-        const dayStart = isExchangeDayStart(time);
-        switch (tickMarkType) {
-          case 0: return dayStart ? formatExchangeYear(time) : formatExchangeDay(time);
-          case 1: return dayStart ? formatExchangeMonth(time) : formatExchangeDay(time);
-          case 2: return dayStart ? formatExchangeDay(time) : formatExchangeClock(time);
-          case 3: return formatExchangeClock(time);
-          case 4: return formatExchangeClock(time, true);
-          default: return null;
-        }
-      }
-    },
-    rightPriceScale: {
-      borderColor: '#334155',
-      scaleMargins: { top: 0.1, bottom: 0.25 }
-    }
-  });
-
-  candleSeries = tvChart.addCandlestickSeries({
-    upColor: '#10b981',
-    downColor: '#f43f5e',
-    borderVisible: false,
-    wickUpColor: '#10b981',
-    wickDownColor: '#f43f5e'
-  });
-
-  volumeSeries = tvChart.addHistogramSeries({
-    priceFormat: { type: 'volume' },
-    priceScaleId: '',
-    scaleMargins: { top: 0.82, bottom: 0 }
-  });
-
-  // Crosshair move listener to update price legend
-  tvChart.subscribeCrosshairMove(param => {
-    if (!param || !param.time || !param.seriesData || !param.seriesData.get(candleSeries)) {
-      if (loadedCandles.length > 0) {
-        updateLegend(loadedCandles[loadedCandles.length - 1]);
-      }
-      return;
-    }
-    const data = param.seriesData.get(candleSeries);
-    const candleMatch = findCandleByTime(param.time);
-    updateLegend(candleMatch || data);
-  });
-
-  window.addEventListener('resize', resizeChart);
-  loadHistoricalChart();
-}
-
-/** Backward-compatible alias for existing tests */
-function initChart() {
-  initHistoricalChart();
-}
-
-function resizeHistoricalChart() {
-  const container = document.getElementById('tv-chart-container');
-  if (tvChart && container && container.clientWidth > 0) {
-    tvChart.applyOptions({
-      width: container.clientWidth,
-      height: container.clientHeight || 450
-    });
-  }
-}
-
-async function loadHistoricalChart() {
-  const loading = document.getElementById('chart-loading');
-  if (loading) loading.classList.remove('hidden');
-
-  const limitSelect = document.getElementById('chart-limit-select');
-  currentLimit = limitSelect ? parseInt(limitSelect.value) : 500;
-
-  try {
-    const res = await fetch(`${API_BASE}/api/historical/candles?symbol=${encodeURIComponent(currentSymbol)}&tf=${currentTimeframe}&limit=${currentLimit}`);
-    if (!res.ok) throw new Error("Failed to fetch historical candle data");
-    const data = await res.json();
-
-    loadedCandles = data.candles || [];
-    setChartTimezone(data.timezone);
-    updateTzBadge(chartTimezone);
-    candleTimeIndex = new Map(loadedCandles.map(c => [c.time, c]));
-
-    if (candleSeries && volumeSeries && tvChart) {
-      const chartCandles = loadedCandles.map(c => ({
-        time: c.time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close
-      }));
-
-      const chartVolumes = loadedCandles.map(c => ({
-        time: c.time,
-        value: c.volume || 0,
-        color: (c.close >= c.open) ? 'rgba(16, 185, 129, 0.4)' : 'rgba(244, 63, 94, 0.4)'
-      }));
-
-      candleSeries.setData(chartCandles);
-      volumeSeries.setData(chartVolumes);
-      tvChart.timeScale().fitContent();
-
-      if (loadedCandles.length > 0) {
-        updateLegend(loadedCandles[loadedCandles.length - 1]);
-      }
-    }
-
-    renderInspectorTable(loadedCandles);
-  } catch (err) {
-    console.error("Error loading historical chart data:", err);
-    showToast("Error loading historical chart candles", "error");
-  } finally {
-    if (loading) loading.classList.add('hidden');
-  }
-}
-
-/** Backward-compatible alias for existing callers */
-function loadChartData() {
-  loadHistoricalChart();
-}
-
-function updateLegend(candle) {
-  if (!candle) return;
-  const symEl = document.getElementById('legend-symbol');
-  const timeEl = document.getElementById('legend-time');
-  const openEl = document.getElementById('legend-open');
-  const highEl = document.getElementById('legend-high');
-  const lowEl = document.getElementById('legend-low');
-  const closeEl = document.getElementById('legend-close');
-  const volEl = document.getElementById('legend-volume');
-  const chgEl = document.getElementById('legend-change');
-  const srcEl = document.getElementById('legend-source');
-  const dbBadge = document.getElementById('legend-db-badge');
-
-  if (symEl) symEl.innerText = `${currentSymbol} (${currentTimeframe.toUpperCase()})`;
-  if (timeEl) timeEl.innerText = candleTimeLabel(candle);
-  if (openEl) openEl.innerText = Number(candle.open).toFixed(2);
-  if (highEl) highEl.innerText = Number(candle.high).toFixed(2);
-  if (lowEl) lowEl.innerText = Number(candle.low).toFixed(2);
-  if (closeEl) closeEl.innerText = Number(candle.close).toFixed(2);
-  if (volEl) volEl.innerText = Number(candle.volume || 0).toLocaleString();
-  
-  if (chgEl) {
-    const change = candle.close - candle.open;
-    const changePct = candle.open ? ((change / candle.open) * 100).toFixed(2) : 0;
-    chgEl.innerText = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePct}%)`;
-    chgEl.className = change >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold';
-  }
-
-  if (srcEl) {
-    srcEl.innerText = candle.source || 'MASSIVE';
-  }
-
-  if (dbBadge) {
-    dbBadge.innerText = "HISTORICAL DB";
-    dbBadge.className = "px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold";
-  }
-}
-
-function setTimeframe(tf) {
-  currentTimeframe = tf;
-  ['1m', '5m', '15m', '30m', '1h', '4h', '1d'].forEach(t => {
-    const btn = document.getElementById(`tf-${t}`);
-    if (btn) {
-      if (t === tf) {
-        btn.className = "px-2.5 py-1 rounded text-xs font-mono font-bold bg-emerald-600 text-white";
-      } else {
-        btn.className = "px-2.5 py-1 rounded text-xs font-mono text-slate-400 hover:text-white";
-      }
-    }
-  });
-  loadHistoricalChart();
-}
-
-function handleSymbolChange(sym) {
-  currentSymbol = sym.toUpperCase();
-  const select = document.getElementById('chart-symbol-select');
-  if (select) select.value = currentSymbol;
-  loadHistoricalChart();
-}
-
-function selectSymbolInChart(sym) {
-  handleSymbolChange(sym);
-  if (typeof switchDashboardView === 'function') {
-    switchDashboardView('historical');
-  }
-  if (typeof switchTab === 'function') {
-    switchTab('charts');
-  }
-}
-
-// ============================================================================
-// GAP SHADING CUSTOM SERIES PRIMITIVE (ISeriesPrimitive)
 // ============================================================================
 
 class GapShadingRenderer {
@@ -531,8 +305,9 @@ if (typeof global !== 'undefined') {
 // 2. DEDICATED STREAMING CHART CONTROLLER
 // ============================================================================
 
-let streamingCandleTimeIndex = new Map();
-
+// The historical chart (initHistoricalChart / loadHistoricalChart / resizeHistoricalChart
+// and their helpers) was removed in v5.0 along with the Historical Dashboard. The
+// streaming chart below is the only chart.
 function findStreamingCandleByTime(time) {
   if (streamingCandleTimeIndex.has(time)) return streamingCandleTimeIndex.get(time);
   return (loadedStreamingCandles || []).find(c => c.time === time) || null;
@@ -878,7 +653,6 @@ function selectSymbolInStreamingChart(sym) {
 
 // Global chart resizer
 function resizeChart() {
-  resizeHistoricalChart();
   resizeStreamingChart();
 }
 

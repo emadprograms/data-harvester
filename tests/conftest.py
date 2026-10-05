@@ -173,6 +173,19 @@ def _seed_isolated_session_tick_lake():
         publisher.publish_batch(ticks, batch_id="conftest_seed_batch", sequence=1)
 
 
+
+def _seed_isolated_session_registry():
+    """The lake's symbol registry lists the symbols the tick seed publishes."""
+    from src.storage.registry import SymbolRegistry, init_registry
+
+    init_registry(_SESSION_LAKE_ROOT)
+    registry = SymbolRegistry(root=_SESSION_LAKE_ROOT)
+    for sym in STANDARD_HISTORICAL_SYMBOLS:
+        registry.add_symbol(symbol=sym, display_name=sym, capital_ticker=sym)
+
+
+_seed_isolated_session_registry()
+
 _seed_isolated_session_tick_lake()
 
 

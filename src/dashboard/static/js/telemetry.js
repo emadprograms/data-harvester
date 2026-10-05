@@ -176,26 +176,6 @@ async function fetchSystemHealth() {
     if (!res.ok) return;
     const data = await res.json();
 
-    if (data.historical) {
-      if (data.historical.size_mb) {
-        const el = document.getElementById('kpi-hist-size');
-        if (el) el.innerText = `${data.historical.size_mb} MB`;
-      }
-      if (data.historical.market_data_rows) {
-        const el = document.getElementById('kpi-hist-rows');
-        if (el) el.innerText = Number(data.historical.market_data_rows).toLocaleString();
-      }
-      if (data.historical.min_timestamp && data.historical.max_timestamp) {
-        const dMin = data.historical.min_timestamp.slice(0, 7);
-        const dMax = data.historical.max_timestamp.slice(0, 7);
-        const el = document.getElementById('kpi-hist-span');
-        if (el) el.innerText = `${dMin} → ${dMax}`;
-      }
-      if (data.historical.symbols_count) {
-        const el = document.getElementById('kpi-symbols-count');
-        if (el) el.innerText = `${data.historical.symbols_count} symbols`;
-      }
-    }
     if (data.streaming) {
       const elRows = document.getElementById('kpi-stream-rows');
       if (elRows) elRows.innerText = Number(data.streaming.ticks_rows || 0).toLocaleString();

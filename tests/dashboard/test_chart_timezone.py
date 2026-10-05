@@ -55,19 +55,16 @@ def test_streaming_candles_timezone_metadata():
 
 def test_static_ui_nyse_timezone_indicators():
     """Frontend static files must contain explicit US/Eastern NYSE badges and headers."""
+    # The historical candle inspector (which carried the US/Eastern column
+    # headers and its own tz badge) is gone; the single-view chart is the only
+    # place times are rendered, and it renders them on the exchange clock.
     with open("src/dashboard/static/index.html", "r", encoding="utf-8") as f:
         html = f.read()
-    assert "legend-tz-badge" in html
-    assert "NYSE (ET)" in html
-    assert "Timestamp (US/Eastern)" in html
+    assert "view-streaming" in html
+    assert "view-historical" not in html
 
     with open("src/dashboard/static/js/chart.js", "r", encoding="utf-8") as f:
         js_chart = f.read()
     assert "tickMarkFormatter" in js_chart
     assert "timeFormatter" in js_chart
     assert " ET" in js_chart
-
-    with open("src/dashboard/static/js/tables.js", "r", encoding="utf-8") as f:
-        js_tables = f.read()
-    assert "Timestamp (US/Eastern)" in js_tables
-    assert "ET" in js_tables

@@ -127,7 +127,8 @@ class TestDashboardRestEndpoints:
             assert resp.status == 200
             html = resp.read().decode("utf-8")
             assert "TradingView" in html or "LightweightCharts" in html
-            assert "Raw OHLCV Candle Inspector" in html
+            assert "view-streaming" in html
+            assert "view-historical" not in html
 
     def test_endpoint_candles(self, dashboard_server):
         status, data = http_get(f"{dashboard_server}/api/candles?symbol=AAPL&tf=5m&limit=10&source=historical")
