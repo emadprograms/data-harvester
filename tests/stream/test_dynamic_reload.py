@@ -24,11 +24,11 @@ def make_mock_ws():
 
 
 def test_capital_exclusive_engine_configuration(tmp_path):
-    """Verify that by default the StreamingEngine targets Capital.com exclusively and does not enable Binance."""
+    """Verify the StreamingEngine targets Capital.com exclusively: there is no crypto provider."""
     engine = StreamingEngine(lake_root=tmp_path / "lake")
     try:
-        assert engine.enable_binance is False
-        assert engine.binance_streamer is None
+        assert not hasattr(engine, "enable_binance")
+        assert not hasattr(engine, "binance_streamer")
     finally:
         engine.stop()
 

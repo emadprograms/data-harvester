@@ -1,8 +1,8 @@
-# 🚀 Stock Data Harvester & Observability Engine (v4.1)
+# 🚀 Stock Data Harvester & Observability Engine (v5.0)
 
 A high-performance market data harvesting, 24/7 live tick streaming, and telemetry observability engine powered by a **Partitioned Parquet Tick Lake**, zero-lock multi-process concurrency, sub-100ms in-memory **DuckDB** analytical resampling, and interactive financial charting.
 
-**Current milestone:** v4.1 *Partitioned Parquet Lake Deep Testing & Hardening* (shipped 2026-10-03) — 122 new adversarial tests (edge cases, stress, fuzzing, backpressure, chaos, multi-process soak) bringing the offline suite to **688 passing tests** with the v4.0 lake architecture unchanged. All 17 v4.1 requirements have passing tests; the milestone audit records `gaps_found` for missing per-phase verification artifacts plus a small set of tracked follow-ups ([audit](.planning/v4.1-MILESTONE-AUDIT.md)).
+**Current milestone:** v5.0 — *Parquet-only storage (Option A)*. The partitioned Parquet tick lake is the **only** store: no runtime path creates a `.duckdb` file, DuckDB survives purely as the in-memory query engine behind `TickLakeReader`, and the streaming scope is the 19 approved US equities, weekdays 04:00–20:00 ET.
 
 ---
 
@@ -19,20 +19,21 @@ A high-performance market data harvesting, 24/7 live tick streaming, and telemet
 - **Versioned Symbol Registry**: Symbol lifecycle (activation, deactivation, purge fencing) is centrally managed in `_control/registry.json` with monotonic version bumping and cross-process reload signaling (`.stream_reload.signal`).
 - **Control Plane Layout**: `lake.json` (format metadata), `_staging/` (in-flight writes), `_maintenance/` (guard + compaction artifacts), `_migration/` (migration plan/state/verification), `_control/` (registry, writer status, publisher lock, receipts, intents), `_spool/` (optional durable spool).
 
-### 💾 Canonical Historical Database (`data/historical.duckdb`)
-- ~8.9 million canonical 1-minute OHLCV candles (spanning Oct 2024 to Sep 2026 across 40 symbols) with composite primary keys (`timestamp`, `symbol`), Source-Tiering quality overrides, and exchange-local alignment.
-- Fully isolated from the live streaming tick engine.
+### 💾 One Store, One Mental Model
+- Bars are gone: the 1-minute historical archive and its harvesters were deleted in v5.0, so there is a single data model — **raw ticks in the lake**, resampled on demand.
+- Candles are computed from ticks by the in-memory query engine; nothing is pre-aggregated on disk.
+- The symbol registry (`_control/registry.json`) is the only symbol authority (19 equities); removing a symbol fences it immediately and off-hours compaction drops its partitions.
 
 ### ⏱ UTC Storage Mandate & NYSE Exchange-Time Rendering
-- Every stored timestamp across Parquet files and DuckDB databases is pure UTC with microsecond precision.
-- Every DuckDB connection explicitly sets `SET TimeZone = 'UTC'` to prevent host OS timezone contamination.
+- Every stored timestamp in the lake is pure UTC with microsecond precision.
+- Every in-memory DuckDB session explicitly sets `SET TimeZone = 'UTC'` to prevent host OS timezone contamination.
 - **NYSE Exchange-Time Rendering**: The web UI, chart axes, crosshair badges, and CSV exports render exchange-local timestamps in `America/New_York` (EST/EDT), guaranteeing the 09:30 AM ET opening bell always renders at 09:30 ET regardless of browser or server location.
 
 ### 🌐 Observability Command Center Dashboard (`http://localhost:8420`)
 - Multi-threaded local HTTP server providing interactive TradingView Lightweight Charts (v4.1.3).
 - Real-time tick stream tape with bid, ask, and spread tracking.
-- Automated integrity auditing: 1-minute historical gap detection, stream quiet-interval checks, OHLCV geometric sanity validation, and cross-store price drift reconciliation.
-- Harvester automation console, live log streaming, and a symbol coverage matrix with quick actions.
+- Automated integrity auditing: stream quiet-interval checks, OHLCV geometric sanity validation, and the continuity / gap analysis that shades missing data on the chart.
+- Symbol management (add / fence) with streamer hot-reload, a live stream tape, and continuity ribbons for every monitored equity.
 
 ### 🛡️ Hardening & Verification (v4.1)
 - 6 phase-specific stress suites covering storage/publication edges, writer/runner lifecycles, registry concurrency, in-memory reader scaling, migration fuzzing, and multi-process soak/chaos.
@@ -198,30 +199,23 @@ The runtime knobs are constructor arguments, not (yet) environment variables:
 - **Start Dashboard Only**: `./tools/mac/start_dashboard.sh`
 - **Launchd Auto-Start**: `./tools/mac/install_startup.sh` / `./tools/mac/uninstall_startup.sh`
 
-### 🪟 Windows 24/7 Always-On Services
-- **Install & Start**: Run `tools\windows\INSTALL_STARTUP.bat` (or `tools\windows\install_services.ps1`)
-- **Check Status**: Run `tools\windows\VIEW_STATUS.bat` (or `tools\windows\status_services.ps1`)
-- **Stop Services**: Run `tools\windows\STOP_SERVICES.bat` (or `tools\windows\stop_services.ps1`)
-- **Uninstall**: Run `tools\windows\UNINSTALL_STARTUP.bat` (or `tools\windows\uninstall_services.ps1`)
-
 ### ⚡ Concurrency & Multi-Process Validation
-Validate high-concurrency invariants (zero DuckDB file-lock errors, zero Parquet footer corruption, writer event-loop lag < 20ms, dashboard & Repo B p95 latency < 100ms):
+Validate high-concurrency invariants (zero reader I/O lock errors, zero Parquet footer corruption, writer event-loop lag < 20ms, dashboard & Repo B p95 latency < 100ms):
 ```bash
 python tools/validate_concurrency.py
 ```
 Options: `--ticks` (default 6000), `--lake-root`, `--dashboard-requests` (default 160), `--repo-b-iterations` (default 60), `--output-json`, `--host`, `--port`.
 
-### 🔍 Data Integrity Audit
-Run full verification of historical databases and the Partitioned Parquet Tick Lake:
+### 🔍 Lake Audit & Environment Preflight
 ```bash
-# Audits tick lake and historical database
-python tools/audit_database_integrity.py --lake-only
+# Audit lake integrity (partition inventory, schema, orphan/gap checks)
+python tools/migrate_streaming_to_parquet.py audit-lake --lake-root data/tick_lake
 
-# Or audit with default resolution
-python tools/audit_database_integrity.py
+# Verify the local environment before starting the streamer
+python tools/preflight.py
 ```
 
-### 🧗 Hardening & Chaos Suites (v4.1)
+### 🧗 Hardening & Chaos Suites
 ```bash
 pytest tests/storage/test_storage_edge_cases.py -v    # path traversal, schema edges, publication collisions (36)
 pytest tests/stream/test_lake_runner_stress.py -v     # micro-batch stress, shutdown drain, disk-full backoff (14)
@@ -232,7 +226,7 @@ pytest tests/integration/ -v                          # multi-process soak + cha
 ```
 
 ### 🧪 Running Tests
-Run the entire offline test suite (**688 tests** as of v4.1, excluding 8 live/performance-marked tests):
+Run the entire offline test suite (live and performance suites are marked and can be excluded):
 ```bash
 pytest tests/ -m "not live and not performance" -v
 ```
@@ -254,7 +248,6 @@ pytest tests/integration/ -v   # Multi-process concurrency, soak, and chaos test
 |---|---|
 | [docs/operations/tick_lake_operations_guide.md](docs/operations/tick_lake_operations_guide.md) | Production operations: architecture, configuration, service management, compaction, migration, disaster recovery |
 | [docs/contracts/repo_b_tick_lake_contract.md](docs/contracts/repo_b_tick_lake_contract.md) | Read-only integration contract for downstream consumers (Repo B) |
-| [docs/windows_service_setup.md](docs/windows_service_setup.md) | Windows Task Scheduler setup, auto-reload, and troubleshooting |
 | [docs/plans/partitioned-parquet-tick-lake.md](docs/plans/partitioned-parquet-tick-lake.md) | Historical design plan that produced the v4.0 lake (implemented) |
 | [docs/plans/tick-lake-test-first-remediation.md](docs/plans/tick-lake-test-first-remediation.md) | Historical test-first remediation plan (executed across v4.0/v4.1) |
 | [.planning/v4.1-MILESTONE-AUDIT.md](.planning/v4.1-MILESTONE-AUDIT.md) | Independent v4.1 audit: verdict, requirement cross-reference, integration findings, tech debt |
@@ -265,4 +258,4 @@ pytest tests/integration/ -v   # Multi-process concurrency, soak, and chaos test
 ---
 
 ## 📜 Milestones & Roadmap
-Full details on shipped milestones (v1.0, v2.0, v3.0, v4.0, v4.1) are tracked in [.planning/MILESTONES.md](.planning/MILESTONES.md). The current state is v4.1 shipped on 2026-10-03, with its audit verdict (`gaps_found`) and follow-ups recorded in [.planning/v4.1-MILESTONE-AUDIT.md](.planning/v4.1-MILESTONE-AUDIT.md) and [.planning/ROADMAP.md](.planning/ROADMAP.md). No milestone is active.
+Full details on shipped milestones (v1.0 → v4.3) are tracked in [.planning/MILESTONES.md](.planning/MILESTONES.md). v5.0 is the active milestone: Parquet-only storage, a weekday 04:00–20:00 ET ingestion window, off-hours compaction, and macOS launchd scheduling. Progress lives in [.planning/STATE.md](.planning/STATE.md) and [.planning/REQUIREMENTS.md](.planning/REQUIREMENTS.md).

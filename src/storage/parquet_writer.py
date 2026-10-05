@@ -189,18 +189,7 @@ class TickLakeWriter:
             session = tick.get("session", "REG")
             ingest_id = tick.get("ingest_id", "")
         elif isinstance(tick, tuple):
-            if len(tick) == 9 and tick[8] in ("CAPITAL", "BINANCE", "SIMULATED", "MANUAL"):
-                # Bar tuple: (ts, sym, open, high, low, close, volume, session, source)
-                ts = tick[0]
-                symbol = tick[1]
-                price = tick[5]
-                volume = tick[6]
-                bid = None
-                ask = None
-                session = tick[7]
-                source = tick[8]
-                ingest_id = ""
-            elif len(tick) == 8:
+            if len(tick) == 8:
                 # Standard tick tuple: (ts, symbol, price, volume, bid, ask, source, session)
                 ts, symbol, price, volume, bid, ask, source, session = tick
                 ingest_id = ""

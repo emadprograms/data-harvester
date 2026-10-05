@@ -44,16 +44,10 @@ async def _cleanup_engine(engine, worker_task=None):
         pass
 
 
-@pytest.mark.parametrize("callback_kind", ["capital", "binance"])
-def test_real_callback_waits_for_queue_capacity_without_loss(tmp_path, callback_kind):
+def test_real_callback_waits_for_queue_capacity_without_loss(tmp_path):
     async def run():
         async def callback(price):
-            if callback_kind == "capital":
-                await engine._handle_capital_tick(_capital_tick(price))
-            else:
-                await engine._handle_binance_tick((
-                    TS.isoformat(), "BTCUSDT", price, 1.0, None, None, "BINANCE", "REG"
-                ))
+            await engine._handle_capital_tick(_capital_tick(price))
         lake_root = tmp_path / "callback-lake"
         engine = StreamingEngine(lake_root=lake_root, max_queue_size=1, flush_interval=0.01)
         engine.running = True

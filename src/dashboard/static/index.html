@@ -103,9 +103,9 @@
             <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Streaming Storage</div>
             <div class="mt-2 flex items-baseline justify-between">
               <span id="kpi-stream-rows" class="text-xl font-bold font-mono text-white">--</span>
-              <span class="text-xs font-mono text-indigo-400">streaming.duckdb</span>
+              <span class="text-xs font-mono text-indigo-400">tick_lake/</span>
             </div>
-            <div class="mt-1 text-[11px] text-slate-400">Raw ticks table (tick_data)</div>
+            <div class="mt-1 text-[11px] text-slate-400">Parquet tick partitions</div>
           </div>
 
           <div class="bg-slate-900/70 border border-slate-800/80 rounded-xl p-4">
@@ -234,7 +234,7 @@
             <!-- Canvas Container -->
             <div id="streaming-chart-container" class="w-full h-[450px] relative">
               <div id="streaming-chart-loading" class="absolute inset-0 bg-slate-950/70 backdrop-blur-sm z-10 flex items-center justify-center text-sm font-semibold text-indigo-400 gap-2">
-                <span class="live-pulse">⏳</span> Aggregating ticks from streaming DuckDB...
+                <span class="live-pulse">⏳</span> Aggregating ticks from the tick lake...
               </div>
             </div>
           </div>
@@ -309,7 +309,7 @@
                   </div>
                 </div>
                 <p id="stream-daemon-details" class="text-xs text-slate-400 mt-1">
-                  Process ID: <span class="font-mono text-slate-300">--</span> • Ingesting raw tick quotes to <code class="text-indigo-400 font-mono">data/streaming.duckdb</code>
+                  Process ID: <span class="font-mono text-slate-300">--</span> • Ingesting raw tick quotes to <code class="text-indigo-400 font-mono">data/tick_lake/</code>
                 </p>
               </div>
             </div>
@@ -335,7 +335,7 @@
                   </span>
                 </h3>
                 <p class="text-xs text-slate-400 mt-1">
-                  Exclusively manages live symbols monitored in <code class="text-indigo-400 font-mono">data/streaming.duckdb</code>. Removing a symbol strictly purges all associated tick data and hot-reloads the streamer daemon.
+                  Manages the live symbols subscribed by the streamer (<code class="text-indigo-400 font-mono">_control/registry.json</code>). Removing a symbol fences it immediately and hot-reloads the streamer; off-hours compaction then drops its tick partitions.
                 </p>
               </div>
             </div>

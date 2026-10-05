@@ -93,7 +93,6 @@ class SymbolEntry:
     display_name: str
     capital_ticker: Optional[str] = None
     databento_ticker: Optional[str] = None
-    binance_ticker: Optional[str] = None
     active: bool = True
     status: str = STATUS_ACTIVE  # "ACTIVE", "INACTIVE", "PENDING_PURGE"
     generation: int = 1
@@ -125,7 +124,6 @@ class SymbolEntry:
             "display_name": self.display_name,
             "capital_ticker": self.capital_ticker,
             "databento_ticker": self.databento_ticker,
-            "binance_ticker": self.binance_ticker,
             "active": self.active,
             "status": self.status,
             "generation": self.generation,
@@ -145,7 +143,6 @@ class SymbolEntry:
         disp = data.get("display_name") or data.get("name") or sym
         cap = data.get("capital_ticker") or data.get("epic")
         dbn = data.get("databento_ticker")
-        binance = data.get("binance_ticker")
         active = data.get("active", True)
         status = data.get("status", STATUS_ACTIVE)
         gen = int(data.get("generation", 1))
@@ -163,7 +160,6 @@ class SymbolEntry:
             display_name=disp,
             capital_ticker=cap,
             databento_ticker=dbn,
-            binance_ticker=binance,
             active=active,
             status=status,
             generation=gen,
@@ -457,7 +453,6 @@ class SymbolRegistry:
         display_name: Optional[str] = None,
         capital_ticker: Optional[str] = None,
         databento_ticker: Optional[str] = None,
-        binance_ticker: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         name: Optional[str] = None,
         epic: Optional[str] = None,
@@ -488,7 +483,6 @@ class SymbolRegistry:
                 display_name=disp,
                 capital_ticker=cap,
                 databento_ticker=databento_ticker,
-                binance_ticker=binance_ticker,
                 active=True,
                 status=STATUS_ACTIVE,
                 generation=gen,

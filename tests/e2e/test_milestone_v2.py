@@ -207,7 +207,7 @@ def test_concurrent_lake_writes_and_dashboard_reads(e2e_environment):
 
 
 def test_capital_exclusive_streamer_message_flow():
-    """Verify CapitalStreamer creates valid quote records without any Binance dependencies."""
+    """Verify CapitalStreamer creates valid quote records for the equity epics it is given."""
     ticks_captured = []
 
     def on_tick(tick):

@@ -1,26 +1,21 @@
 # Partitioned Parquet Tick Lake: Production Operations Guide
 
-**Document Version:** 1.1.0
-**Phase / Milestone:** Originally Phase 21 (P8) / Milestone v4.0 — revised for Milestone v4.1 (Phases 22–27, Deep Testing & Hardening)
-**Last reviewed:** 2026-10-03
+**Document Version:** 2.0.0
+**Phase / Milestone:** Originally Phase 21 (P8) / Milestone v4.0 — revised for Milestone v5.0 (Parquet-only storage)
+**Last reviewed:** 2026-10-05
 **Applicability:** Production Operators, Site Reliability Engineers, Platform Architects, Quant Analytics Teams (Repo B).
 
-**Changes in 1.1.0:** corrected the lake-root default (`<DATA_DIR>/tick_lake`, i.e. `data/tick_lake`), registry filename (`_control/registry.json`), migration state/artifact filenames (`_migration/plan.json`, `state.json`, `verification.json`, `_migration/staging/…/chunk_NNNNNN.parquet`), rollback patterns, and the true state of the environment-variable knobs; added the v4.1 hardening and verification section (§7).
+**Changes in 2.0.0:** v5.0 deleted the disk-database layer (`src/database/`) and the historical 1-minute bar archive. The lake is the only store; §2.6 documents the rule with no legacy backend, §3 is macOS-only (`launchd`), and §5.4 records the post-migration deletion of the legacy database files.
 
 ---
 
 ## 1. System Architecture & High-Concurrency Design
 
-### 1.1 The Legacy Concurrency Bottleneck
-In legacy architectures (Milestones v1.0–v3.0), both the ingestion engine (`StreamingEngine`) and all concurrent analytical consumers (the dashboard HTTP server, background integrity monitors, and downstream quantitative backtesting engines such as Repo B) connected directly to a single shared, disk-backed DuckDB database (`data/streaming.duckdb`).
+### 1.1 Why the Disk Database Went Away
+Milestones v1.0–v3.0 wrote every tick into a single disk-backed DuckDB file that every reader also opened, so DuckDB's exclusive file lock turned concurrency into collisions (`duckdb.IOException: Could not set lock on file`). v4.0 replaced that store with immutable Parquet micro-batches; **v5.0 finished the job** — the disk-database layer, the historical bar archive and its harvesters are deleted. No runtime path creates a `.duckdb` file any more.
 
-Because DuckDB enforces strict single-writer or exclusive process file locking on disk-backed `.duckdb` files, concurrent read-write access produced severe operational collisions:
-- Ingestion crashed with `duckdb.IOException: Could not set lock on file` whenever a secondary process attempted to write or checkpoint.
-- Dashboard queries suffered intermittent latency spikes and connection failures during high-throughput tick flushes.
-- Downstream quantitative backtesters (Repo B) could not read real-time market data without shutting down the live capture engine.
-
-### 1.2 The Decoupled Lake Architecture
-Milestone v4.0 eliminated this fundamental limitation by decoupling the ingestion writer from all query execution paths. The live tick database is completely replaced by immutable Parquet micro-batches organized in a Hive-partitioned directory hierarchy.
+### 1.2 The Lake Architecture
+Ingestion is decoupled from every query path. The writer publishes immutable Parquet micro-batches into a Hive-partitioned directory hierarchy, and each reader runs its own private in-memory DuckDB engine over those files.
 
 ```
                       ┌─────────────────────────────────────────┐
@@ -62,7 +57,7 @@ Milestone v4.0 eliminated this fundamental limitation by decoupling the ingestio
 ```
 
 ### 1.3 Key Architectural Tenets
-1. **Lock-Free Concurrency:** Readers never open or attach `streaming.duckdb` and never acquire POSIX locks against active storage. Every reader instantiates a private, thread-local in-memory DuckDB instance (`duckdb.connect(":memory:")`) and scans immutable files via `read_parquet(...)`.
+1. **Lock-Free Concurrency:** There is no shared database file to lock. Every reader instantiates a private, thread-local in-memory DuckDB instance (`duckdb.connect(":memory:")`) and scans immutable files via `read_parquet(...)`.
 2. **Atomic Publication Guarantee:** Ingestion writes to unique `.tmp` files inside `_staging/`. Only after Parquet footer serialisation, row-count validation, and schema checks succeed is the file moved to `ticks/` via an atomic POSIX filesystem rename (`os.replace`). Readers never encounter truncated files or corrupted footers.
 3. **Decoupled Control Plane:** Administrative metadata, active symbol registries, writer telemetry, and publication audit receipts reside in `_control/` as atomic, versioned JSON documents. Dynamic configuration changes never require locking data files.
 4. **Zero-Dependency Downstream Integration:** Quantitative pipelines (Repo B) require zero code imports from `data-harvester`. Standard DuckDB (`>= 1.0.0`) or PyArrow (`>= 14.0.0`) libraries read the Parquet partitions directly.
@@ -78,14 +73,14 @@ Only the variables below are read by the runtime (verified against `src/storage/
 | Variable Name | Default Value | Description | Production Guidance |
 |---|---|---|---|
 | `TICK_LAKE_ROOT` | `<DATA_DIR>/tick_lake` | Root path of the Partitioned Parquet Tick Lake. | **Mandatory in production.** Must point to the high-performance NVMe/SSD mount (e.g. `/Volumes/Crucial X9/data-harvester/data/tick_lake`). |
-| `DATA_DIR` | `<repo_root>/data` | Base directory for data harvester assets (`historical.duckdb`, `tick_lake/`, logs). | If set, `tick_lake` is resolved beneath it. |
+| `DATA_DIR` | `<repo_root>/data` | Base directory for data harvester assets (`tick_lake/`, logs, run artifacts). | If set, `tick_lake` is resolved beneath it. |
 | `DASHBOARD_PORT` (or `PORT`) | `8420` | TCP port for the Dashboard HTTP REST API and UI. | Fallback ports `8421`, `8422`, `8425` are attempted automatically when `8420` is busy. |
 | `CAPITAL_COM_X_CAP_API_KEY` / `CAPITAL_COM_IDENTIFIER` / `CAPITAL_COM_PASSWORD` | — | Capital.com WebSocket credentials. | Required for live streaming (loaded from `.env`). |
-| `SKIP_DISCORD` | unset | When `true`, suppresses Discord webhook notifications in `main.py`. | Useful for automated/offline runs. |
+| `SKIP_DISCORD` | unset | When `true`, suppresses Discord webhook notifications (`src/utils/discord.py`). | Useful for automated/offline runs; a webhook failure never blocks ingestion. |
 
 **Lake-root resolution precedence** (`resolve_tick_lake_root`): explicit argument → `TICK_LAKE_ROOT` → `DATA_DIR/tick_lake` → `/Volumes/Micron-E 0256 A/data-harvester/data/tick_lake` (if mounted) → `<repo_root>/data/tick_lake` → `StorageConfigError`. A broken `data` symlink raises `StorageConfigError` rather than silently falling back to internal storage.
 
-> ⚠️ **Documented-but-unwired knobs.** `STREAM_FLUSH_INTERVAL`, `STREAM_MAX_BATCH_ROWS`, `STREAM_MAX_QUEUE_SIZE`, and `STREAM_COMPRESSION` appear in `.env.example` but are **not read by the runtime as of v4.1** (grep-verified: no `getenv`/`environ` reader exists for them). The effective settings come from constructor defaults and are listed in §2.2. Wiring these variables is a tracked backlog item in `.planning/ROADMAP.md`.
+> ⚠️ **Documented-but-unwired knobs.** `STREAM_FLUSH_INTERVAL`, `STREAM_MAX_BATCH_ROWS`, `STREAM_MAX_QUEUE_SIZE`, and `STREAM_COMPRESSION` appear in `.env.example` but are **not read by the runtime** (grep-verified: no `getenv`/`environ` reader exists for them). The effective settings come from constructor defaults and are listed in §2.2.
 
 ### 2.2 Effective Runtime Defaults (constructor arguments)
 
@@ -166,31 +161,31 @@ Rows are stored ordered by `(timestamp ASC, ingest_id ASC)`.
 
 ### 2.6 Backend Selection and Fail-Closed Behaviour
 
-Read paths choose between the tick lake and the legacy `streaming.duckdb`
-database. The rule is asymmetric on purpose, and operators need to know which
-mode they are in:
+The lake is the only store, so there is nothing to fall back to:
 
 | Selection | Condition | Behaviour on failure |
 |---|---|---|
-| **Explicit lake** | `TICK_LAKE_ROOT` or `DATA_DIR` is set | **Fails closed.** Any fault — unresolvable root, missing or corrupt `lake.json`, maintenance active, publisher lock conflict — raises. It never falls back to `streaming.duckdb`. |
+| **Explicit lake** | `TICK_LAKE_ROOT` or `DATA_DIR` is set | **Fails closed.** Any fault — unresolvable root, missing or corrupt `lake.json`, maintenance active, publisher lock conflict — raises. |
 | **Autodetected lake** | Neither variable is set, and the lake looks populated (`ticks/`, `_control/writer_status.json`, or `lake.json` exists) | Uses the lake |
-| **Legacy** | Neither variable is set and the lake is absent or empty | Uses `streaming.duckdb`; explicitly supported historical and legacy paths remain available |
+| **No lake** | Neither variable is set and no lake can be resolved | `LakeUnavailableError`; the dashboard reports `tick lake unavailable` and the streamer refuses to start. No data is invented. |
 
 Implemented by `_get_lake_reader()` in `src/dashboard/analytics.py`, which loads
 and validates `lake.json` **before** choosing the reader, so an empty or damaged
-explicitly-selected lake cannot masquerade as "no data" and silently reopen the
-legacy tick database.
+explicitly-selected lake cannot masquerade as "no data".
 
-**Operational consequence:** once `TICK_LAKE_ROOT` is set, a dashboard read error
-is a genuine configuration or storage fault. Do not "fix" it by unsetting the
-variable — that switches to autodetection, which may quietly serve historical
-data from the legacy database instead.
+**Operational consequence:** a dashboard read error is a genuine configuration or
+storage fault. Fix the lake, do not look for another backend — v5.0 has none.
+
+> ℹ️ **API label.** The dashboard JSON payloads still carry `"database": "streaming"`.
+> That is the historical source label the tick lake has emitted since v4.0 — it is
+> not a selector and there is no second store behind it. Renaming it would break
+> Repo B consumers for cosmetic gain.
 
 ---
 
 ## 3. Production Service Management
 
-Data Harvester provides a dual-layer production management architecture: a multi-threaded service supervisor for active monitoring and auto-healing, combined with OS-native service scripts for macOS (`launchd`) and Windows (`Task Scheduler`).
+Data Harvester provides a dual-layer production management architecture on macOS: a multi-threaded service supervisor for active monitoring and auto-healing, combined with OS-native `launchd` agents for start-at-login.
 
 ### 3.1 Service Supervisor (`tools/service_supervisor.py`)
 The supervisor process coordinates background execution of the streamer and dashboard:
@@ -214,22 +209,7 @@ The supervisor process coordinates background execution of the streamer and dash
 
 Repository-root convenience wrappers (`START_SERVICES.sh`, `VIEW_STATUS.sh`, `STOP_SERVICES.sh`) delegate to the matching `tools/mac/` scripts. All Mac scripts resolve `./.venv/bin/python` first and fall back to `python3`.
 
-### 3.3 Windows Production Scripts (`tools/windows/`)
-
-| Script | Purpose | Command |
-|---|---|---|
-| `install_services.ps1` / `INSTALL_STARTUP.bat` | Installs Windows Scheduled Tasks running the supervisor under the configured Python executable with startup triggers. | `powershell -ExecutionPolicy Bypass -File tools/windows/install_services.ps1` |
-| `stop_services.ps1` / `STOP_SERVICES.bat` | Safely terminates all supervised Python processes and tasks. | `tools\windows\STOP_SERVICES.bat` |
-| `status_services.ps1` / `VIEW_STATUS.bat` | Displays Windows task status, active PIDs, and tail logs. | `tools\windows\VIEW_STATUS.bat` |
-| `uninstall_services.ps1` / `UNINSTALL_STARTUP.bat` | Unregisters all Data Harvester Scheduled Tasks. | `tools\windows\UNINSTALL_STARTUP.bat` |
-| `enable_git_autoupdate.ps1` | Documents/enables the supervisor's `.git/HEAD` auto-reload behaviour. | `powershell -File tools/windows/enable_git_autoupdate.ps1` |
-
-> [!IMPORTANT]
-> **Windows Python Executable Requirement:** Prefer `python.exe` when configuring services (the PowerShell installer does this automatically) rather than `pythonw.exe`, which suppresses console handles and can cause silent termination when modules expect standard I/O pipes. The legacy `INSTALL_STARTUP.bat` path launches the supervisor via WScript with `pythonw.exe`; avoid it if you need live supervisor logs.
->
-> The supervisor-launched processes inherit the shell environment; set `TICK_LAKE_ROOT` system-wide (or in `.env`) so both the streamer and dashboard resolve the same lake.
-
-### 3.4 Dynamic Symbol Management & Dynamic Reload
+### 3.3 Dynamic Symbol Management & Dynamic Reload
 1. **Adding a Symbol:**
    ```bash
    curl -X POST http://localhost:8420/api/streaming/symbols \
@@ -290,7 +270,7 @@ EOF
 - While present, extensive scans should be paused and background readers should back off.
 - Remove the guard only after compaction/purge completes and the partition tree is consistent.
 
-> ⚠️ **As of v4.1 the compaction runner itself is not implemented** — the guard and the procedure below are the documented operator protocol (P7a), tracked as backlog. Do not run compaction while the live writer owns `_control/publisher.lock`.
+> ⚠️ Do not run compaction while the live writer owns `_control/publisher.lock`. The runner takes `_maintenance/in_progress.json` and fences new publishers; off-hours scheduling (weekdays 20:00–04:00 ET) is handled by the supervisor (Phase 48).
 
 ### 4.3 Off-Hours Compaction Procedure (P7a Protocol)
 1. **Pre-requisite:** Live market capture is closed or paused; readers are notified.
@@ -319,9 +299,9 @@ When a symbol is marked `PENDING_PURGE`:
 
 ---
 
-## 5. Historical Data Migration Procedure
+## 5. Legacy Migration (One-Time, Owner-Run) and Store Deletion
 
-The historical migration utility (`tools/migrate_streaming_to_parquet.py`) provides zero-loss migration of legacy `streaming.duckdb` data into the Partitioned Parquet Lake.
+The historical migration utility (`tools/migrate_streaming_to_parquet.py`) provides zero-loss migration of legacy `streaming.duckdb` data into the Partitioned Parquet Lake. It is the **only** tool permitted to open a disk database (enforced by `tests/test_disk_database_layer_removed.py`).
 
 ### 5.1 The 4-Stage Lifecycle
 
@@ -397,13 +377,27 @@ python tools/migrate_streaming_to_parquet.py \
   rm -rf "<TICK_LAKE_ROOT>/_migration/staging"
   rm -f "<TICK_LAKE_ROOT>/_migration/state.json" "<TICK_LAKE_ROOT>/_migration/verification.json"
   ```
-  The source `streaming.duckdb` was opened read-only and remains 100% unaltered.
+  The source database was opened read-only and remains unaltered.
 - **After Publish Stage:** To roll back published historical chunks without affecting live streaming batches:
   ```bash
   find "<TICK_LAKE_ROOT>/ticks" -name "chunk_*.parquet" -delete
   rm -f "<TICK_LAKE_ROOT>/_control/receipts"/batch_migrated_*.json
   ```
   Live streaming batches (`batch_*.parquet`) remain active and unaffected.
+
+### 5.4 Deleting the Legacy Store
+
+Once verification passes, v5.0 keeps **no** second copy. The owner deletes the
+legacy files on the Mac as the last step of the milestone:
+
+```bash
+rm -f data/streaming.duckdb data/historical.duckdb
+```
+
+Do **not** export, convert or archive the historical 1-minute bars: that store is
+deliberately dropped so the project has one model (ticks) and one format
+(Parquet). Live ingestion never references these paths, so the deletion is safe
+at any time after `--mode verify` reports zero differences.
 
 ---
 
@@ -442,7 +436,7 @@ print(f"Cleaned {cleaned} orphaned staging files.")
      ```bash
      rm "<TICK_LAKE_ROOT>/_control/publisher.lock"
      ```
-  4. Restart the service supervisor (`./START_SERVICES.sh` on macOS, `tools\windows\STOP_SERVICES.bat` then `tools\windows\INSTALL_STARTUP.bat` on Windows).
+  4. Restart the service supervisor (`./tools/mac/start_services.sh`).
 
 ### 6.4 External Volume Handling (SSD Unmount / Disconnection)
 - **Symptom:** Streamer logs report `StorageConfigError: Storage mount missing: data symlink is broken at …` or `Lake root … does not exist or is not a directory`.
@@ -478,43 +472,26 @@ curl -s "http://localhost:8420/api/streaming/continuity?symbol=AAPL&days=1" | jq
 
 ---
 
-## 7. Verification & Hardening (Milestone v4.1)
+## 7. Verification & Hardening (Milestone v5.0)
 
-Milestone v4.1 added 122 adversarial tests over the v4.0 architecture. Operators should know what is now guaranteed by executable tests and how to re-run the relevant suites.
+The v5.0 rewrite deleted the disk-database layer, the historical bar archive and
+the replay subsystem. Two structural guards keep them deleted:
 
-> ⚠️ **Audit context.** The independent v4.1 milestone audit ([.planning/v4.1-MILESTONE-AUDIT.md](../../.planning/v4.1-MILESTONE-AUDIT.md)) confirms all 688 offline tests pass with **no data-corrupting defects**, but records `gaps_found` because no per-phase `VERIFICATION.md` artifacts were produced and because two suites cover production paths only partially: TEST-P23-02 never drives a real SIGINT/SIGTERM through `src/stream/runner.py`'s signal handlers, and TEST-P27-02's streamer chaos runs against `tools/synthetic_streamer.py` rather than the real `StreamingEngine`. Treat streamer crash-recovery behaviour as *inferred, not observed* until those gaps close (tracked in `.planning/ROADMAP.md`).
+| Guard | What it enforces |
+|---|---|
+| `tests/test_disk_database_layer_removed.py` | No module under `src/` or `tools/` may name the removed database API (`DuckDBClient`, `get_streaming_db_*`, `DEFAULT_*DB_PATH`, …). The sole exemption is `tools/migrate_streaming_to_parquet.py`. The `duckdb` package itself must survive — it is the in-memory query engine. |
+| `tests/test_bar_era_removal.py` | The bar pipeline (harvesters, `minute_data`, replay, `/api/harvester`) is gone, including frontend tokens and requirement entries. |
 
-### 7.1 Coverage Map
+Operational guarantees carried over from the lake hardening work (v4.1/v4.3 and
+re-verified under the lake-only fixtures in v5.0): zero-loss atomic publication,
+crash-intent recovery, malformed-tick quarantine, disk-full backoff, registry
+purge fencing, and multi-process reader concurrency with zero file locks.
 
-| Area | Test file | Focus |
-|---|---|---|
-| Storage foundation & publication | `tests/storage/test_storage_edge_cases.py` (36) | Path traversal, unicode/special symbols, corrupted `lake.json`, schema coercion, float extremes, null bitmasks, publication collisions, crashed intents |
-| Writer & runner lifecycle | `tests/stream/test_lake_runner_stress.py` (14) | 100k+ tick micro-batching, bounded-queue backpressure, shutdown mid-flush, drain timeout, disk-full/I-O backoff, malformed-tick quarantine |
-| Registry & dynamic reload | `tests/storage/test_registry_stress.py` (13) | Cross-process CRUD serialization, monotonic versioning, `PENDING_PURGE` fences, 500-touch signal storms, reload latency under polling |
-| Reader & analytics edges | `tests/storage/test_lake_reader_stress.py` (17) | 30+ concurrent in-memory readers, 1,000+ sequential queries without leaks, sparse partitions, DST/leap-year resampling, tape pagination |
-| Migration tooling | `tests/storage/test_migration_stress.py` (32) | Corrupt/partial sources, schema drift, crash interruption in all modes, `EXCEPT ALL` fuzzing with precision-mismatch detection |
-| Multi-process soak & chaos | `tests/integration/test_supervisor_chaos_soak.py` (10) | Sustained writer+reader soak, chaos-monkey termination of streamer/dashboard/supervisor, supervisor self-healing |
-
-### 7.2 Commands
-
-```bash
-# Full offline suite (688 tests as of v4.1; 8 live/performance tests deselected)
-pytest tests/ -m "not live and not performance"
-
-# Concurrency / multi-process contract validation (writer + dashboard + Repo B simulation)
-python tools/validate_concurrency.py                 # 6,000 synthetic ticks, 160 dashboard requests, 60 Repo B iterations
-python tools/validate_concurrency.py --output-json reports/concurrency.json
-
-# Integrity audit of lake + historical database
-python tools/audit_database_integrity.py --lake-only
-```
-
-### 7.3 Operator Notes on Timing-Sensitive Gates
-- Supervisor soak tests assert dashboard p95 latency under 100 ms and reader/debounce timing behaviour. On slow or heavily loaded hosts these can exceed the threshold; run them on the named reference machine described in `docs/plans/tick-lake-test-first-remediation.md` before treating a failure as a regression.
-- Do not tune thresholds or performance gates to make a run pass; record the environment (packages, hardware, dataset) with every run.
-- Multi-process chaos tests terminate child processes deliberately; they are safe with respect to production data because all fixtures operate inside temporary lake roots.
-
----
+> **Deferred to the owner (Phase 49):** the legacy migration itself and the
+> subsequent deletion of `data/streaming.duckdb` / `data/historical.duckdb` run
+> on the Mac against the real files. The agent never copies, converts or deletes
+> the owner's data. The 16.42 s/M-legacy rows-per-second reference baseline is
+> archived in `.planning/milestones/v4.3-MILESTONE-AUDIT.md`.
 
 ## 8. Document History
 
@@ -522,3 +499,4 @@ python tools/audit_database_integrity.py --lake-only
 |---|---|---|---|
 | 1.0.0 | 2026-10-03 | v4.0 (P8) | Initial production operations guide for the Partitioned Parquet Tick Lake. |
 | 1.1.0 | 2026-10-03 | v4.1 | Corrected defaults/paths/filenames to match shipped code; documented unwired `STREAM_*` knobs; added §7 verification & hardening and §8 history; documented compaction/migration status honestly. |
+| 2.0.0 | 2026-10-05 | v5.0 | Removed the legacy backend from §2.6, dropped Windows service scripts, rewrote §5 as a one-time owner-run migration plus store deletion, replaced §7 with the v5.0 structural guards. |

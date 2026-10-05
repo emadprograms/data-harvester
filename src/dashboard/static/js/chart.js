@@ -1,15 +1,9 @@
 /**
  * Data Harvester Dashboard - Chart Engine (TradingView Lightweight Charts)
  *
- * Dedicated Segregated Dual-Chart Architecture:
- *   1. Historical Chart Controller:
- *      - Dedicated to data/historical.duckdb (canonical minute_data archive).
- *      - Renders in US Eastern Time (NYSE: America/New_York, EST/EDT).
- *      - Controlled by initStreamingChart() and loadStreamingChart().
- *   2. Streaming Chart Controller:
- *      - Dedicated to data/streaming.duckdb (live raw tick_data buffer).
- *      - Dynamic real-time candlestick aggregation from streaming ticks.
- *      - Controlled by initStreamingChart() and loadStreamingChart().
+ * Single chart architecture: candles are aggregated from the Parquet tick lake
+ * (data/tick_lake/) and rendered in US Eastern Time (NYSE, America/New_York).
+ * Controlled by initStreamingChart() and loadStreamingChart().
  */
 
 const EXCHANGE_TIMEZONE = 'America/New_York';

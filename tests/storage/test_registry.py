@@ -197,7 +197,6 @@ def test_add_symbol_validation_and_fields(tmp_path):
         display_name="Microsoft Corp",
         capital_ticker="MSFT",
         databento_ticker="MSFT.XNAS",
-        binance_ticker=None,
         metadata={"asset_class": "equity"}
     )
 
@@ -206,7 +205,6 @@ def test_add_symbol_validation_and_fields(tmp_path):
     assert entry.display_name == "Microsoft Corp"
     assert entry.capital_ticker == "MSFT"
     assert entry.databento_ticker == "MSFT.XNAS"
-    assert entry.binance_ticker is None
     assert entry.active is True
     assert entry.status == STATUS_ACTIVE
     assert entry.generation == 1

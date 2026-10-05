@@ -398,7 +398,6 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 display_name = payload.get("display_name") or payload.get("name") or symbol
                 capital_ticker = payload.get("capital_ticker") or payload.get("epic")
                 databento_ticker = payload.get("databento_ticker")
-                binance_ticker = payload.get("binance_ticker")
                 asset_class = payload.get("asset_class")
                 metadata = payload.get("metadata") or {}
                 if asset_class and "asset_class" not in metadata:
@@ -410,7 +409,6 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                         display_name=display_name,
                         capital_ticker=capital_ticker,
                         databento_ticker=databento_ticker,
-                        binance_ticker=binance_ticker,
                         metadata=metadata,
                     )
                     touch_stream_reload_signal(root=reg.root)

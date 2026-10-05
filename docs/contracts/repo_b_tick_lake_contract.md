@@ -1,10 +1,12 @@
 # Repo B Tick Lake Read Contract
 
-**Document Version:** 1.3.0
-**Phase / Milestone:** Originally Phase 19 (P4) / Milestone v4.0 — reviewed and hardened in Milestone v4.1 (Phases 22–27) & Milestone v4.3 (Finding C43-07)
-**Last reviewed:** 2026-10-04
+**Document Version:** 1.4.0
+**Phase / Milestone:** Originally Phase 19 (P4) / Milestone v4.0 — reviewed and hardened in Milestone v4.1 (Phases 22–27), Milestone v4.3 (Finding C43-07) and Milestone v5.0 (Parquet-only storage)
+**Last reviewed:** 2026-10-05
 **Target Audience:** Repo B engineers, quantitative research teams, backtesting & simulation consumers.
 **Dependencies on `data-harvester`:** **NONE** (zero library imports required; uses standard `duckdb` and `pyarrow`).
+
+**Changes in 1.4.0 (Milestone v5.0):** the legacy `streaming.duckdb` store was migrated into the lake and deleted, so §1 now states plainly that no disk database exists; the historical bar archive is gone and candles are always resampled from ticks.
 
 **Changes in 1.3.0 (Milestone v4.3, Finding C43-07):** (1) Retracted §7.3 claim that DuckDB silently ignores removed files; verified and documented that DuckDB raises `duckdb.IOException` when an explicit file list contains a missing file. (2) Updated §7.1 with fail-fast root state validation and structured reader exceptions (`LakeUnavailableError`, `LakeCorruptedMetadataError`, `LakeIncompatibleSchemaError`). (3) Documented support for timezone-aware datetimes and half-open intervals (`inclusive_end`).
 
@@ -19,7 +21,7 @@
 Historically, downstream consumers (such as Repo B) attached `data/streaming.duckdb` directly. Because DuckDB disk-backed databases permit only a single writer process or exclusive locks, concurrent access by the ingestion streamer and external readers led to `duckdb.IOException: Could not set lock on file` collisions and process crashes.
 
 Under the Partitioned Parquet Tick Lake architecture:
-1. **Readers never open or attach `streaming.duckdb`:** The legacy tick database is completely decoupled from live reads.
+1. **There is no disk database to open (v5.0):** the legacy `streaming.duckdb` was migrated into the lake and deleted by its owner; `data-harvester` no longer creates a `.duckdb` file on any path. Nothing in this contract depends on one.
 2. **Readers use private in-memory DuckDB connections (`:memory:`):** Queries execute against finalized, immutable Parquet batch files via DuckDB's vectorized Parquet scanner (`read_parquet`).
 3. **Lock-Free Concurrency:** Reading requires zero disk locks. Writing ingestion daemons and arbitrary concurrent reader processes (or threads) operate in parallel with zero contention.
 4. **Zero `data-harvester` Code Imports:** Downstream repositories only need standard, publicly available packages (`duckdb >= 1.0.0` or `pyarrow >= 14.0.0`). No modules from `src/` are required.
@@ -465,3 +467,4 @@ atomic rename and never rewritten in place. The consequences for consumers are:
 | 1.1.0 | 2026-10-03 | v4.1 | Corrected control-plane filenames and chunk naming; documented lake root resolution and `lake.json`; added hardening guarantees (§7). |
 | 1.2.0 | 2026-10-04 | v4.2 (Phase 33) | Fixed symbol encoding rule and example, corrected the physical `symbol` type, fixed the PyArrow example, and documented snapshot semantics (§7.3). |
 | 1.3.0 | 2026-10-04 | v4.3 (C43-07) | Retracted §7.3 silent-partial claim (documented duckdb.IOException on missing files), updated §7.1 fail-fast root validation contract, and documented timezone-aware / half-open interval semantics. |
+| 1.4.0 | 2026-10-05 | v5.0 | Parquet-only storage: the legacy disk database no longer exists; candles are always resampled from ticks. |
