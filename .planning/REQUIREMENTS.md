@@ -57,10 +57,10 @@
 
 ### Phase 42: Market Rewind & Bounded Replay Iterator Decision (Package F - Decision Gated)
 
-- [ ] **RPLY-01**: Release decision gate for Market Rewind evaluates whether replay iterator is included in release scope: branch YES implements and qualifies replay iterator; branch NO documents omission and routes directly to Phase 43 Pass 2.
-- [ ] **RPLY-02**: If included, `src/storage/replay.py` provides a bounded chronological snapshot replay iterator over frozen file inventories yielding Arrow batches without full-history RAM materialization or large-OFFSET scans.
-- [ ] **RPLY-03**: If included, deterministic total ordering `(timestamp, symbol, ingest_id)` with stable tie-breaking and cursor resumption survives fresh process restarts.
-- [ ] **RPLY-04**: Portable reader contract remains fully verified and operational regardless of the replay iterator inclusion decision.
+- [x] **RPLY-01**: Release decision gate for Market Rewind evaluates whether replay iterator is included in release scope: branch YES implements and qualifies replay iterator; branch NO documents omission and routes directly to Phase 43 Pass 2.
+- [x] **RPLY-02**: If included, `src/storage/replay.py` provides a bounded chronological snapshot replay iterator over frozen file inventories yielding Arrow batches without full-history RAM materialization or large-OFFSET scans.
+- [x] **RPLY-03**: If included, deterministic total ordering `(timestamp, symbol, ingest_id)` with stable tie-breaking and cursor resumption survives fresh process restarts.
+- [x] **RPLY-04**: Portable reader contract remains fully verified and operational regardless of the replay iterator inclusion decision.
 
 ### Phase 44: 24-Hour Sustained Multi-Process Endurance Run (Package H)
 
@@ -119,10 +119,10 @@
 | CAPA-02 | Phase 41 | Complete |
 | CAPA-03 | Phase 41 | Complete |
 | CAPA-04 | Phase 41 | Complete |
-| RPLY-01 | Phase 42 | Pending |
-| RPLY-02 | Phase 42 | Pending |
-| RPLY-03 | Phase 42 | Pending |
-| RPLY-04 | Phase 42 | Pending |
+| RPLY-01 | Phase 42 | Complete |
+| RPLY-02 | Phase 42 | Complete |
+| RPLY-03 | Phase 42 | Complete |
+| RPLY-04 | Phase 42 | Complete |
 | ENDR-01 | Phase 44 | Pending |
 | ENDR-02 | Phase 44 | Pending |
 | ENDR-03 | Phase 44 | Pending |

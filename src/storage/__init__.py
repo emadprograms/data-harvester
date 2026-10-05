@@ -113,6 +113,17 @@ from src.storage.compaction import (
     purge_symbol_physical,
 )
 
+from src.storage.replay import (
+    ReplayError,
+    ReplaySnapshotInvalidError,
+    ReplaySnapshotRetiredError,
+    ReplayCursorCorruptedError,
+    ReplaySnapshot,
+    ReplayCursor,
+    TickLakeReplayIterator,
+    create_replay_snapshot,
+)
+
 __all__ = [
     # Config & Hierarchy
     "StorageConfigError",
@@ -205,5 +216,14 @@ __all__ = [
     "LakeCompactor",
     "recover_maintenance",
     "purge_symbol_physical",
+    # Replay Subsystem (Milestone 4.3 - Package F)
+    "ReplayError",
+    "ReplaySnapshotInvalidError",
+    "ReplaySnapshotRetiredError",
+    "ReplayCursorCorruptedError",
+    "ReplaySnapshot",
+    "ReplayCursor",
+    "TickLakeReplayIterator",
+    "create_replay_snapshot",
 ]
 
