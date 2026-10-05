@@ -45,8 +45,8 @@
 - [x] **PERF-01**: Reproducible benchmark datasets are generated with >=19 symbols, hot-symbol skew, and session/month windows at 1M and 10M rows, with recorded manifests (resolving C43-05).
 - [x] **PERF-02**: Background sampler continuously tracks peak RSS and CPU throughout benchmark execution, replacing point-in-time `max(start, end)` snapshots.
 - [x] **PERF-03**: Real receive-to-visible freshness is measured through the actual runner and an independent reader process (healthy load p99 <= configured flush interval + 1 second; resolving C43-04).
-- [x] **PERF-04**: Qualification harness strictly enforces upper limits: warm session 1m/5m queries p95 <100ms, warm month daily candles p95 <250ms, writer CPU >=50% reduction vs legacy baseline, and event loop lag p99 <20ms (resolving C43-03) — Pass 1 baseline established; final qualification evaluated in Pass 2.
-- [x] **PERF-05**: Two-pass qualification execution: Pass 1 measures raw-partition fan-out latency to inform Phase 41 compaction; Pass 2 re-qualifies performance after runtime or compaction changes (Pass 1 baseline recorded in `reports/benchmarks/pass1_baseline_measurement.json`).
+- [x] **PERF-04**: Qualification harness strictly enforces upper limits: warm session 1m/5m queries p95 <100ms, warm month daily candles p95 <250ms, writer CPU >=50% reduction vs legacy baseline, and event loop lag p99 <20ms (resolving C43-03) — Pass 1 baseline established; final qualification evaluated and passed in Pass 2 (recorded in `reports/benchmarks/pass2_qualification_report.json`).
+- [x] **PERF-05**: Two-pass qualification execution: Pass 1 measures raw-partition fan-out latency to inform Phase 41 compaction; Pass 2 re-qualifies performance after runtime or compaction changes (Pass 1 baseline in `pass1_baseline_measurement.json`; Pass 2 qualification in `pass2_qualification_report.json`).
 
 ### Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E)
 
@@ -113,8 +113,8 @@
 | PERF-01 | Phase 43 | Complete |
 | PERF-02 | Phase 43 | Complete |
 | PERF-03 | Phase 43 | Complete |
-| PERF-04 | Phase 43 | Complete (Pass 1) |
-| PERF-05 | Phase 43 | Complete (Pass 1) |
+| PERF-04 | Phase 43 | Complete |
+| PERF-05 | Phase 43 | Complete |
 | CAPA-01 | Phase 41 | Complete |
 | CAPA-02 | Phase 41 | Complete |
 | CAPA-03 | Phase 41 | Complete |
