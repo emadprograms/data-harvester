@@ -91,14 +91,14 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
     if lake_reader is None:
         _no_disk_database_fallback()
     return lake_reader.get_candles(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    start=start,
-                    end=end,
-                    limit=limit,
-                    date=date,
-                    hours=hours,
-                )
+        symbol=symbol,
+        timeframe=timeframe,
+        start=start,
+        end=end,
+        limit=limit,
+        date=date,
+        hours=hours,
+    )
 
 
 def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, db_source: str = None, date: str = None, hours: str = "extended") -> dict:
@@ -139,7 +139,7 @@ def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int
     return {"ticks": ticks, "count": len(ticks), "symbol": symbol or "ALL"}
 
 
-def get_stream_status(client=None) -> dict:
+def get_stream_status() -> dict:
     """
     Inspects writer status file or process table for src.stream.runner and checks recent tick throughput.
     """
@@ -223,7 +223,7 @@ MONITORED_19_SYMBOLS = [
 _AVAILABLE_WEEKS_CACHE = {"timestamp": 0.0, "weeks": []}
 
 
-def discover_available_weeks(client=None) -> list[dict]:
+def discover_available_weeks() -> list[dict]:
     """
     Discovers available trading weeks from lake partitions,
     grouped Monday-to-Friday in exchange-local time (America/New_York).
@@ -293,13 +293,13 @@ def get_streaming_continuity_analysis(
     if lake_reader is None:
         _no_disk_database_fallback()
     return lake_reader.get_streaming_continuity_analysis(
-                    days=days,
-                    symbol=symbol,
-                    include_extended=include_extended,
-                    week_start=week_start,
-                    target_date=target_date,
-                    week_offset=week_offset,
-                    target_week=target_week,
-                    end_date=end_date,
-                )
+        days=days,
+        symbol=symbol,
+        include_extended=include_extended,
+        week_start=week_start,
+        target_date=target_date,
+        week_offset=week_offset,
+        target_week=target_week,
+        end_date=end_date,
+    )
 

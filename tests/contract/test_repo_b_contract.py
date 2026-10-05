@@ -123,7 +123,8 @@ duckdb.connect = _spy
 
 reader = RepoBTickReader(payload["lake_root"])
 # "Opens charts and switches symbols": query each symbol in turn, as a UI
-# session would, while the legacy database stays locked by its owner.
+# session would. Every connection the documented reader opens must be private
+# and in-memory: v5.0 has no disk database to attach.
 per_symbol = {}
 for symbol in payload["symbols"]:
     candles = reader.query_candles(
@@ -139,7 +140,6 @@ for symbol in payload["symbols"]:
 print(json.dumps({
     "connections": opened,
     "per_symbol": per_symbol,
-    "legacy_path": payload["legacy_path"],
 }))
 """
 
@@ -487,45 +487,35 @@ def test_documented_maintenance_guard_example_detects_the_guard_file(lake, tmp_p
 
 
 # --------------------------------------------------------------------------
-# REPB-03 — legacy database locked; no accidental attachment
+# REPB-03 — no disk database, and readers open in-memory connections only
 # --------------------------------------------------------------------------
 
 
-def test_reader_works_while_the_legacy_database_is_exclusively_locked(lake, tmp_path):
-    """Exact results while `streaming.duckdb` is locked, and it is never attached."""
-    duckdb = pytest.importorskip("duckdb")
+def test_reader_opens_only_in_memory_connections_and_creates_no_database(lake, tmp_path):
+    """The documented reader is a pure Parquet consumer.
 
-    legacy_path = tmp_path / "streaming.duckdb"
-    # Hold an exclusive lock for the duration of the read, as the streamer does.
-    legacy = duckdb.connect(str(legacy_path))
-    try:
-        legacy.execute(
-            "CREATE TABLE IF NOT EXISTS ticks (symbol VARCHAR, price DOUBLE)"
-        )
-        legacy.execute("INSERT INTO ticks VALUES ('SENTINEL', 1.0)")
-        legacy.commit() if hasattr(legacy, "commit") else None
+    v5.0 removed the disk-database layer, so the contract is stronger than the old
+    "survives a locked legacy database" test: the reader must open private
+    ``:memory:`` sessions only, and a full read cycle must not create a ``.duckdb``
+    file anywhere on disk (the milestone's freeze semantics).
+    """
+    result = run_isolated(
+        SNIPPET_LOCKED_LEGACY_DB,
+        payload={
+            "lake_root": str(lake),
+            # Includes symbols whose directory names are percent-encoded.
+            "symbols": [SYMBOL, "BRK.B", "EUR/USD"],
+            "start": START_DATE.isoformat(),
+            "end": END_DATE.isoformat(),
+        },
+    )
 
-        result = run_isolated(
-            SNIPPET_LOCKED_LEGACY_DB,
-            payload={
-                "lake_root": str(lake),
-                # Includes symbols whose directory names are percent-encoded.
-                "symbols": [SYMBOL, "BRK.B", "EUR/USD"],
-                "start": START_DATE.isoformat(),
-                "end": END_DATE.isoformat(),
-                "legacy_path": str(legacy_path),
-            },
-        )
-    finally:
-        legacy.close()
-
-    # Every connection the documented reader opened was private and in-memory.
     assert result["connections"], "the reader opened no DuckDB connection"
     assert set(result["connections"]) == {":memory:"}, (
         f"the reader attached a database other than :memory: {result['connections']}"
     )
 
-    # Exact results for every symbol, unaffected by the locked legacy database.
+    # Exact results for every symbol.
     for symbol in (SYMBOL, "BRK.B", "EUR/USD"):
         expected = _oracle_candles("1d", symbol=symbol)
         got = result["per_symbol"][symbol]
@@ -534,57 +524,9 @@ def test_reader_works_while_the_legacy_database_is_exclusively_locked(lake, tmp_
             f"{symbol}: tick count disagrees with the oracle"
         )
 
-
-def test_reader_never_takes_the_legacy_lock(lake, tmp_path):
-    """The legacy database must still be locked by its owner after a read.
-
-    The intruder must be a *separate process*: DuckDB's file lock is not
-    contended by a second connection opened inside the holding process, so an
-    in-process attempt would prove nothing.
-    """
-    duckdb = pytest.importorskip("duckdb")
-
-    legacy_path = tmp_path / "streaming.duckdb"
-    owner = duckdb.connect(str(legacy_path))
-    owner.execute("CREATE TABLE ticks (symbol VARCHAR)")
-    try:
-        run_isolated(
-            SNIPPET_LOCKED_LEGACY_DB,
-            payload={
-                "lake_root": str(lake),
-                "symbols": [SYMBOL, "BRK.B", "EUR/USD"],
-                "start": START_DATE.isoformat(),
-                "end": END_DATE.isoformat(),
-                "legacy_path": str(legacy_path),
-            },
-        )
-
-        intruder = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import duckdb, sys\n"
-                "try:\n"
-                "    duckdb.connect(sys.argv[1]).close()\n"
-                "except Exception as exc:\n"
-                "    print(type(exc).__name__)\n"
-                "else:\n"
-                "    print('ACQUIRED')\n",
-                str(legacy_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        assert intruder.stdout.strip() != "ACQUIRED", (
-            "the legacy database was not still locked after the lake read; "
-            "something released the owner's lock"
-        )
-        assert intruder.stdout.strip(), (
-            f"the intruder produced no verdict\n{intruder.stdout}\n{intruder.stderr}"
-        )
-    finally:
-        owner.close()
+    # Freeze semantics: nothing on disk gained a database file, in the lake or beside it.
+    strays = sorted(str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*.duckdb*"))
+    assert strays == [], f"a read cycle created database files: {strays}"
 
 
 # --------------------------------------------------------------------------
