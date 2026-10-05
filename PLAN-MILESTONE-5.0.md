@@ -31,7 +31,7 @@ The owner's instruction (2026-10-05): **reduce clutter in this repo as much as p
 
 ## 3. Definition of done
 
-1. `data/historical.duckdb` and `data/streaming.duckdb` deleted by the owner immediately after Phase 46 verification; no code path can recreate or open one.
+1. `data/historical.duckdb` and `data/streaming.duckdb` deleted by the owner immediately after the Phase 49 final gate; no code path can recreate or open one.
 2. No reference to either file, or to the bar subsystem, remains in `src/`, `tools/`, `tests/`, `main.py` or the docs.
 3. Candles still compute correctly (behaviour unchanged — the engine was never touched).
 4. All 19 symbols collected and readable from the lake.
@@ -53,40 +53,45 @@ The owner's instruction (2026-10-05): **reduce clutter in this repo as much as p
 
 ## 5. Hard sequencing constraint
 
-The migration tool uses DuckDB to **read** the legacy `streaming.duckdb`. Therefore:
+The legacy tick store is read only by the migration tool, which the owner runs. Therefore:
 
-1. **First** — migrate and verify (Phase 46), while the legacy file still exists.
-2. **Only then** — delete the files (owner action).
+1. **Code work first** — Phases 46–48 need no `data/` directory and no owner machine.
+2. **Verification and deletion last** — Phase 49 runs on the owner's machine while the legacy file still exists. On a clean verify the owner deletes the files; **no retention or confirmation period**.
+3. **The agent never copies, exports, archives or deletes the owner's database files** — that is an owner action.
 
-Deleting before verifying destroys anything unmigrated. **The agent never copies, exports, archives or deletes the owner's `.duckdb` files** — that is an owner action.
+Nothing in Phases 46–48 depends on the migration having run.
 
 ## 6. Phases
 
-### Phase 46 — Baseline & Legacy Tick Migration Verification *(runs on the owner's machine)*
-Confirm the lake's current candle output as the reference. Run `plan → export → verify → verify-published → audit-lake` against the real `streaming.duckdb`; reconcile row counts per symbol and date. On a clean verify, the owner deletes both `.duckdb` files. **No retention or confirmation period** - the owner accepted permanent loss of the bar history on 2026-10-05.
+**Execution order equals phase order.** Renumbered 2026-10-05: the former Phase 46 (migration gate) is now **Phase 49**; the former Phase 47 (rewiring) is now **Phase 46**. Code phases come first because they are the only ones this checkout can execute.
 
-**Requires:** access to the real data — this checkout has no `data/` directory.
+**Working method (owner directive, 2026-10-05): test-driven.** For every phase: research → write failing tests → implement → verify → re-implement and re-verify on failure. A phase is not complete until its tests pass.
 
-### Phase 47 — Rewire Off the Disk Databases
-`runner.py` becomes lake-only (the DuckDB writer fallback is removed, not merely disabled). Symbol inventory comes from `_control/registry.json`. Dashboard and analytics drop historical routes/functions and serve the lake. `integrity.py` tick checks read the lake; the in-memory helper is relocated. `databento_backfill.py` publishes to the lake and reads the registry, honouring maintenance fences.
+### Phase 46 — Rewire Off the Disk Databases
+Record the lake's current candle output as the reference baseline (BASE-01) **before** touching code — characterization tests first. Then: `runner.py` becomes lake-only (the DuckDB writer fallback is removed, not merely disabled). Symbol inventory comes from `_control/registry.json`. Dashboard and analytics drop historical routes/functions and serve the lake as a single Parquet-only view. `integrity.py` tick checks read the lake; the in-memory helper is relocated out of `src/database`. `databento_backfill.py` publishes to the lake, reads the registry, and honours maintenance fences.
 
-**Exit:** no runtime import of a disk-backed DB factory; the dashboard works with both `.duckdb` files absent.
+**Exit:** no runtime import of a disk-backed DB factory; a startup regression proves it; the dashboard works with both `.duckdb` files absent.
 
-### Phase 48 — Remove the Bar Subsystem & Dead Providers
-Delete the harvest CLI, bar pipeline, provider clients, Discord, the harvester dashboard job, the dead tools, and the historical endpoints. Remove `yfinance` and `polygon-api-client`. Clean imports, `.env.example`, README and operations guide.
+### Phase 47 — Remove the Bar Subsystem & Dead Providers
+Delete the harvest CLI, bar pipeline, provider clients, the harvester dashboard job, the dead tools and the historical endpoints — and the unused replay subsystem. `src/utils/discord.py` is **rewritten, not deleted**: bar-era alert builders go, webhook plumbing stays for streamer notifications. Remove `yfinance` and `polygon-api-client`; keep `duckdb`. Clean imports, `.env.example`, README and operations guide.
 
 **Exit:** `grep -ri "historical.duckdb\|streaming.duckdb"` returns nothing in code or current docs; the app runs with no bar code present; the replay subsystem is gone.
 
-### Phase 49 — Schedule, Off-Hours Compaction & Closure
-Timezone policy module (`ZoneInfo("America/New_York")`, `[04:00, 20:00)`, injectable clock), supervisor lifecycle states, direct-runner guard so a manual start cannot bypass the window, admission stop at 20:00 with a single drain, and unattended idempotent compaction under one maintenance lease. Registry restricted to the 19 symbols with out-of-scope rejection. Test disposition, one completion report, stop.
+### Phase 48 — Schedule, Off-Hours Compaction, Notifications & Test Disposition
+Timezone policy module (`ZoneInfo("America/New_York")`, `[04:00, 20:00)`, weekdays, injectable clock), supervisor lifecycle states, direct-runner guard so a manual start cannot bypass the window, admission stop at 20:00 with a single drain, and unattended idempotent compaction under one maintenance lease. Discord notifications for session start/stop, **failed start**, restart and maintenance failure. Registry restricted to the 19 symbols with out-of-scope rejection. Every surviving test dispositioned retain/retarget/delete; candle behaviour re-verified against the Phase 46 baseline.
+
+### Phase 49 — Final Gate, Deletion & Closure *(runs on the owner's machine)*
+Run `plan → export → verify → verify-published → audit-lake` against the real legacy tick store; reconcile row counts per symbol and date; confirm that re-running publishes no duplicates. On a clean verify, the owner deletes both `.duckdb` files. One completion report, then **stop**.
+
+**Requires:** access to the real data — this checkout has no `data/` directory.
 
 ## 7. Risks
 
 | # | Risk | Mitigation |
 |---|---|---|
-| R1 | Deleting the legacy file before the migration is verified | Phase 46 is a hard gate; owner deletes, not the agent |
+| R1 | Deleting the legacy file before the migration is verified | Phase 49 is a hard gate; owner deletes, not the agent |
 | R2 | `src/database` deletion breaks an unnoticed import | Map every importer first; a startup regression proves normal paths need no disk DB |
-| R3 | `integrity.py` and `databento_backfill.py` are easy to miss — both read the legacy DB | Both are explicit Phase 47 items, not afterthoughts |
+| R3 | `integrity.py` and `databento_backfill.py` are easy to miss — both read the legacy DB | Both are explicit Phase 46 items, not afterthoughts |
 | R4 | Tests that construct disk DuckDBs | Disposition each: retarget to the lake, or delete with the feature |
 | R5 | Frontend changes are unverifiable here (8 tests skip without Node) | Keep frontend changes minimal; flag anything unverified |
 | R6 | Scope creep back toward full DuckDB removal | The owner rejected it; engine files are explicitly out of scope |
@@ -94,7 +99,7 @@ Timezone policy module (`ZoneInfo("America/New_York")`, `[04:00, 20:00)`, inject
 
 ## 8. Effort
 
-Roughly **3–5 focused days** of code work, plus one sitting on the owner's machine for Phase 46. Phase 48 is largely mechanical; Phase 47 carries the real risk; Phase 49 is new code but small.
+Roughly **3–5 focused days** of code work across Phases 46–48, plus one sitting on the owner's machine for Phase 49. Phase 47 is largely mechanical; Phase 46 carries the real risk; Phase 48 is new code but small.
 
 ---
 
