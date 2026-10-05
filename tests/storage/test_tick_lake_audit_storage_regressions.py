@@ -103,18 +103,22 @@ def test_maintenance_lock_serializes_with_publisher_and_fences_new_publishers(tm
     assert not (lake_root / "_maintenance" / "in_progress.json").exists()
 
 
-def test_explicit_legacy_backend_remains_available(tmp_path):
+def test_explicit_legacy_backend_is_removed(tmp_path, monkeypatch):
+    """Phase 46 (STOR-02): the db_path backend is gone, not merely disabled.
+
+    Inverted from `test_explicit_legacy_backend_remains_available`, which asserted
+    the legacy backend existed and is deleted with that backend in v5.0.
+    """
+    monkeypatch.delenv("TICK_LAKE_ROOT", raising=False)
+    monkeypatch.delenv("DATA_DIR", raising=False)
     legacy_db = tmp_path / "legacy" / "streaming.duckdb"
-    engine = StreamingEngine(db_path=str(legacy_db))
-    try:
-        assert engine.writer is None
-        assert engine.lake_root is None
-        assert engine.db_path == str(legacy_db)
-    finally:
-        engine.stop()
+    with pytest.raises(TypeError):
+        StreamingEngine(db_path=str(legacy_db))
+    assert not legacy_db.exists()
 
 
 def test_environment_selected_lake_failure_never_falls_back_to_streaming_duckdb(tmp_path, monkeypatch):
+    """Phase 46: a configured-lake failure propagates; no disk-database fallback exists."""
     lake_root = tmp_path / "configured-lake"
     monkeypatch.setenv("TICK_LAKE_ROOT", str(lake_root))
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "legacy-data"))
@@ -125,17 +129,14 @@ def test_environment_selected_lake_failure_never_falls_back_to_streaming_duckdb(
     def lake_failure(*args, **kwargs):
         raise RuntimeError("configured lake unavailable")
 
-    legacy_attempted = []
-    def forbidden_legacy(*args, **kwargs):
-        legacy_attempted.append((args, kwargs))
-        raise AssertionError("configured lake failure must not select streaming DuckDB")
-
     monkeypatch.setattr(writer_module, "TickLakeWriter", lake_failure)
-    monkeypatch.setattr(runner_module, "get_streaming_db_connection", forbidden_legacy)
+
+    # The legacy fallback machinery is gone, so it cannot be selected.
+    assert not hasattr(runner_module, "get_streaming_db_connection")
+    assert not hasattr(runner_module, "DEFAULT_STREAMING_DB_PATH")
 
     with pytest.raises(RuntimeError, match="configured lake unavailable"):
         StreamingEngine()
-    assert legacy_attempted == []
 
 
 def test_dashboard_lake_error_does_not_fall_back_to_streaming_duckdb(tmp_path, monkeypatch):
