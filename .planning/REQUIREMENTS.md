@@ -1,92 +1,84 @@
 # Requirements: Data Harvester
 
-**Defined:** 2026-10-04
-**Core Value:** Zero-cloud, zero-quota persistent market data ingestion and storage — capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
-**Milestone:** v4.3 Final Tick-Lake Implementation and Verification
+**Defined:** 2026-10-05
+**Core Value:** Zero-cloud, zero-quota persistent market data ingestion and storage — capture ticks reliably and serve them concurrently, with no locks and no quotas.
+**Milestone:** v5.0 DuckDB-Free Tick-Only Parquet
 
-**Source of truth for scope:** [`docs/plans/milestone-4.3-final-concurrency-closeout.md`](../docs/plans/milestone-4.3-final-concurrency-closeout.md) — Findings C43-01 through C43-12, Packages A through I (Phases 37–45).
+**Source of truth for scope:** [`PLAN-MILESTONE-5.0.md`](../PLAN-MILESTONE-5.0.md) — workstreams W0–W10, gates G1–G4.
 
-> **This milestone completes the implementation and verification of the partitioned Parquet tick lake.** Every requirement below is an assertion-bearing qualification claim. A requirement is *Complete* only when its executable evidence artifact exists and records `PASS` with zero required unresolved gates. Skips, xfails, or waivers on required gates are strictly rejected.
+> Every requirement below is a checkable statement about the shipped system. A requirement is **Complete** only when its stated evidence exists. Partial results, measured shortfalls and known limitations are recorded honestly — never rounded up.
 
 ---
 
-## v4.3 Requirements by Phase
+## v5.0 Requirements by Phase
 
-### Phase 37: Preflight, Test Isolation & Fail-Closed Validator (Package A)
+### Phase 46: Baseline Capture & Legacy Tick Migration Verification
 
-- [x] **VALD-01**: New fixtures, logs, and benchmark tools write only inside designated safe run directories outside tracked historical artifacts; an inherited production `DATA_DIR` / `TICK_LAKE_ROOT`, symlink alias, or unsafe output path fails closed before any write.
-- [x] **VALD-02**: The release report validator consumes an authoritative, independently declared required-gate inventory, rejecting `--allow-deferred` waivers on required FAIL or BLOCKED gates; missing, incomplete, or failing gates strictly fail closed.
-- [x] **VALD-03**: Table-driven report mutation tests demonstrate that the validator detects missing artifacts, directory inputs instead of files, zero latency, test count conservation errors, malformed schemas, and mutated metrics (resolving C43-06).
-- [x] **VALD-04**: Preflight environment characterization records candidate commit SHA, clean/dirty working tree, dependency versions, OS, hardware, filesystem, and explicit capability probes (local socket binding, subprocess lifecycle, process metrics, Node availability, public network).
+- [ ] **BASE-01**: Current oracle-verified behaviour is captured **once** on a fixed synthetic dataset — candle outputs for the DST / timestamp-tie / duplicate / null-volume edge-case matrix, plus query and tape latency. This is the reference the PyArrow implementation must match. It is a single recorded baseline, **not** a re-qualification campaign.
+- [ ] **MIG-01**: The legacy tick source (`data/streaming.duckdb`) is migrated into the Parquet lake with `plan → export → verify → verify-published → audit-lake` all completing, and row counts reconciled per symbol and per date.
+- [ ] **MIG-02**: Migration completes and is confirmed **before** any DuckDB removal begins. The agent never copies, exports, archives or deletes the owner's `.duckdb` files.
+- [ ] **MIG-03**: Re-running the migration over an overlapping or broader scope publishes no duplicate rows (source-coverage ledger).
 
-### Phase 38: Migration Overlap Protection & Provenance-Scoped Verification (Package B)
+### Phase 47: PyArrow Reader Core
 
-- [x] **MIGR-01**: Source-coverage ledger operates independently of run scope or query filters, preventing duplicate row publication on overlapping or subset/superset runs without payload deduplication (resolving C43-01).
-- [x] **MIGR-02**: Final publication verification inspects the published Parquet inventory against the frozen source using bidirectional `EXCEPT ALL`, scoped strictly to migration-owned inventory so legitimate concurrent live rows do not trigger verification failure (resolving C43-02 without xfail).
-- [x] **MIGR-03**: Complete-inventory integrity audit and whole-lake audit detect unowned, foreign, corrupted, or forged-provenance files across all lake namespaces.
-- [x] **MIGR-04**: Production cutover and rollback rehearsal executes through `MigrationHandoffCoordinator` and `ProcessSupervisor` under injected stalled drain, stopped supervisor, snapshot mismatch, publication failure, and post-cutover live data preservation.
+- [ ] **READ-01**: `TickLakeReader` serves all existing public methods under identical names and return shapes, implemented with PyArrow. The module contains no DuckDB import.
+- [ ] **READ-02**: Partition resolution and pruning behave as before — symbol/date predicates applied at path level, and no recursive scan of `_staging/`, `_maintenance/` or `_migration/`.
+- [ ] **READ-03**: Structured lake errors are preserved exactly (`LakeUnavailableError`, `LakeCorruptedMetadataError`, `LakeIncompatibleSchemaError`), with no silent fallback and no legacy backend.
+- [ ] **READ-04**: Tick reads (`query_ticks`, `get_tape`, `get_latest_tick`) preserve duplicate multiplicity, null volume, and deterministic ordering on `(timestamp, ingest_id)`.
+- [ ] **READ-05**: Work is bounded per symbol/day partition, so memory does not scale with total lake size.
 
-### Phase 39: Reader Root Correctness & Portable Executable Contract (Package C)
+### Phase 48: Arrow Resampling & Multiset Verification
 
-- [x] **READ-01**: The reader distinguishes uninitialized roots, lost mounts, corrupted metadata, or unreadable partitions from legitimate empty lakes, raising specific structured exceptions with zero silent fallback to legacy DuckDB.
-- [x] **READ-02**: Barrier-controlled snapshot race test captures the exact file list, removes an input file during execution barrier, and asserts either complete results or an explicit snapshot-unavailable error, never silent partial reads (resolving C43-07).
-- [x] **READ-03**: Published markdown reader contract examples execute in an isolated subprocess with zero internal `src` imports, verifying physical schema, types, nullability, and encoded symbols against the live lake.
-- [x] **READ-04**: Resampling correctness is verified against independent candle oracles across UTC/exchange date boundaries, DST shifts, leap years, null/zero volume semantics, and deterministic tie-breaking.
+- [ ] **CAND-01**: OHLCV resampling output is identical to the recorded baseline oracle for `1m`, `5m`, `15m`, `1h`, `1D` across DST transitions, leap years, UTC/exchange date boundaries, timestamp ties, exact duplicates, late arrivals, and null/zero volume.
+- [ ] **CAND-02**: Open/close selection uses the documented deterministic tie-break — sort by `(timestamp, ingest_id)`, then first/last — and high/low use max/min. Tie-breaking is proven by test, not asserted.
+- [ ] **VER-01**: Compaction and migration verification no longer use `EXCEPT ALL`. Equivalence is proven by multiset (Counter) comparison that preserves multiplicity, float precision and nulls.
+- [ ] **VER-02**: The independent oracle (`tests/support/lake_assertions.py`) remains free of application-reader imports and is the pass/fail authority for CAND-01 and VER-01.
+- [ ] **VER-03**: Compaction replacement is gated on multiset equivalence and preserves lineage; any mismatch blocks replacement and is reported.
 
-### Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D)
+### Phase 49: Dashboard, Analytics & Reader Contract
 
-- [x] **DURB-01**: Real OS runner lifecycle tests under SIGINT/SIGTERM verify `_shutdown_signal_handler` execution, cooperative worker queue drain, and clean process termination.
-- [x] **DURB-02**: Crash matrix kills the writer at admission, intent durability, staged fsync, final promotion, directory fsync, receipt durability, and acknowledgment, reconciling against an independent external ledger in a fresh process.
-- [x] **DURB-03**: Fake provider with sequence ledgers and controllable disconnect/reconnect records explicit visible gap start/end intervals and reports loss as unknown when unquantifiable.
-- [x] **DURB-04**: Guaranteed RAM-only loss boundary is verified and signed honestly as the guarantee limit; no unverified live zero-loss or power-loss claims are made.
+- [ ] **DASH-01**: `/api/historical/*` endpoints and their frontend callers are removed. Retained tick routes (`/api/stream/*`, symbols, coverage, continuity, integrity) are served by the PyArrow reader.
+- [ ] **DASH-02**: The chart renders tick-derived candles from the lake only. Dates predating tick capture return an honest empty state and never imply that bars were converted.
+- [ ] **DASH-03**: Tick-health integrity checks are preserved; bar-era and cross-store drift checks are removed.
+- [ ] **DASH-04**: The frontend removes historical navigation, the data-source selector, harvester controls, and stale database labels.
+- [ ] **CONT-01**: The Repo B contract is rewritten for pyarrow-only consumption with no DuckDB in any example, and its published examples execute in an isolated subprocess with zero `src` imports.
+- [ ] **CONT-02**: The owner confirms whether Repo B currently reads these files through DuckDB SQL; if so, the breaking change is coordinated before release (gate G1).
 
-### Phase 43: Initial & Re-run Performance Qualification (Package G - Pass 1 & Pass 2)
+### Phase 50: Removal
 
-- [x] **PERF-01**: Reproducible benchmark datasets are generated with >=19 symbols, hot-symbol skew, and session/month windows at 1M and 10M rows, with recorded manifests (resolving C43-05).
-- [x] **PERF-02**: Background sampler continuously tracks peak RSS and CPU throughout benchmark execution, replacing point-in-time `max(start, end)` snapshots.
-- [x] **PERF-03**: Real receive-to-visible freshness is measured through the actual runner and an independent reader process (healthy load p99 <= configured flush interval + 1 second; resolving C43-04).
-- [x] **PERF-04**: Qualification harness strictly enforces upper limits: warm session 1m/5m queries p95 <100ms, warm month daily candles p95 <250ms, writer CPU >=50% reduction vs legacy baseline, and event loop lag p99 <20ms (resolving C43-03) — Pass 1 baseline established; final qualification evaluated and passed in Pass 2 (recorded in `reports/benchmarks/pass2_qualification_report.json`).
-- [x] **PERF-05**: Two-pass qualification execution: Pass 1 measures raw-partition fan-out latency to inform Phase 41 compaction; Pass 2 re-qualifies performance after runtime or compaction changes (Pass 1 baseline in `pass1_baseline_measurement.json`; Pass 2 qualification in `pass2_qualification_report.json`).
+- [ ] **RMV-01**: `grep -r duckdb` returns no hits in `src/`, `tools/`, `main.py`, `tests/` or `requirements.txt`.
+- [ ] **RMV-02**: The bar subsystem is deleted — `main.py` harvest CLI, `src/data/harvester.py`, `src/data/normalizer.py`, `src/api/massive.py`, `src/api/yahoo.py`, `src/api/binance.py`, `tools/backfill_massive.py`, `tools/benchmark_baseline.py`, `tools/audit_database_integrity.py`, `src/dashboard/harvester_job.py`, `src/utils/discord.py`.
+- [ ] **RMV-03**: No code path can open or create a disk-backed DuckDB database; a startup regression proves it and would fail if one were reintroduced.
+- [ ] **RMV-04**: Removed dependencies (`duckdb`, `yfinance`, `polygon-api-client`) are gone; retained ones (`pyarrow`, `pandas`, `pytz`/`tzdata`, `websockets`, `requests`, `python-dotenv`, `psutil`, `pytest`) remain.
+- [ ] **RMV-05**: The owner deletes `data/historical.duckdb` and `data/streaming.duckdb` after Phase 46 confirmation.
+- [ ] **GAP-01**: Databento gap-fill publishes ticks into the Parquet lake, reads symbols from `_control/registry.json`, performs its already-backfilled check against the lake (never a database), and honours maintenance/publisher fences.
+- [ ] **GAP-02**: `databento` is declared in `requirements.txt`, and its operational symbol scope is restricted to the 19 approved symbols.
 
-### Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E)
+### Phase 51: Schedule, Maintenance & Closure
 
-- [x] **CAPA-01**: Capacity monitor tracks files/day by symbol, small-file distribution, intent/receipt growth, free disk space, and query discovery cost, with rate-limited warning and critical alerts.
-- [x] **CAPA-02**: Durable maintenance journal and consumer drain protocol stops reader admission, drains active queries/replays, pauses supervisor restarts, and refuses unmanaged external readers during maintenance.
-- [x] **CAPA-03**: Offline compaction implementation (conditional on Phase 43 Pass 1 SLA requirements) writes consolidated files outside active globs, verifies multiset equivalence before replacement, and preserves an immutable receipt lineage map.
-- [x] **CAPA-04**: Physical purge automation removes fenced `PENDING_PURGE` symbol files only under an inactive fenced generation, with crash-safe recovery and rollback.
-
-### Phase 42: Market Rewind & Bounded Replay Iterator Decision (Package F - Decision Gated)
-
-- [x] **RPLY-01**: Release decision gate for Market Rewind evaluates whether replay iterator is included in release scope: branch YES implements and qualifies replay iterator; branch NO documents omission and routes directly to Phase 43 Pass 2.
-- [x] **RPLY-02**: If included, `src/storage/replay.py` provides a bounded chronological snapshot replay iterator over frozen file inventories yielding Arrow batches without full-history RAM materialization or large-OFFSET scans.
-- [x] **RPLY-03**: If included, deterministic total ordering `(timestamp, symbol, ingest_id)` with stable tie-breaking and cursor resumption survives fresh process restarts.
-- [x] **RPLY-04**: Portable reader contract remains fully verified and operational regardless of the replay iterator inclusion decision.
-
-### Phase 44: 24-Hour Sustained Multi-Process Endurance Run (Package H)
-
-- [ ] **ENDR-01**: Multi-process endurance harness runs continuously for at least 24 hours with real runner, dashboard, and independent reader under live synthetic ingestion.
-- [ ] **ENDR-02**: Telemetry continuously tracks per-process/aggregate CPU, RSS, handle counts, thread counts, and queue depth with bounded growth and zero zombie processes.
-- [ ] **ENDR-03**: Independent producer ledger reconciles admitted, durable, published, and rejected records separately; provider ticks during documented gaps are not misclassified as lost durable records.
-- [ ] **ENDR-04**: Scheduled faults (disconnects, restarts, transient I/O errors, maintenance cycles) recover within declared deadlines with zero durable record loss.
-- [ ] **ENDR-05**: Harness fails closed: deliberate premature aborts or absent telemetry produce `INCOMPLETE` / failed qualification, never green.
-
-### Phase 45: Operational Rehearsal, Candidate CI & Milestone Closeout Audit (Package I)
-
-- [ ] **AUDT-01**: Candidate code freeze is established; full offline test suite executes with zero required xfails, skips, or unhandled errors.
-- [ ] **AUDT-02**: Hosted candidate CI run URL, commit SHA, and test logs are verified through authenticated CI checks.
-- [ ] **AUDT-03**: Complete requirement-level traceability matrix reconciles all Milestone 4.3 requirements, test nodes, and artifacts with zero contradictions.
-- [ ] **AUDT-04**: Release report passes hardened validation with zero required unresolved gates; final `milestone-4.3-audit-report.md` is published.
+- [ ] **SCHED-01**: A single timezone policy module computes ingestion eligibility in `ZoneInfo("America/New_York")` over `[04:00, 20:00)`, using an injectable clock. Behaviour is identical under DST transitions and when the host is not in ET.
+- [ ] **SCHED-02**: The supervisor owns lifecycle states (`WAITING_FOR_WINDOW`, `STARTING`, `INGESTING`, `DRAINING`, `MAINTENANCE`, `ERROR`). No provider authentication or subscription occurs outside the window, and an intentional off-hours stop is never treated as a crash.
+- [ ] **SCHED-03**: The direct runner entry point enforces the same window, so a manual start cannot bypass the schedule.
+- [ ] **SCHED-04**: At 20:00 admission stops, accepted ticks drain exactly once, and a failed drain blocks compaction and is reported honestly.
+- [ ] **SCHED-05**: Compaction runs unattended once per eligible closed interval, idempotently, after confirmed drain. A no-op interval counts as success, and a single maintenance lease prevents duplicate launchers.
+- [ ] **SYMB-01**: `_control/registry.json` is the single symbol authority containing exactly the 19 approved equities. Unsolicited and out-of-scope symbols are rejected at the callback boundary and cannot be added through the UI.
+- [ ] **CO-01**: Tests are dispositioned retain / retarget / delete with a one-line reason each, and the retained offline suite passes with no required xfails.
+- [ ] **CO-02**: Reference cleanup covers code and current user-facing docs; `.planning/` archives are left intact.
+- [ ] **CO-03**: One performance measurement is recorded on the reference workload and compared honestly against the Phase 46 baseline. No threshold re-tuning to force a pass.
+- [ ] **CO-04**: The milestone closes with one completion report and **stops** — no new phases, audits, or follow-up programme.
 
 ---
 
 ## Out of Scope
 
-| Feature | Reason |
-|---------|--------|
-| Durable inbox / disk spool (`_spool/`) for power failure zero-loss | Architectural extension requiring group-fsync before ack; the guaranteed release boundary is the documented RAM loss boundary. |
-| Provider replay protocol & retention verification | Requires external provider-specific contracts; fake provider sequence ledger and gap accounting covers the protocol boundary honestly. |
-| Online live compaction / dynamic file mutation | The architecture enforces an immutable Parquet lake; compaction operates strictly during coordinated drain maintenance windows. |
-| Relaxed qualification thresholds | Thresholds are strict upper limits; no retry-until-green or threshold widening to force passes. |
+| Item | Reason |
+|---|---|
+| 24-hour endurance run | Waived in v4.3 by owner decision; not revived here. |
+| Hosted CI log verification | Requires external credentials; not a product requirement. |
+| Replay feature work, durable spool, benchmark campaigns | Not required by this refactor. |
+| Postgres / SQLite migration | Rejected — Parquet stays. |
+| Editing `.planning/` historical archives | Falsifying past audit records is not permitted. |
+| Agent deletion or archival of the owner's `.duckdb` files | Owner action only, after Phase 46 confirmation. |
 
 ---
 
@@ -94,50 +86,61 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| VALD-01 | Phase 37 | Complete |
-| VALD-02 | Phase 37 | Complete |
-| VALD-03 | Phase 37 | Complete |
-| VALD-04 | Phase 37 | Complete |
-| MIGR-01 | Phase 38 | Complete |
-| MIGR-02 | Phase 38 | Complete |
-| MIGR-03 | Phase 38 | Complete |
-| MIGR-04 | Phase 38 | Complete |
-| READ-01 | Phase 39 | Complete |
-| READ-02 | Phase 39 | Complete |
-| READ-03 | Phase 39 | Complete |
-| READ-04 | Phase 39 | Complete |
-| DURB-01 | Phase 40 | Complete |
-| DURB-02 | Phase 40 | Complete |
-| DURB-03 | Phase 40 | Complete |
-| DURB-04 | Phase 40 | Complete |
-| PERF-01 | Phase 43 | Complete |
-| PERF-02 | Phase 43 | Complete |
-| PERF-03 | Phase 43 | Complete |
-| PERF-04 | Phase 43 | Complete |
-| PERF-05 | Phase 43 | Complete |
-| CAPA-01 | Phase 41 | Complete |
-| CAPA-02 | Phase 41 | Complete |
-| CAPA-03 | Phase 41 | Complete |
-| CAPA-04 | Phase 41 | Complete |
-| RPLY-01 | Phase 42 | Complete |
-| RPLY-02 | Phase 42 | Complete |
-| RPLY-03 | Phase 42 | Complete |
-| RPLY-04 | Phase 42 | Complete |
-| ENDR-01 | Phase 44 | Pending |
-| ENDR-02 | Phase 44 | Pending |
-| ENDR-03 | Phase 44 | Pending |
-| ENDR-04 | Phase 44 | Pending |
-| ENDR-05 | Phase 44 | Pending |
-| AUDT-01 | Phase 45 | Pending |
-| AUDT-02 | Phase 45 | Pending |
-| AUDT-03 | Phase 45 | Pending |
-| AUDT-04 | Phase 45 | Pending |
+| BASE-01 | Phase 46 | Pending |
+| MIG-01 | Phase 46 | Pending |
+| MIG-02 | Phase 46 | Pending |
+| MIG-03 | Phase 46 | Pending |
+| READ-01 | Phase 47 | Pending |
+| READ-02 | Phase 47 | Pending |
+| READ-03 | Phase 47 | Pending |
+| READ-04 | Phase 47 | Pending |
+| READ-05 | Phase 47 | Pending |
+| CAND-01 | Phase 48 | Pending |
+| CAND-02 | Phase 48 | Pending |
+| VER-01 | Phase 48 | Pending |
+| VER-02 | Phase 48 | Pending |
+| VER-03 | Phase 48 | Pending |
+| DASH-01 | Phase 49 | Pending |
+| DASH-02 | Phase 49 | Pending |
+| DASH-03 | Phase 49 | Pending |
+| DASH-04 | Phase 49 | Pending |
+| CONT-01 | Phase 49 | Pending |
+| CONT-02 | Phase 49 | Pending |
+| RMV-01 | Phase 50 | Pending |
+| RMV-02 | Phase 50 | Pending |
+| RMV-03 | Phase 50 | Pending |
+| RMV-04 | Phase 50 | Pending |
+| RMV-05 | Phase 50 | Pending |
+| GAP-01 | Phase 50 | Pending |
+| GAP-02 | Phase 50 | Pending |
+| SCHED-01 | Phase 51 | Pending |
+| SCHED-02 | Phase 51 | Pending |
+| SCHED-03 | Phase 51 | Pending |
+| SCHED-04 | Phase 51 | Pending |
+| SCHED-05 | Phase 51 | Pending |
+| SYMB-01 | Phase 51 | Pending |
+| CO-01 | Phase 51 | Pending |
+| CO-02 | Phase 51 | Pending |
+| CO-03 | Phase 51 | Pending |
+| CO-04 | Phase 51 | Pending |
 
 **Coverage:**
-- Total Milestone 4.3 requirements: 37
+- Total v5.0 requirements: 37
 - Mapped to phases: 37
 - Unmapped: 0 ✓
 
 ---
-*Requirements defined: 2026-10-04*
-*Derived from: docs/plans/milestone-4.3-final-concurrency-closeout.md (Packages A–I)*
+
+## Open Gates (owner decisions carried from the plan)
+
+| Gate | Question | Status |
+|---|---|---|
+| G1 | Does Repo B read these files through DuckDB today? | **Open** — confirm before Phase 49 |
+| G2 | Accept that candle computation moves out of DuckDB, with any latency change reported honestly? | **Open** |
+| G3 | Accept that legacy `.duckdb` files become unreadable by this application after Phase 50? | **Open** |
+| G4 | Confirm deletion of `historical.duckdb` **and** `streaming.duckdb` by the owner after Phase 46? | **Open** |
+
+---
+
+*Requirements defined: 2026-10-05*
+*Derived from: `PLAN-MILESTONE-5.0.md` (workstreams W0–W10)*
