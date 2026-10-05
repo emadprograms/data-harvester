@@ -35,10 +35,10 @@
 
 ### Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D)
 
-- [ ] **DURB-01**: Real OS runner lifecycle tests under SIGINT/SIGTERM verify `_shutdown_signal_handler` execution, cooperative worker queue drain, and clean process termination.
-- [ ] **DURB-02**: Crash matrix kills the writer at admission, intent durability, staged fsync, final promotion, directory fsync, receipt durability, and acknowledgment, reconciling against an independent external ledger in a fresh process.
-- [ ] **DURB-03**: Fake provider with sequence ledgers and controllable disconnect/reconnect records explicit visible gap start/end intervals and reports loss as unknown when unquantifiable.
-- [ ] **DURB-04**: Guaranteed RAM-only loss boundary is verified and signed honestly as the guarantee limit; no unverified live zero-loss or power-loss claims are made.
+- [x] **DURB-01**: Real OS runner lifecycle tests under SIGINT/SIGTERM verify `_shutdown_signal_handler` execution, cooperative worker queue drain, and clean process termination.
+- [x] **DURB-02**: Crash matrix kills the writer at admission, intent durability, staged fsync, final promotion, directory fsync, receipt durability, and acknowledgment, reconciling against an independent external ledger in a fresh process.
+- [x] **DURB-03**: Fake provider with sequence ledgers and controllable disconnect/reconnect records explicit visible gap start/end intervals and reports loss as unknown when unquantifiable.
+- [x] **DURB-04**: Guaranteed RAM-only loss boundary is verified and signed honestly as the guarantee limit; no unverified live zero-loss or power-loss claims are made.
 
 ### Phase 43: Initial & Re-run Performance Qualification (Package G - Pass 1 & Pass 2)
 
@@ -106,10 +106,10 @@
 | READ-02 | Phase 39 | Complete |
 | READ-03 | Phase 39 | Complete |
 | READ-04 | Phase 39 | Complete |
-| DURB-01 | Phase 40 | Pending |
-| DURB-02 | Phase 40 | Pending |
-| DURB-03 | Phase 40 | Pending |
-| DURB-04 | Phase 40 | Pending |
+| DURB-01 | Phase 40 | Complete |
+| DURB-02 | Phase 40 | Complete |
+| DURB-03 | Phase 40 | Complete |
+| DURB-04 | Phase 40 | Complete |
 | PERF-01 | Phase 43 | Pending |
 | PERF-02 | Phase 43 | Pending |
 | PERF-03 | Phase 43 | Pending |

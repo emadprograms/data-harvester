@@ -190,8 +190,9 @@ flowchart TD
 
 ---
 
-#### Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D)
+#### Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D) [x]
 
+**Status**: Completed 2026-10-05 (commit `3d7dd385`)
 **Goal**: Pin the runner lifecycle and durability barrier crash matrix with real OS signals and subprocesses, and implement an honest sequence-ledgered provider gap reporting contract.
 **Depends on**: Phase 37, Phase 38
 **Requirements**: [DURB-01, DURB-02, DURB-03, DURB-04]
@@ -201,7 +202,7 @@ flowchart TD
   3. A fake provider with sequence ledgers and controllable disconnect/reconnect records explicit visible gap intervals with "loss unknown" when unquantifiable.
   4. The RAM-only loss boundary is verified and signed honestly as the guarantee limit; no power-loss or live zero-loss claims are made.
 
-**Plans**: 0 plans (run `/gsd-plan-phase 40` to break down)
+**Plans**: 1 plan complete (commit `3d7dd385`)
 
 ---
 
