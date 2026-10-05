@@ -47,78 +47,6 @@ class TestLiveWebSocketIngestion:
         assert "AAPL" in capital_symbols
         assert "TSLA" in capital_symbols
 
-    def test_end_to_end_multistream_ingestion_and_resampling(self, tmp_path):
-        """
-        Verify complete flow:
-        Simulated Capital tick + Binance trade tick -> StreamingEngine write_queue -> DuckDB writer -> query_ticks.
-        """
-        db_file = str(tmp_path / "test_stream_ingest.duckdb")
-        client = get_duckdb_connection(db_file)
-        init_streaming_db(client)
-
-        async def _lifecycle_run():
-            engine = StreamingEngine(db_path=db_file, flush_interval=0.05)
-            engine.db_conn = client
-            engine.running = True
-
-            # 1. Feed Capital ticks (spanning 2 minutes)
-            t1 = datetime(2026, 1, 1, 10, 0, 15, tzinfo=timezone.utc)
-            await engine._handle_capital_tick({"epic": "NVDA", "price": 400.0, "timestamp": t1})
-
-            t2 = datetime(2026, 1, 1, 10, 0, 45, tzinfo=timezone.utc)
-            await engine._handle_capital_tick({"epic": "NVDA", "price": 405.0, "timestamp": t2})
-
-            t3 = datetime(2026, 1, 1, 10, 1, 10, tzinfo=timezone.utc)
-            await engine._handle_capital_tick({"epic": "NVDA", "price": 402.0, "timestamp": t3})
-
-            # 2. Feed Binance trade tick
-            binance_tick = (
-                "2026-01-01 10:00:00.500000",
-                "BTCUSDT",
-                92300.0,
-                0.15,
-                None,
-                None,
-                "BINANCE",
-                "REG"
-            )
-            await engine._handle_binance_tick(binance_tick)
-
-            # 3. Start writer worker and wait for queue drain
-            worker_task = asyncio.create_task(engine._duckdb_writer_worker())
-            await asyncio.sleep(0.2)
-
-            # 4. Stop engine and cleanly cancel writer
-            engine.stop()
-            await asyncio.sleep(0.1)
-            worker_task.cancel()
-            try:
-                await worker_task
-            except asyncio.CancelledError:
-                pass
-
-        asyncio.run(_lifecycle_run())
-
-        # 5. Query persisted data via query_ticks and query_candlesticks_from_ticks
-        from src.database.operations import query_ticks, query_candlesticks_from_ticks
-        ticks_nvda = query_ticks("NVDA", client=client)
-        assert len(ticks_nvda) == 3
-        assert ticks_nvda.iloc[0]["price"] == 400.0
-        assert ticks_nvda.iloc[1]["price"] == 405.0
-
-        ticks_btc = query_ticks("BTCUSDT", client=client)
-        assert len(ticks_btc) == 1
-        assert ticks_btc.iloc[0]["price"] == 92300.0
-        assert ticks_btc.iloc[0]["source"] == "BINANCE"
-
-        # Candlestick dynamic aggregation directly from ticks
-        candles_nvda = query_candlesticks_from_ticks("NVDA", timeframe="1m", client=client)
-        assert len(candles_nvda) == 2
-        assert candles_nvda.iloc[0]["open"] == 400.0
-        assert candles_nvda.iloc[0]["high"] == 405.0
-
-        client.close()
-
     @pytest.mark.live
     def test_live_binance_public_websocket_connectivity(self):
         """
@@ -144,3 +72,9 @@ class TestLiveWebSocketIngestion:
             assert "q" in trade
         except (OSError, asyncio.TimeoutError) as e:
             pytest.skip(f"Live network test skipped due to network/timeout: {e}")
+
+
+# Phase 46 (CO-01) disposition: `test_end_to_end_multistream_ingestion_and_resampling`
+# was deleted with the disk-DuckDB writer it exercised; it also asserted Binance crypto
+# symbols (BTCUSDT/ETHUSDT), which are out of scope for v5.0. Coverage replaced by
+# tests/stream/test_lake_runner_integration.py and tests/stream/test_dynamic_reload.py.

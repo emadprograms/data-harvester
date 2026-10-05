@@ -107,66 +107,31 @@ class TestStreamers:
         assert len(streamer.epics) == 45
 
 
+# Phase 46 (CO-01) disposition: `test_streaming_engine_writer_worker` and
+# `test_e2e_streaming_to_candlestick_query` were deleted with the disk-DuckDB
+# backend they exercised. Equivalent coverage lives in
+# tests/stream/test_lake_runner_integration.py (callback -> Parquet, drain) and
+# tests/storage/test_lake_reader.py (candle resampling from the lake).
+
 class TestStreamingEngineAndParsers:
     """Tests StreamingEngine async queue, writer worker, and WebSocket payloads."""
 
-    def test_streaming_engine_queueing(self):
+    def test_streaming_engine_queueing(self, tmp_path):
         from src.stream.runner import StreamingEngine
         import asyncio
 
         async def _run():
-            engine = StreamingEngine(db_path=":memory:")
-
-            # Raw tick
-            tick1 = ("2026-01-01 10:00:00.123", "BTCUSDT", 90000.0, 0.5, None, None, "BINANCE", "REG")
-            await engine._handle_binance_tick(tick1)
-            assert engine.write_queue.qsize() == 1
-            queued = await engine.write_queue.get()
-            assert queued == tick1
-
-        asyncio.run(_run())
-
-    def test_streaming_engine_writer_worker(self, tmp_path):
-        from src.stream.runner import StreamingEngine
-        from src.database.connection import DuckDBClient
-        from src.database.schema import init_streaming_db
-        import asyncio
-
-        db_file = str(tmp_path / "test_engine_ticks.duckdb")
-        client = DuckDBClient(db_path=db_file)
-        init_streaming_db(client)
-
-        async def _run():
-            engine = StreamingEngine(db_path=db_file, flush_interval=0.1)
-            engine.db_conn = client
-            engine.running = True
-
-            # Enqueue 3 raw ticks
-            ticks = [
-                ("2026-01-01 10:00:00.100", "AAPL", 150.0, 1.0, 149.9, 150.1, "CAPITAL", "REG"),
-                ("2026-01-01 10:00:00.200", "AAPL", 150.5, 1.0, 150.4, 150.6, "CAPITAL", "REG"),
-                ("2026-01-01 10:00:00.300", "BTCUSDT", 90000.0, 0.05, None, None, "BINANCE", "REG")
-            ]
-            for t in ticks:
-                engine._enqueue_tick(t)
-
-            # Run writer worker briefly
-            worker_task = asyncio.create_task(engine._duckdb_writer_worker())
-            await asyncio.sleep(0.3)
-            engine.running = False
-            await asyncio.sleep(0.1)
-            worker_task.cancel()
+            engine = StreamingEngine(lake_root=tmp_path / "lake")
             try:
-                await worker_task
-            except asyncio.CancelledError:
-                pass
+                tick1 = ("2026-01-01 10:00:00.123", "AAPL", 150.0, 1.0, 149.9, 150.1, "CAPITAL", "REG")
+                engine._enqueue_tick(tick1)
+                assert engine.write_queue.qsize() == 1
+                queued = await engine.write_queue.get()
+                assert queued == tick1
+            finally:
+                engine.stop()
 
         asyncio.run(_run())
-
-        # Check records in DB ticks table
-        res = client.execute("SELECT count(*) FROM ticks")
-        assert res.rows[0][0] == 3
-        client.close()
 
     def test_binance_kline_payload_parsing(self):
         """Simulate Binance kline JSON parsing logic."""
@@ -240,74 +205,4 @@ class TestStreamingEngineAndParsers:
         mid_price = (bid + ofr) / 2.0
         assert epic == "AAPL"
         assert mid_price == 180.55
-
-    def test_e2e_streaming_to_candlestick_query(self, tmp_path):
-        """Validates end-to-end flow: streaming tick -> write_queue -> DuckDB -> query_ticks & query_candlesticks_from_ticks."""
-        import asyncio
-        from src.stream.runner import StreamingEngine
-        from src.database.connection import get_duckdb_connection
-        from src.database.schema import init_streaming_db
-        from src.database.operations import query_ticks, query_candlesticks_from_ticks
-
-        db_file = str(tmp_path / "test_e2e_ticks.duckdb")
-        client = get_duckdb_connection(db_path=db_file)
-        init_streaming_db(client)
-
-        async def _run():
-            engine = StreamingEngine(db_path=db_file, flush_interval=0.05)
-            engine.db_conn = client
-            engine.running = True
-
-            # Process Capital ticks
-            from datetime import timezone
-            dt = datetime(2026, 1, 1, 10, 0, 10, tzinfo=timezone.utc)
-            tick = {"epic": "AAPL", "price": 180.0, "bid": 179.9, "ask": 180.1, "timestamp": dt}
-            await engine._handle_capital_tick(tick)
-
-            dt2 = datetime(2026, 1, 1, 10, 0, 25, tzinfo=timezone.utc)
-            tick2 = {"epic": "AAPL", "price": 181.0, "bid": 180.9, "ask": 181.1, "timestamp": dt2}
-            await engine._handle_capital_tick(tick2)
-
-            # Process Binance trade tick
-            binance_tick = ("2026-01-01 10:00:00.123456", "BTCUSDT", 90050.0, 0.25, None, None, "BINANCE", "REG")
-            await engine._handle_binance_tick(binance_tick)
-
-            # Start writer worker and wait for flush
-            worker_task = asyncio.create_task(engine._duckdb_writer_worker())
-            await asyncio.sleep(0.2)
-
-            # Query raw ticks immediately using client
-            ticks_aapl = query_ticks("AAPL", client=engine.db_conn)
-            assert len(ticks_aapl) == 2
-            assert ticks_aapl.iloc[0]["price"] == 180.0
-            assert ticks_aapl.iloc[1]["price"] == 181.0
-
-            ticks_btc = query_ticks("BTCUSDT", client=engine.db_conn)
-            assert len(ticks_btc) == 1
-            assert ticks_btc.iloc[0]["price"] == 90050.0
-            assert ticks_btc.iloc[0]["source"] == "BINANCE"
-
-            # Query resampled candlesticks from ticks
-            df_aapl = query_candlesticks_from_ticks("AAPL", timeframe="1m", client=engine.db_conn)
-            assert len(df_aapl) == 1
-            assert df_aapl.iloc[0]["open"] == 180.0
-            assert df_aapl.iloc[0]["close"] == 181.0
-            assert df_aapl.iloc[0]["symbol"] == "AAPL"
-
-            # Query with secondary connection in same process (tests read_only fallback)
-            reader_conn = get_duckdb_connection(db_path=db_file, read_only=True)
-            ticks_btc_ro = query_ticks("BTCUSDT", client=reader_conn)
-            assert len(ticks_btc_ro) == 1
-            reader_conn.close()
-
-            engine.stop()
-            await asyncio.sleep(0.1)
-            worker_task.cancel()
-            try:
-                await worker_task
-            except asyncio.CancelledError:
-                pass
-
-        asyncio.run(_run())
-        client.close()
 

@@ -1,8 +1,7 @@
 """
 24/7 Capital.com Exclusive Streaming Runner.
 Connects to Capital.com WebSocket, receives real-time tick quotes,
-and flushes them into dedicated streaming.duckdb in batched transactions
-or partitioned Parquet Tick Lake.
+and flushes them into the partitioned Parquet Tick Lake.
 Supports dynamic subscription reload without dropping the WebSocket connection.
 """
 import asyncio
@@ -16,13 +15,6 @@ from datetime import datetime, timezone
 import os
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-from src.database.connection import get_streaming_db_connection, DEFAULT_STREAMING_DB_PATH
-from src.database.schema import init_streaming_db
-from src.database.operations import (
-    save_ticks_to_storage,
-    get_streaming_database_symbols_from_db,
-    get_streaming_symbol_map_from_db,
-)
 from src.storage.registry import RegistryError
 from src.stream.binance_stream import BinanceStreamer
 from src.stream.capital_stream import CapitalStreamer
@@ -48,6 +40,19 @@ def _is_fresh_lake_path(path: Union[str, Path]) -> bool:
     if not root.exists():
         return True
     return root.is_dir() and not any(root.iterdir())
+
+
+def _resolve_lake_root(explicit=None) -> Path:
+    """Resolve the Parquet tick lake root. v5.0 has no disk-database backend."""
+    from src.storage.config import StorageConfigError, resolve_tick_lake_root
+
+    try:
+        return Path(resolve_tick_lake_root(explicit)).resolve()
+    except StorageConfigError as exc:
+        raise ValueError(
+            "A Parquet tick lake root is required: pass lake_root= or set "
+            "TICK_LAKE_ROOT/DATA_DIR. v5.0 has no disk-database backend."
+        ) from exc
 
 
 def _positive_float(value: Any, env_name: str, default: float) -> float:
@@ -103,10 +108,9 @@ class BoundedWriteQueue(asyncio.Queue):
 
 
 class StreamingEngine:
-    """Master streaming orchestrator saving pure tick-by-tick data into partitioned Parquet tick lake or streaming.duckdb."""
+    """Master streaming orchestrator saving pure tick-by-tick data into the partitioned Parquet tick lake."""
     def __init__(
         self,
-        db_path=None,
         flush_interval=None,
         enable_binance=False,
         lake_root=None,
@@ -154,58 +158,27 @@ class StreamingEngine:
         self.registry_debounce_interval: float = float(registry_debounce_interval)
         self._is_shutdown = False
 
-        if self.lake_root is not None:
-            self.lake_root = Path(self.lake_root).resolve()
-            fresh_lake = _is_fresh_lake_path(self.lake_root)
-            from src.storage.parquet_writer import TickLakeWriter
-            self.writer = TickLakeWriter(
-                root=self.lake_root,
-                writer_id=writer_id,
-                flush_interval_seconds=self.flush_interval,
-                max_queue_size=self.max_queue_size,
-                max_batch_rows=self.max_batch_rows,
-            )
-            self.lake_writer = self.writer
-            self.db_path = None
-            try:
-                from src.storage.registry import SymbolRegistry, init_registry
-                self.registry = SymbolRegistry(root=self.lake_root)
-                if fresh_lake and not self.registry.path.exists():
-                    init_registry(self.lake_root)
-            except Exception:
-                self.writer.close()
-                self.writer = None
-                self.lake_writer = None
-                raise
-        elif db_path is None and (os.environ.get("TICK_LAKE_ROOT") or os.environ.get("DATA_DIR")):
-            # An environment-selected lake is an explicit backend choice. Do not
-            # silently redirect a configured lake failure into streaming.duckdb.
-            from src.storage.config import resolve_tick_lake_root
-            resolved_root = resolve_tick_lake_root()
-            self.lake_root = Path(resolved_root).resolve()
-            fresh_lake = _is_fresh_lake_path(self.lake_root)
-            from src.storage.parquet_writer import TickLakeWriter
-            self.writer = TickLakeWriter(
-                root=self.lake_root,
-                writer_id=writer_id,
-                flush_interval_seconds=self.flush_interval,
-                max_queue_size=self.max_queue_size,
-                max_batch_rows=self.max_batch_rows,
-            )
-            self.lake_writer = self.writer
-            self.db_path = None
-            try:
-                from src.storage.registry import SymbolRegistry, init_registry
-                self.registry = SymbolRegistry(root=self.lake_root)
-                if fresh_lake and not self.registry.path.exists():
-                    init_registry(self.lake_root)
-            except Exception:
-                self.writer.close()
-                self.writer = None
-                self.lake_writer = None
-                raise
-        else:
-            self.db_path = db_path or DEFAULT_STREAMING_DB_PATH
+        self.lake_root = _resolve_lake_root(self.lake_root)
+        fresh_lake = _is_fresh_lake_path(self.lake_root)
+        from src.storage.parquet_writer import TickLakeWriter
+        self.writer = TickLakeWriter(
+            root=self.lake_root,
+            writer_id=writer_id,
+            flush_interval_seconds=self.flush_interval,
+            max_queue_size=self.max_queue_size,
+            max_batch_rows=self.max_batch_rows,
+        )
+        self.lake_writer = self.writer
+        try:
+            from src.storage.registry import SymbolRegistry, init_registry
+            self.registry = SymbolRegistry(root=self.lake_root)
+            if fresh_lake and not self.registry.path.exists():
+                init_registry(self.lake_root)
+        except Exception:
+            self.writer.close()
+            self.writer = None
+            self.lake_writer = None
+            raise
 
         self.binance_streamer = None
         self.capital_streamer = None
@@ -215,9 +188,8 @@ class StreamingEngine:
 
         self.gap_ledger = None
         self._active_overflow_gap_id: Optional[str] = None
-        if self.lake_root is not None:
-            from src.stream.gap_ledger import GapLedger
-            self.gap_ledger = GapLedger(self.lake_root)
+        from src.stream.gap_ledger import GapLedger
+        self.gap_ledger = GapLedger(self.lake_root)
 
     def _record_drop(self, count: int = 1, symbol: str = "all", reason: str = "BUFFER_OVERFLOW") -> None:
         """Increments drop counter and synchronizes drop count to writer metrics immediately."""
@@ -346,54 +318,6 @@ class StreamingEngine:
                         return
         await self._enqueue_tick_async(tick_tuple)
 
-    async def _duckdb_writer_worker(self):
-        """Worker that drains the write queue and batches raw tick writes into streaming.duckdb."""
-        buffer = []
-        last_flush = time.time()
-
-        while self.running or not self.write_queue.empty():
-            try:
-                wait_time = min(0.2, self.flush_interval) if buffer else 0.5
-                try:
-                    tick = await asyncio.wait_for(self.write_queue.get(), timeout=wait_time)
-                    # Normalize if 9-element bar tuple from legacy callers: (ts, sym, o, h, l, c, v, sess, src)
-                    if len(tick) == 9:
-                        tick = (tick[0], tick[1], tick[5], tick[6], None, None, tick[8], tick[7])
-                    buffer.append(tick)
-                    self.write_queue.task_done()
-                except asyncio.TimeoutError:
-                    pass
-
-                now = time.time()
-                should_flush = (
-                    len(buffer) >= 100 or
-                    (buffer and (now - last_flush) >= self.flush_interval) or
-                    (not self.running and buffer)
-                )
-
-                if should_flush:
-                    count = len(buffer)
-                    save_ticks_to_storage(self.db_conn, buffer, label="DuckDB-Ticks")
-                    self.total_ticks_saved += count
-                    logger.info(f"💾 Committed {count} ticks to streaming.duckdb (Total session: {self.total_ticks_saved})")
-                    buffer.clear()
-                    last_flush = now
-
-            except Exception as e:
-                logger.error(f"DuckDB writer worker error: {e}")
-                await asyncio.sleep(0.5)
-
-        # Flush any remaining buffer on shutdown
-        if buffer:
-            try:
-                count = len(buffer)
-                save_ticks_to_storage(self.db_conn, buffer, label="DuckDB-Ticks")
-                self.total_ticks_saved += count
-                logger.info(f"💾 Final flush: committed {count} ticks to streaming.duckdb.")
-                buffer.clear()
-            except Exception as e:
-                logger.error(f"Error during final buffer flush: {e}")
-
     async def _lake_writer_worker(self):
         """Persist accepted queue items; retain ownership until a receipt confirms commit."""
         buffer = list(self._retained_worker_buffer)
@@ -516,28 +440,6 @@ class StreamingEngine:
                 self.active_streaming_symbols.add(c_ticker)
                 capital_symbols.append(c_ticker)
                 self.epic_to_display[c_ticker] = sym
-        else:
-            s_map = get_streaming_database_symbols_from_db()
-            capital_symbols = []
-            self.active_streaming_symbols = set()
-            self.epic_to_display = {}
-            if s_map:
-                for display_name, tickers in s_map.items():
-                    if tickers.get("is_active", True):
-                        self.active_streaming_symbols.add(display_name)
-                        c_ticker = tickers.get("capital_ticker")
-                        if c_ticker:
-                            capital_symbols.append(c_ticker)
-                            self.active_streaming_symbols.add(c_ticker)
-                            self.epic_to_display[c_ticker] = display_name
-                        else:
-                            self.epic_to_display[display_name] = display_name
-
-                if not capital_symbols:
-                    capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
-            else:
-                capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
-
         logger.info(f"🔄 Reloading active Capital.com streaming symbols ({len(capital_symbols)}): {capital_symbols}")
         if self.capital_streamer:
             success = await self.capital_streamer.update_subscriptions(capital_symbols)
@@ -652,19 +554,11 @@ class StreamingEngine:
 
     async def start(self):
         self.running = True
-        if self.writer is None:
-            logger.info(f"Initializing streaming database schema ({self.db_path})...")
-            init_conn = get_streaming_db_connection(self.db_path)
-            init_streaming_db(init_conn)
-            if init_conn:
-                init_conn.close()
-
-        # Discover symbols: when self.registry is configured, read active symbols directly via self.registry.get_active_symbols() bypassing DuckDB calls entirely
+        # Discover symbols from the registry - the single symbol authority.
         self._subscriptions_initialized = True
         capital_symbols = []
         self.active_streaming_symbols = set()
         self.epic_to_display = {}
-        s_map = None
 
         if self.registry is not None:
             try:
@@ -679,26 +573,6 @@ class StreamingEngine:
                 self.active_streaming_symbols.add(c_ticker)
                 capital_symbols.append(c_ticker)
                 self.epic_to_display[c_ticker] = sym
-        else:
-            s_map = get_streaming_database_symbols_from_db()
-            if s_map:
-                for display_name, tickers in s_map.items():
-                    if tickers.get("is_active", True):
-                        self.active_streaming_symbols.add(display_name)
-                        c_ticker = tickers.get("capital_ticker")
-                        if c_ticker:
-                            capital_symbols.append(c_ticker)
-                            self.active_streaming_symbols.add(c_ticker)
-                            self.epic_to_display[c_ticker] = display_name
-                        else:
-                            self.epic_to_display[display_name] = display_name
-
-        if not capital_symbols and self.writer is None:
-            capital_symbols = ["AAPL", "NVDA", "TSLA", "AMD", "AMZN", "MSFT"]
-            for s in capital_symbols:
-                self.active_streaming_symbols.add(s)
-                self.epic_to_display[s] = s
-
         logger.info(f"🎯 Target Capital.com symbols for live quotes ({len(capital_symbols)}): {capital_symbols[:6]}...")
 
         # Initialize Capital.com streamer (or MockStreamer in mock_mode)
@@ -715,10 +589,7 @@ class StreamingEngine:
                 on_tick_callback=self._handle_capital_tick
             )
 
-        if self.writer is not None:
-            writer_worker_task = asyncio.create_task(self._lake_writer_worker())
-        else:
-            writer_worker_task = asyncio.create_task(self._duckdb_writer_worker())
+        writer_worker_task = asyncio.create_task(self._lake_writer_worker())
 
         tasks = [
             writer_worker_task,
@@ -733,13 +604,6 @@ class StreamingEngine:
                 for entry in self.registry.get_active_symbols():
                     if entry.binance_ticker:
                         binance_symbols.append(entry.binance_ticker)
-            elif s_map:
-                binance_symbols = [
-                    tickers.get("binance_ticker") for display_name, tickers in s_map.items()
-                    if tickers.get("binance_ticker")
-                ]
-            if not binance_symbols and self.registry is None:
-                binance_symbols = ["btcusdt", "ethusdt"]
             if binance_symbols:
                 self.binance_streamer = BinanceStreamer(
                     symbols=binance_symbols,
