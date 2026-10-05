@@ -206,8 +206,9 @@ flowchart TD
 
 ---
 
-#### Phase 43: Production-Scale Benchmarks & Performance Qualification (Package G - Pass 1 & Pass 2)
+#### Phase 43: Production-Scale Benchmarks & Performance Qualification (Package G - Pass 1 & Pass 2) [x] (Pass 1)
 
+**Status**: Pass 1 Completed 2026-10-05 (commit `e6414f78`); Pass 2 Pending (post-Phase 42)
 **Goal**: Implement continuous resource sampling, real receive-to-visible p99 latency, and enforced qualification thresholds at 1M and 10M scales; execute Pass 1 to measure raw-partition query latency and fan-out before the compaction decision, and Pass 2 after runtime changes.
 **Depends on**: Pass 1 depends on Phase 40; Pass 2 depends on Phase 42
 **Requirements**: [PERF-01, PERF-02, PERF-03, PERF-04, PERF-05]
@@ -218,7 +219,7 @@ flowchart TD
   4. Qualification harness strictly enforces upper limits: warm session 1m/5m queries p95 <100ms, warm month daily candles p95 <250ms, writer CPU >=50% reduction vs legacy baseline, and event loop lag p99 <20ms (resolving C43-03).
   5. Pass 1 measures raw-partition fan-out latency to inform Phase 41 compaction; Pass 2 re-qualifies performance after compaction/replay changes.
 
-**Plans**: 0 plans (run `/gsd-plan-phase 43` to break down)
+**Plans**: 1 plan complete for Pass 1 (commit `e6414f78`)
 
 ---
 
@@ -290,10 +291,10 @@ flowchart TD
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 37. Preflight, Isolation & Fail-Closed Validator | v4.3 | 1/1 | Complete | 2026-10-04 |
-| 38. Migration Overlap & Provenance Verification | v4.3 | 0/TBD | Not started | - |
-| 39. Reader Root Correctness & Executable Contract | v4.3 | 0/TBD | Not started | - |
-| 40. Durability Boundaries & Provider Gap Ledger | v4.3 | 0/TBD | Not started | - |
-| 43. Performance Benchmarks (Pass 1) | v4.3 | 0/TBD | Not started | - |
+| 38. Migration Overlap & Provenance Verification | v4.3 | 1/1 | Complete | 2026-10-04 |
+| 39. Reader Root Correctness & Executable Contract | v4.3 | 1/1 | Complete | 2026-10-04 |
+| 40. Durability Boundaries & Provider Gap Ledger | v4.3 | 1/1 | Complete | 2026-10-05 |
+| 43. Performance Benchmarks (Pass 1) | v4.3 | 1/1 | Complete | 2026-10-05 |
 | 41. Capacity Monitoring, Offline Compaction & Purge | v4.3 | 0/TBD | Not started | - |
 | 42. Market Rewind & Replay Iterator Decision | v4.3 | 0/TBD | Not started | - |
 | 43. Performance Qualification (Pass 2) | v4.3 | 0/TBD | Not started | - |
