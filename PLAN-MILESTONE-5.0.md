@@ -32,7 +32,7 @@ The owner's instruction (2026-10-05): **reduce clutter in this repo as much as p
 ## 3. Definition of done
 
 1. `data/historical.duckdb` and `data/streaming.duckdb` deleted by the owner immediately after the Phase 49 final gate; no code path can recreate or open one.
-2. No reference to either file, or to the bar subsystem, remains in `src/`, `tools/`, `tests/`, `main.py` or the docs.
+2. No reference to either file, or to the bar-archive pipeline, remains in `src/`, `tools/`, `tests/`, `main.py` or the docs.
 3. Candles still compute correctly (behaviour unchanged — the engine was never touched).
 4. All 19 symbols collected and readable from the lake.
 5. Streamer runs 04:00–20:00 ET only; compaction runs unattended outside it.
@@ -72,7 +72,9 @@ Record the lake's current candle output as the reference baseline (BASE-01) **be
 
 **Exit:** no runtime import of a disk-backed DB factory; a startup regression proves it; the dashboard works with both `.duckdb` files absent.
 
-### Phase 47 — Remove the Bar Subsystem & Dead Providers
+### Phase 47 — Remove the Historical Bar Archive & Dead Providers
+
+Removes the 1-minute bar *archive pipeline* (harvesters → `minute_data`), not the chart's missing-data visualisation: gap shading, continuity ribbons and `detect_stream_quiet_intervals` are retained and guarded by `tests/dashboard/test_gap_visualisation_survives.py`.
 Delete the harvest CLI, bar pipeline, provider clients, the harvester dashboard job, the dead tools and the historical endpoints — and the unused replay subsystem. `src/utils/discord.py` is **rewritten, not deleted**: bar-era alert builders go, webhook plumbing stays for streamer notifications. Remove `yfinance` and `polygon-api-client`; keep `duckdb`. Clean imports, `.env.example`, README and operations guide.
 
 **Exit:** `grep -ri "historical.duckdb\|streaming.duckdb"` returns nothing in code or current docs; the app runs with no bar code present; the replay subsystem is gone.
