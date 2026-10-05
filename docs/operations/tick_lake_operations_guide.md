@@ -290,12 +290,19 @@ EOF
 7. **Release Guard:** Unlink `_maintenance/in_progress.json`.
 
 ### 4.4 Physical Symbol Purge
-When a symbol is marked `PENDING_PURGE`:
-1. Ensure the symbol has been deactivated from active streaming for at least one maintenance cycle.
-2. Create `_maintenance/in_progress.json`.
-3. Move `ticks/symbol=<ENCODED_SYMBOL>/` to `_maintenance/retired/symbol=<ENCODED_SYMBOL>/`.
-4. Update `<TICK_LAKE_ROOT>/_control/registry.json` using `SymbolRegistry.purge_symbol(symbol)` to permanently remove the registry entry.
-5. Remove `_maintenance/in_progress.json`.
+The purge is automated; do not move directories by hand. A symbol becomes purgeable when
+it is fenced out of the registry (`remove_symbol` → `PENDING_PURGE`, `active=False`),
+which is what the dashboard's remove-symbol action does. Then:
+
+```bash
+python3 -m src.storage.compaction --purge SYMBOL
+```
+
+`purge_symbol_physical` holds the publisher lock, deletes only
+`ticks/symbol=<ENCODED_SYMBOL>/`, archives the generation via `complete_purge`, and
+refuses to touch an active symbol. It is crash-safe: the registry keeps `PENDING_PURGE`
+until the files are gone, so an interrupted purge is simply re-run. Live writers for
+other symbols are unaffected.
 
 ---
 
@@ -369,7 +376,10 @@ python tools/migrate_streaming_to_parquet.py \
   --resume
 ```
 
-**Full flag set:** `--source-db`, `--source-table`, `--lake-root`, `--mode {plan,export,verify,publish,all}`, `--chunk-size` (default 100,000), `--symbols`, `--date-start`, `--date-end`, `--dry-run`, `--resume`, `--force`, `--compression` (default `snappy`).
+**Full flag set:** `--source-db`, `--source-table`, `--lake-root`, `--mode {plan,export,verify,verify-published,publish,all,audit-lake,audit}`, `--chunk-size` (default 100,000), `--symbols`, `--date-start`, `--date-end`, `--dry-run`, `--resume`, `--force`, `--compression` (default `snappy`), `--migration-id`.
+
+`--mode all` covers plan → export → verify → publish; `verify-published` and `audit-lake`
+are run afterwards as the published-inventory and whole-lake checks.
 
 ### 5.3 Rollback Protocol
 - **Before Publish Stage:** If export or verification encounters errors, simply delete the staging artifacts:
@@ -395,9 +405,13 @@ rm -f data/streaming.duckdb data/historical.duckdb
 ```
 
 Do **not** export, convert or archive the historical 1-minute bars: that store is
-deliberately dropped so the project has one model (ticks) and one format
-(Parquet). Live ingestion never references these paths, so the deletion is safe
-at any time after `--mode verify` reports zero differences.
+deliberately dropped so the project has one model (ticks) and one format (Parquet).
+
+The gate is the full sequence, not verification alone: `--mode all` must finish with a
+`PASSED` verification, then `--mode verify-published` and `--mode audit-lake` must both
+exit `0`. Only then are the files deleted, and immediately — there is no retention
+window. The complete, rehearsal-tested procedure (including the duplicate-safe re-run and
+the abort branches) is **[phase49_migration_runbook.md](phase49_migration_runbook.md)**.
 
 ---
 

@@ -26,7 +26,7 @@ See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 
 Phase: 49 — Final Gate, Deletion & Closure (owner's machine)
 Plan: — (handoff prepared; the agent cannot run MIG-01..03, RMV-05 or CO-03)
-Status: Phases 46, 47 and 48 complete. Full offline suite 988 passed. Remaining: owner runs the migration gate (MIG-01/02/03), deletes the two `.duckdb` files (RMV-05), and writes the single completion report (CO-03) — then v5.0 stops.
+Status: Phases 46, 47 and 48 complete. Full offline suite 988 passed. Remaining: owner runs the migration gate (MIG-01/02/03), deletes the two `.duckdb` files (RMV-05), and writes the single completion report (CO-03) — then v5.0 stops. The owner handoff is `docs/operations/phase49_migration_runbook.md`, rehearsal-tested end to end in the sandbox (all six stages, re-run idempotence, tamper refusal, symbol purge).
 Last activity: 2026-10-05 — Phase 48 closed (988 passed): disk-DB references cleaned, crypto streaming removed, docs/README rewritten for Parquet-only storage; full offline suite 872 passed with 4 host-load timing flakes (3 timing gates plus the pre-existing `test_off_loop_event_loop_responsiveness`).
 
 Progress: [░░░░░░░░░░] 0%

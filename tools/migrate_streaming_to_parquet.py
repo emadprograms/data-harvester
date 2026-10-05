@@ -30,6 +30,12 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+# The ops guide invokes this tool as `python tools/migrate_streaming_to_parquet.py`
+# from the repo root; running a script puts tools/ on sys.path, not the root.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from src.storage.config import (
     LakeMaintenanceInProgressError,
     decode_symbol,
