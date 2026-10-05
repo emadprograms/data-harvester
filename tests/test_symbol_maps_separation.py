@@ -1,118 +1,38 @@
 """
-Unit and integration tests for Separation of Historical and Streaming Symbol Maps.
+Symbol authority tests for the Parquet-only lake (v5.0).
+
+There is exactly one symbol map: the lake registry (`_control/registry.json`).
 Verifies:
-1. historical_symbol_map exists in historical.duckdb with backward-compatible symbol_map view.
-2. streaming_symbol_map exists in streaming.duckdb with 19 single-stock assets.
-3. Operations API (get, add, remove) behaves independently on both databases.
-4. Stream runner filters out ticks for any symbol not present in streaming_symbol_map.
-5. Databento backfiller targets symbols from streaming_symbol_map.
+1. The registry holds the 19 approved equities and nothing else (no ETFs, no crypto).
+2. The stream runner drops every tick whose symbol is not in the active set.
+3. The Databento backfiller targets the registry's approved equities.
 """
-import pytest
 import asyncio
 from datetime import datetime, timezone
 
-from src.database.connection import (
-    DuckDBClient,
-    get_historical_db_connection,
-    get_streaming_db_connection,
-)
-from src.database.schema import init_historical_db, init_streaming_db
-from src.database.operations import (
-    get_historical_symbol_map_from_db,
-    get_symbol_map_from_db,
-    get_symbol_inventory_list,
-    add_symbol_to_db,
-    remove_symbol_from_db,
-    get_streaming_symbol_map_from_db,
-    get_streaming_symbol_inventory_list,
-    add_streaming_symbol_to_db,
-    remove_streaming_symbol_from_db,
-)
+from src.config import APPROVED_EQUITY_SYMBOLS
+from tests.support.lake_population import create_lake
 from src.stream.runner import StreamingEngine
 from src.data.databento_backfill import get_target_stock_symbols
 
 
-def test_historical_symbol_map_schema_and_view():
-    """Verify historical.duckdb contains historical_database_symbols table and backward-compatible views."""
-    client = get_historical_db_connection(read_only=True)
-    assert client is not None
-    try:
-        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        assert "historical_database_symbols" in tables
-        assert "historical_symbol_map" in tables
-        assert "symbol_map" in tables
+def test_lake_registry_holds_exactly_the_approved_equities(tmp_path):
+    """The lake registry is the single symbol authority: the 19 equities, no ETFs or crypto."""
+    lake = create_lake(tmp_path / "lake", symbols=APPROVED_EQUITY_SYMBOLS)
+    from src.storage.registry import SymbolRegistry
 
-        # Table and views return same row count
-        t_count = client.execute("SELECT COUNT(*) FROM historical_database_symbols").fetchone()[0]
-        v_count = client.execute("SELECT COUNT(*) FROM symbol_map").fetchone()[0]
-        h_v_count = client.execute("SELECT COUNT(*) FROM historical_symbol_map").fetchone()[0]
-        assert t_count == v_count == h_v_count
-        assert t_count >= 40
-    finally:
-        client.close()
+    snapshot = SymbolRegistry(root=lake).load()
+    symbols = sorted(snapshot.symbols)
+    assert symbols == sorted(APPROVED_EQUITY_SYMBOLS)
+    assert len(symbols) == 19
 
+    # Pure stocks are present
+    for expected in ["AAPL", "NVDA", "MSFT", "AMZN", "GOOGL", "TSLA", "AMD"]:
+        assert expected in symbols
 
-def test_streaming_symbol_map_schema_and_defaults():
-    """Verify streaming.duckdb contains streaming_database_symbols with default single stocks."""
-    client = get_streaming_db_connection(read_only=True)
-    assert client is not None
-    try:
-        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        assert "streaming_database_symbols" in tables
-        assert "streaming_symbol_map" in tables
-
-        rows = client.execute("SELECT display_name, is_active FROM streaming_database_symbols ORDER BY display_name").fetchall()
-        symbols = [r[0] for r in rows]
-        assert len(symbols) == 19
-
-        # Ensure pure stocks are present
-        for expected in ["AAPL", "NVDA", "MSFT", "AMZN", "GOOGL", "TSLA", "AMD"]:
-            assert expected in symbols
-
-        # Ensure ETFs and Crypto are strictly absent from streaming_database_symbols
-        for excluded in ["SPY", "QQQ", "IWM", "DIA", "BTCUSDT", "ETHUSDT", "CL=F", "VIX"]:
-            assert excluded not in symbols
-    finally:
-        client.close()
-
-
-def test_independent_crud_operations():
-    """Verify that adding/removing from streaming_symbol_map does not affect historical_symbol_map and vice versa."""
-    # In-memory test clients
-    hist_client = DuckDBClient(":memory:", read_only=False)
-    stream_client = DuckDBClient(":memory:", read_only=False)
-
-    init_historical_db(hist_client)
-    init_streaming_db(stream_client)
-
-    # 1. Add streaming-only symbol
-    add_streaming_symbol_to_db("STREAM_ONLY", capital_ticker="STRM", client=stream_client)
-    s_map = get_streaming_symbol_map_from_db(client=stream_client)
-    assert "STREAM_ONLY" in s_map
-    assert s_map["STREAM_ONLY"]["capital_ticker"] == "STRM"
-
-    # Historical symbol map must NOT have STREAM_ONLY
-    h_map = get_historical_symbol_map_from_db(client=hist_client)
-    assert "STREAM_ONLY" not in h_map
-
-    # 2. Add historical-only symbol
-    add_symbol_to_db("HIST_ONLY", massive_ticker="HIST", client=hist_client)
-    h_map2 = get_historical_symbol_map_from_db(client=hist_client)
-    assert "HIST_ONLY" in h_map2
-
-    # Streaming symbol map must NOT have HIST_ONLY
-    s_map2 = get_streaming_symbol_map_from_db(client=stream_client)
-    assert "HIST_ONLY" not in s_map2
-
-    # 3. Clean up
-    remove_streaming_symbol_from_db("STREAM_ONLY", client=stream_client)
-    assert "STREAM_ONLY" not in get_streaming_symbol_map_from_db(client=stream_client)
-
-    remove_symbol_from_db("HIST_ONLY", client=hist_client)
-    assert "HIST_ONLY" not in get_historical_symbol_map_from_db(client=hist_client)
-
-    hist_client.close()
-    stream_client.close()
+    # ETFs and crypto are strictly absent
+    for excluded in ["SPY", "QQQ", "IWM", "DIA", "BTCUSDT", "ETHUSDT", "CL=F", "VIX"]:
+        assert excluded not in symbols
 
 
 def test_stream_runner_drops_excluded_assets(tmp_path):
@@ -150,7 +70,7 @@ def test_stream_runner_drops_excluded_assets(tmp_path):
     asyncio.run(_test())
 
 
-def test_databento_backfill_targets_streaming_symbol_map():
+def test_databento_backfill_targets_lake_registry():
     """Verify get_target_stock_symbols reads the lake registry, scoped to the 19 approved equities."""
     symbols = get_target_stock_symbols()
     assert len(symbols) == 19

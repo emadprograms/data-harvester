@@ -1,122 +1,30 @@
 """
 Analytics and Query Engine for the Data Harvester Dashboard.
-Provides high-performance DuckDB query execution for:
+
+Every function here reads the Parquet tick lake through `TickLakeReader`; the
+in-memory DuckDB engine the reader uses is an implementation detail, not a store.
+The module provides:
 - Candlestick data extraction with dynamic time-bucketing (1m, 5m, 15m, 1h, 1d)
-- Comprehensive symbol coverage, bar counts, and data source distribution
-- Real-time tick stream tape and streamer daemon status
+- Raw tick tape and streamer daemon status
+- Week discovery and continuity / gap analysis for the Bird's Eye View
 - Live US market session clock and countdowns
+
+Timestamp contract: the lake stores UTC-naive instants. Candle `time` values are true
+UTC epoch seconds (`TIME_EPOCH_BASIS = "utc"`); human labels are rendered on the NYSE
+clock (`America/New_York`), where the regular session opens at 09:30 and closes at 16:00.
 """
 import os
 import time
-import collections
 from datetime import datetime, date, timezone, timedelta, time as dtime
 from zoneinfo import ZoneInfo
-import psutil
 from pandas.tseries.holiday import USFederalHolidayCalendar
 
 
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
-TIMEFRAME_MAP = {
-    "1m": None,  # Raw 1-minute
-    "5m": "5 minutes",
-    "15m": "15 minutes",
-    "30m": "30 minutes",
-    "1h": "1 hour",
-    "4h": "4 hours",
-    "1d": "1 day",
-}
-
-# --- Exchange-time rendering contract -------------------------------------------------------
-# Storage mandate: every timestamp in historical.duckdb / streaming.duckdb is pure UTC.
-# Presentation mandate: the Historical Database page is an exchange-local chart, so all labels
-# (X-axis ticks, crosshair, legend, inspector table, CSV) are rendered on the NYSE clock where
-# the regular session opens at 09:30 and closes at 16:00 America/New_York.
-#
-# The conversion below is deliberately built from the *physical* column type and never relies on
-# an implicit TIMESTAMPTZ -> TIMESTAMP cast: DuckDB resolves such casts with the session
-# `TimeZone` setting, which it inherits from the host OS. On a host running in US Eastern, the
-# previously used `((timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'America/New_York')::TIMESTAMP`
-# expression silently round-tripped back to the raw UTC wall clock over a tz-aware column, so the
-# 09:30 opening bell (13:30 UTC) was charted and labelled as "13:30 ET" with its volume spike.
 EXCHANGE_TZ = "America/New_York"
 TIME_EPOCH_BASIS = "utc"  # candle["time"] values are true UTC epoch seconds (not shifted wall clock)
-
-
-def detect_timestamp_column_type(client, table: str, column: str = "timestamp") -> str:
-    """
-    Introspects the physical DuckDB type of a timestamp column.
-    Returns 'TIMESTAMP' (canonical naive-UTC storage) or 'TIMESTAMP WITH TIME ZONE'
-    (e.g. a database created by a legacy tz-aware pandas backfill).
-    """
-    try:
-        res = client.execute(
-            """
-            SELECT data_type
-            FROM duckdb_columns()
-            WHERE table_name = ? AND column_name = ?
-            LIMIT 1
-            """,
-            [table, column],
-        )
-        row = res.fetchone()
-        if row and row[0]:
-            return str(row[0]).upper()
-    except Exception:
-        pass
-    return "TIMESTAMP"
-
-
-def is_tz_aware_column(column_type: str) -> bool:
-    """
-    True when the stored column already carries a timezone.
-    Accepts every spelling DuckDB and its clients use: 'TIMESTAMP WITH TIME ZONE' (canonical
-    duckdb_columns() output), 'TIMESTAMPTZ', 'TIMESTAMP_TZ', 'TIMESTAMP WITH TIMEZONE'.
-    """
-    normalized = " ".join((column_type or "").upper().replace("_", " ").split())
-    compact = normalized.replace(" ", "")
-    return "TIMEZONE" in compact or "TIMESTAMPTZ" in compact
-
-
-def build_utc_instant_sql(column_type: str, column: str = "timestamp") -> str:
-    """
-    SQL expression (TIMESTAMPTZ) resolving to the true UTC instant of a stored bar timestamp,
-    independent of the DuckDB session TimeZone.
-    """
-    if is_tz_aware_column(column_type):
-        return f"{column}::TIMESTAMPTZ"
-    # Naive TIMESTAMP columns hold UTC wall-clock values: attach UTC explicitly.
-    return f"timezone('UTC', {column}::TIMESTAMP)"
-
-
-def build_exchange_local_sql(column_type: str, column: str = "timestamp") -> str:
-    """
-    SQL expression (naive TIMESTAMP) resolving to the exchange-local (America/New_York) wall clock
-    of a stored bar timestamp. Used for human-readable labels and for time_bucket alignment so
-    intraday and daily buckets snap to NYSE session boundaries instead of UTC ones.
-    """
-    return f"timezone('{EXCHANGE_TZ}', {build_utc_instant_sql(column_type, column)})"
-
-
-def build_utc_epoch_sql(column_type: str, column: str = "timestamp") -> str:
-    """SQL expression resolving to the true UTC epoch seconds of a stored bar timestamp."""
-    return f"epoch({build_utc_instant_sql(column_type, column)})"
-
-
-def build_instant_from_exchange_local_sql(local_expr: str) -> str:
-    """SQL expression (TIMESTAMPTZ) converting an exchange-local wall clock back to its instant."""
-    return f"timezone('{EXCHANGE_TZ}', {local_expr})"
-
-
-def build_timestamp_range_clause(column_type: str, column: str, operator: str) -> str:
-    """
-    WHERE clause fragment comparing a stored timestamp against a UTC wall-clock string parameter.
-    Kept explicit per column type so naive-UTC storage still benefits from index/zone-map pruning.
-    """
-    if is_tz_aware_column(column_type):
-        return f"{column} {operator} timezone('UTC', ?::TIMESTAMP)"
-    return f"{column}::TIMESTAMP {operator} ?::TIMESTAMP"
 
 
 def _get_lake_reader():
@@ -157,7 +65,7 @@ def _no_disk_database_fallback():
     """v5.0 removed the disk-database backend; never fall back to one.
 
     Every lake-first branch in this module used to end by opening a read-only
-    connection to the streaming DuckDB database, so an unavailable lake would
+    connection to a disk database, so an unavailable lake would
     silently serve data from disk instead of reporting the problem.
     """
     from src.storage.reader import LakeUnavailableError
@@ -167,10 +75,9 @@ def _no_disk_database_fallback():
     )
 
 
-def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, client=None, date: str = None, hours: str = "extended") -> dict:
+def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, date: str = None, hours: str = "extended") -> dict:
     """
-    Fetches OHLCV candles resampled on-the-fly exclusively from raw ticks in data/streaming.duckdb.
-    Zero dependency on historical.duckdb.
+    Fetches OHLCV candles resampled on-the-fly from the raw ticks in the Parquet lake.
     Buckets are aligned to the NYSE clock (America/New_York) and follow the same timestamp
     contract: UTC epoch in `time`, exchange-local label in `time_str`.
     Supports single-day filtering via `date` ("YYYY-MM-DD") and `hours` ("extended" or "regular"),
@@ -180,274 +87,18 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
     if not symbol:
         return {"error": "symbol parameter is required", "candles": [], "count": 0, "database": "streaming"}
 
-    if client is None:
-        lake_reader = _get_lake_reader()
-        if lake_reader is not None:
-            return lake_reader.get_candles(
-                symbol=symbol,
-                timeframe=timeframe,
-                start=start,
-                end=end,
-                limit=limit,
-                date=date,
-                hours=hours,
-            )
-
-    timeframe = (timeframe or "1m").lower()
-    interval_map = {
-        "1s": "1 second",
-        "5s": "5 seconds",
-        "15s": "15 seconds",
-        "1m": "1 minute",
-        "5m": "5 minutes",
-        "15m": "15 minutes",
-        "30m": "30 minutes",
-        "1h": "1 hour",
-        "4h": "4 hours",
-        "1d": "1 day",
-    }
-    interval_str = interval_map.get(timeframe, "1 minute")
-    limit = min(max(1, int(limit or 1000)), 10000)
-    if date:
-        limit = max(limit, 2000)
-
-    own_client = False
-    s_client = client
-    if s_client is None:
+    lake_reader = _get_lake_reader()
+    if lake_reader is None:
         _no_disk_database_fallback()
-
-    try:
-        tables = [t[0] for t in s_client.execute("SHOW TABLES").fetchall()]
-        table_name = "tick_data" if "tick_data" in tables else "ticks"
-        ts_type = detect_timestamp_column_type(s_client, table_name)
-        exchange_local_sql = build_exchange_local_sql(ts_type)
-
-        where_clauses = ["symbol = ?"]
-        params = [symbol]
-
-        session_start_epoch = None
-        session_end_epoch = None
-        day_total_ticks = 0
-        session_total_ticks = 0
-
-        if date:
-            d_parts = date.strip().split("-")
-            d_obj = datetime(int(d_parts[0]), int(d_parts[1]), int(d_parts[2])).date()
-            if str(hours).lower() == "regular":
-                s_dt = datetime(d_obj.year, d_obj.month, d_obj.day, 9, 30, 0, tzinfo=ET)
-                e_dt = datetime(d_obj.year, d_obj.month, d_obj.day, 16, 0, 0, tzinfo=ET)
-            else:
-                s_dt = datetime(d_obj.year, d_obj.month, d_obj.day, 4, 0, 0, tzinfo=ET)
-                e_dt = datetime(d_obj.year, d_obj.month, d_obj.day, 20, 0, 0, tzinfo=ET)
-            session_start_epoch = int(s_dt.timestamp())
-            session_end_epoch = int(e_dt.timestamp())
-
-            s_dt_utc = s_dt.astimezone(timezone.utc)
-            e_dt_utc = e_dt.astimezone(timezone.utc)
-
-            day_start_et = datetime(d_obj.year, d_obj.month, d_obj.day, 0, 0, 0, tzinfo=ET)
-            day_end_et = day_start_et + timedelta(days=1)
-            day_start_utc = day_start_et.astimezone(timezone.utc)
-            day_end_utc = day_end_et.astimezone(timezone.utc)
-
-            day_ge = build_timestamp_range_clause(ts_type, "timestamp", ">=")
-            day_lt = build_timestamp_range_clause(ts_type, "timestamp", "<")
-            sess_ge = build_timestamp_range_clause(ts_type, "timestamp", ">=")
-            sess_lt = build_timestamp_range_clause(ts_type, "timestamp", "<")
-
-            counts_query = f"""
-                SELECT 
-                    COUNT(*) as day_total_ticks,
-                    COUNT(CASE WHEN {sess_ge} AND {sess_lt} THEN 1 END) as session_total_ticks
-                FROM {table_name}
-                WHERE symbol = ?
-                  AND {day_ge}
-                  AND {day_lt}
-            """
-            c_row = s_client.execute(counts_query, [
-                s_dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
-                e_dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
-                symbol,
-                day_start_utc.strftime("%Y-%m-%d %H:%M:%S"),
-                day_end_utc.strftime("%Y-%m-%d %H:%M:%S")
-            ]).fetchone()
-            day_total_ticks = int(c_row[0]) if c_row and c_row[0] is not None else 0
-            session_total_ticks = int(c_row[1]) if c_row and c_row[1] is not None else 0
-
-            where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", ">="))
-            params.append(s_dt_utc.strftime("%Y-%m-%d %H:%M:%S"))
-            where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", "<"))
-            params.append(e_dt_utc.strftime("%Y-%m-%d %H:%M:%S"))
-        else:
-            if start:
-                where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", ">="))
-                params.append(start.strip())
-            if end:
-                where_clauses.append(build_timestamp_range_clause(ts_type, "timestamp", "<="))
-                params.append(end.strip())
-
-        where_sql = " AND ".join(where_clauses)
-
-        query = f"""
-            SELECT 
-                epoch({build_instant_from_exchange_local_sql('bucket')}) as time_sec,
-                strftime(bucket, '%Y-%m-%d %H:%M:%S') as time_str,
-                first(price ORDER BY timestamp ASC) as open,
-                max(price) as high,
-                min(price) as low,
-                last(price ORDER BY timestamp ASC) as close,
-                COALESCE(sum(volume), count(*)) as volume,
-                COALESCE(first(source ORDER BY timestamp ASC), 'CAPITAL_STREAM') as source,
-                COALESCE(first(session ORDER BY timestamp ASC), 'REG') as session,
-                count(*) as tick_count
-            FROM (
-                SELECT 
-                    time_bucket(INTERVAL '{interval_str}', {exchange_local_sql}) as bucket,
-                    timestamp, price, volume, source, session
-                FROM {table_name}
-                WHERE {where_sql}
-            )
-            GROUP BY bucket
-            ORDER BY bucket DESC
-            LIMIT ?
-        """
-        params.append(limit)
-        res = s_client.execute(query, params)
-        rows = res.rows or []
-
-        candles = []
-        for r in reversed(rows):
-            candles.append({
-                "time": int(r[0]),
-                "time_str": str(r[1]),
-                "open": round(float(r[2]), 4) if r[2] is not None else None,
-                "high": round(float(r[3]), 4) if r[3] is not None else None,
-                "low": round(float(r[4]), 4) if r[4] is not None else None,
-                "close": round(float(r[5]), 4) if r[5] is not None else None,
-                "volume": round(float(r[6]), 2) if r[6] is not None else 0.0,
-                "source": r[7] or "CAPITAL_STREAM",
-                "session": r[8] or "REG",
-                "tick_count": int(r[9]) if len(r) > 9 and r[9] is not None else 0
-            })
-
-        resp = {
-            "symbol": symbol,
-            "timeframe": timeframe,
-            "database": "streaming",
-            "timezone": EXCHANGE_TZ,
-            "time_epoch_basis": TIME_EPOCH_BASIS,
-            "storage_timestamp_type": ts_type,
-            "count": len(candles),
-            "candles": candles
-        }
-        if session_start_epoch is not None:
-            resp["session_start_epoch"] = session_start_epoch
-            resp["session_end_epoch"] = session_end_epoch
-            resp["date"] = date
-            resp["hours"] = hours
-            resp["day_total_ticks"] = day_total_ticks
-            resp["session_total_ticks"] = session_total_ticks
-            gaps = []
-
-            def is_candle_gap_flagged(start_ep: int, end_ep: int, missing_m: int) -> bool:
-                if str(hours).lower() == "regular":
-                    return missing_m >= 1
-                rth_start = int(datetime(d_obj.year, d_obj.month, d_obj.day, 9, 30, 0, tzinfo=ET).timestamp())
-                rth_end = int(datetime(d_obj.year, d_obj.month, d_obj.day, 15, 59, 0, tzinfo=ET).timestamp())
-                ov_s = max(start_ep, rth_start)
-                ov_e = min(end_ep, rth_end)
-                rth_m = ((ov_e - ov_s) // 60 + 1) if ov_s <= ov_e else 0
-                if rth_m >= 1:
-                    return True
-                return missing_m >= 5
-
-            if len(candles) >= 2:
-                for i in range(len(candles) - 1):
-                    t1 = candles[i]["time"]
-                    t2 = candles[i + 1]["time"]
-                    diff_sec = t2 - t1
-                    missing_min = (diff_sec // 60) - 1
-                    if missing_min >= 1:
-                        gap_start_epoch = t1 + 60
-                        gap_end_epoch = t2 - 60
-                        if is_candle_gap_flagged(gap_start_epoch, gap_end_epoch, missing_min):
-                            s_dt = datetime.fromtimestamp(gap_start_epoch, tz=timezone.utc).astimezone(ET)
-                            e_dt = datetime.fromtimestamp(gap_end_epoch, tz=timezone.utc).astimezone(ET)
-                            start_str = s_dt.strftime("%H:%M")
-                            end_str = e_dt.strftime("%H:%M")
-                            gaps.append({
-                                "start_epoch": gap_start_epoch,
-                                "end_epoch": gap_end_epoch,
-                                "duration": missing_min,
-                                "start_str": start_str,
-                                "end_str": end_str,
-                                "description": f"{missing_min}m Gap ({start_str} - {end_str})"
-                            })
-
-            # Detect leading boundary gap
-            if len(candles) > 0:
-                first_candle_time = candles[0]["time"]
-                if first_candle_time > session_start_epoch:
-                    missing_min = (first_candle_time - session_start_epoch) // 60
-                    leading_gap_start = session_start_epoch
-                    leading_gap_end = first_candle_time - 60
-                    if missing_min >= 1 and is_candle_gap_flagged(leading_gap_start, leading_gap_end, missing_min):
-                        s_dt = datetime.fromtimestamp(leading_gap_start, tz=timezone.utc).astimezone(ET)
-                        e_dt = datetime.fromtimestamp(leading_gap_end, tz=timezone.utc).astimezone(ET)
-                        start_str = s_dt.strftime("%H:%M")
-                        end_str = e_dt.strftime("%H:%M")
-                        gaps.insert(0, {
-                            "start_epoch": leading_gap_start,
-                            "end_epoch": leading_gap_end,
-                            "duration": missing_min,
-                            "start_str": start_str,
-                            "end_str": end_str,
-                            "description": f"{missing_min}m Gap ({start_str} - {end_str})"
-                        })
-
-                # Detect trailing boundary gap
-                last_candle_time = candles[-1]["time"]
-                if last_candle_time + 60 < session_end_epoch:
-                    missing_min = (session_end_epoch - (last_candle_time + 60)) // 60
-                    trailing_gap_start = last_candle_time + 60
-                    trailing_gap_end = session_end_epoch - 60
-                    if missing_min >= 1 and is_candle_gap_flagged(trailing_gap_start, trailing_gap_end, missing_min):
-                        s_dt = datetime.fromtimestamp(trailing_gap_start, tz=timezone.utc).astimezone(ET)
-                        e_dt = datetime.fromtimestamp(trailing_gap_end, tz=timezone.utc).astimezone(ET)
-                        start_str = s_dt.strftime("%H:%M")
-                        end_str = e_dt.strftime("%H:%M")
-                        gaps.append({
-                            "start_epoch": trailing_gap_start,
-                            "end_epoch": trailing_gap_end,
-                            "duration": missing_min,
-                            "start_str": start_str,
-                            "end_str": end_str,
-                            "description": f"{missing_min}m Gap ({start_str} - {end_str})"
-                        })
-            else:
-                missing_min = (session_end_epoch - session_start_epoch) // 60
-                if missing_min >= 1 and is_candle_gap_flagged(session_start_epoch, session_end_epoch - 60, missing_min):
-                    s_dt = datetime.fromtimestamp(session_start_epoch, tz=timezone.utc).astimezone(ET)
-                    e_dt = datetime.fromtimestamp(session_end_epoch - 60, tz=timezone.utc).astimezone(ET)
-                    start_str = s_dt.strftime("%H:%M")
-                    end_str = e_dt.strftime("%H:%M")
-                    gaps.append({
-                        "start_epoch": session_start_epoch,
-                        "end_epoch": session_end_epoch - 60,
-                        "duration": missing_min,
-                        "start_str": start_str,
-                        "end_str": end_str,
-                        "description": f"{missing_min}m Gap ({start_str} - {end_str})"
-                    })
-
-            gaps.sort(key=lambda g: g["start_epoch"])
-            resp["gaps"] = gaps
-        return resp
-    except Exception as e:
-        return {"error": str(e), "symbol": symbol, "candles": [], "count": 0, "database": "streaming", "timezone": EXCHANGE_TZ}
-    finally:
-        if own_client and s_client:
-            s_client.close()
+    return lake_reader.get_candles(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start=start,
+                    end=end,
+                    limit=limit,
+                    date=date,
+                    hours=hours,
+                )
 
 
 def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, db_source: str = None, date: str = None, hours: str = "extended") -> dict:
@@ -460,231 +111,42 @@ def get_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str 
     return get_streaming_candles(symbol, timeframe=timeframe, start=start, end=end, limit=limit, date=date, hours=hours)
 
 
-def get_stream_tape(symbol: str = None, limit: int = 50, offset: int = 0, client=None) -> dict:
+def get_stream_tape(symbol: str = None, limit: int = 50, offset: int = 0) -> dict:
     """
-    Returns latest raw ticks from streaming tick lake or streaming.duckdb, calculating spread and throughput.
+    Returns the latest raw ticks from the lake, calculating spread and throughput.
     """
-    if client is None:
-        lake_reader = _get_lake_reader()
-        if lake_reader is not None:
-            return lake_reader.get_tape(symbol=symbol, limit=limit, offset=offset)
-
-    limit = min(max(1, int(limit or 50)), 200)
-    offset = max(0, int(offset or 0))
-    own_client = False
-    if client is None:
+    lake_reader = _get_lake_reader()
+    if lake_reader is None:
         _no_disk_database_fallback()
-    try:
-        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        table_name = "tick_data" if "tick_data" in tables else "ticks"
-        where_clause = "WHERE symbol = ?" if symbol else ""
-        params = [symbol.strip().upper()] if symbol else []
-
-        query = f"""
-            SELECT 
-                strftime(timestamp::TIMESTAMP, '%Y-%m-%d %H:%M:%S.%f') as time_str,
-                symbol, price, COALESCE(volume, 1.0) as volume, bid, ask, source, session
-            FROM {table_name}
-            {where_clause}
-            ORDER BY timestamp DESC
-            LIMIT ?
-        """
-        params.append(limit)
-        res = client.execute(query, params)
-        rows = res.rows or []
-
-        ticks = []
-        for r in rows:
-            bid = float(r[4]) if r[4] is not None else None
-            ask = float(r[5]) if r[5] is not None else None
-            spread = round(ask - bid, 4) if (ask is not None and bid is not None) else None
-
-            ticks.append({
-                "timestamp": str(r[0])[:-3],  # Millisecond precision
-                "symbol": r[1],
-                "price": round(float(r[2]), 4) if r[2] is not None else None,
-                "volume": round(float(r[3]), 2) if r[3] is not None else 1.0,
-                "bid": round(bid, 4) if bid is not None else None,
-                "ask": round(ask, 4) if ask is not None else None,
-                "spread": spread,
-                "source": r[6] or "CAPITAL",
-                "session": r[7] or "REG"
-            })
-
-        return {
-            "symbol": symbol or "ALL",
-            "count": len(ticks),
-            "ticks": ticks
-        }
-    except Exception as e:
-        return {"ticks": [], "count": 0, "error": str(e)}
-    finally:
-        if own_client and client:
-            client.close()
+    return lake_reader.get_tape(symbol=symbol, limit=limit, offset=offset)
 
 
-def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int = 10000, offset: int = 0, direction: str = "asc", client=None) -> dict:
+def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int = 10000, offset: int = 0, direction: str = "asc") -> dict:
     """
-    Queries raw ticks from tick lake or streaming.duckdb with filtering by symbol, date/time range, limit, offset, and direction.
+    Queries raw ticks from the lake with filtering by symbol, date/time range, limit, offset, and direction.
     """
-    if client is None:
-        lake_reader = _get_lake_reader()
-        if lake_reader is not None:
-            ticks = lake_reader.query_ticks(
-                symbol=symbol,
-                start=start,
-                end=end,
-                limit=limit,
-                offset=offset,
-                direction=direction,
-            )
-            return {"ticks": ticks, "count": len(ticks), "symbol": symbol or "ALL"}
-
-    limit = min(max(1, int(limit or 10000)), 100000)
-    offset = max(0, int(offset or 0))
-    direction = "DESC" if str(direction).lower() == "desc" else "ASC"
-    
-    own_client = False
-    if client is None:
+    lake_reader = _get_lake_reader()
+    if lake_reader is None:
         _no_disk_database_fallback()
-    if not client:
-        return {"ticks": [], "count": 0, "error": "Streaming DB unavailable"}
-
-    try:
-        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        table_name = "tick_data" if "tick_data" in tables else "ticks"
-        where_clauses = []
-        params = []
-        if symbol:
-            where_clauses.append("symbol = ?")
-            params.append(symbol.strip().upper())
-        if start:
-            where_clauses.append("timestamp::TIMESTAMP >= ?::TIMESTAMP")
-            params.append(start.strip())
-        if end:
-            where_clauses.append("timestamp::TIMESTAMP <= ?::TIMESTAMP")
-            params.append(end.strip())
-
-        where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-        query = f"""
-            SELECT 
-                strftime(timestamp::TIMESTAMP, '%Y-%m-%d %H:%M:%S.%f') as time_str,
-                symbol, price, COALESCE(volume, 1.0) as volume, bid, ask, source, session
-            FROM {table_name}
-            {where_sql}
-            ORDER BY timestamp {direction}
-            LIMIT ? OFFSET ?
-        """
-        params.extend([limit, offset])
-        res = client.execute(query, params)
-        rows = res.rows or []
-
-        ticks = []
-        for r in rows:
-            bid = float(r[4]) if r[4] is not None else None
-            ask = float(r[5]) if r[5] is not None else None
-            spread = round(ask - bid, 4) if (ask is not None and bid is not None) else None
-
-            ticks.append({
-                "timestamp": str(r[0])[:-3],
-                "symbol": r[1],
-                "price": round(float(r[2]), 4) if r[2] is not None else None,
-                "volume": round(float(r[3]), 2) if r[3] is not None else 1.0,
-                "bid": round(bid, 4) if bid is not None else None,
-                "ask": round(ask, 4) if ask is not None else None,
-                "spread": spread,
-                "source": r[6] or "CAPITAL",
-                "session": r[7] or "REG"
-            })
-
-        return {
-            "symbol": symbol or "ALL",
-            "count": len(ticks),
-            "ticks": ticks
-        }
-    except Exception as e:
-        return {"ticks": [], "count": 0, "error": str(e)}
-    finally:
-        if own_client and client:
-            client.close()
+    ticks = lake_reader.query_ticks(
+                    symbol=symbol,
+                    start=start,
+                    end=end,
+                    limit=limit,
+                    offset=offset,
+                    direction=direction,
+                )
+    return {"ticks": ticks, "count": len(ticks), "symbol": symbol or "ALL"}
 
 
 def get_stream_status(client=None) -> dict:
     """
     Inspects writer status file or process table for src.stream.runner and checks recent tick throughput.
     """
-    if client is None:
-        lake_reader = _get_lake_reader()
-        if lake_reader is not None:
-            return lake_reader.get_stream_status()
-
-    current_pid = os.getpid()
-    running_pids = []
-    
-    try:
-        for p in psutil.process_iter(["pid", "name", "cmdline"]):
-            try:
-                if p.pid == current_pid:
-                    continue
-                cmdline = " ".join(p.info["cmdline"] or [])
-                if "src.stream.runner" in cmdline:
-                    running_pids.append(p.pid)
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-    except Exception:
-        pass
-
-    is_alive = len(running_pids) > 0
-    active_pid = running_pids[0] if is_alive else None
-
-    # Database tick activity
-    own_client = False
-    if client is None:
+    lake_reader = _get_lake_reader()
+    if lake_reader is None:
         _no_disk_database_fallback()
-    ticks_total = 0
-    latest_ts = None
-    seconds_ago = None
-    ticks_last_min = 0
-
-    if client:
-        try:
-            tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-            table_name = "tick_data" if "tick_data" in tables else "ticks"
-            res = client.execute(f"SELECT COUNT(*), MAX(timestamp) FROM {table_name}").fetchone()
-            if res:
-                ticks_total = res[0] or 0
-                latest_ts = str(res[1]) if res[1] else None
-
-            if latest_ts:
-                try:
-                    dt = datetime.strptime(latest_ts.split('.')[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                    seconds_ago = round((datetime.now(timezone.utc) - dt).total_seconds(), 1)
-                except Exception:
-                    pass
-
-            # Count ticks in last 60 seconds
-            one_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
-            res_m = client.execute(f"SELECT COUNT(*) FROM {table_name} WHERE timestamp >= ?::TIMESTAMP", [one_min_ago]).fetchone()
-            if res_m:
-                ticks_last_min = res_m[0] or 0
-        except Exception:
-            pass
-        finally:
-            if own_client:
-                client.close()
-
-    return {
-        "is_alive": is_alive,
-        "pid": active_pid,
-        "all_pids": running_pids,
-        "ticks_total": ticks_total,
-        "latest_tick_timestamp": latest_ts,
-        "seconds_since_last_tick": seconds_ago,
-        "ticks_last_minute": ticks_last_min,
-        "status_label": "LIVE" if is_alive else "STOPPED",
-        "total_dropped": 0,
-        "queue_depth": 0,
-    }
+    return lake_reader.get_stream_status()
 
 
 def get_market_session_info() -> dict:
@@ -763,7 +225,7 @@ _AVAILABLE_WEEKS_CACHE = {"timestamp": 0.0, "weeks": []}
 
 def discover_available_weeks(client=None) -> list[dict]:
     """
-    Discovers available trading weeks from streaming DuckDB (tick_data or ticks table)
+    Discovers available trading weeks from lake partitions,
     grouped Monday-to-Friday in exchange-local time (America/New_York).
     Returns list of dicts:
       [
@@ -779,81 +241,10 @@ def discover_available_weeks(client=None) -> list[dict]:
     sorted descending by week_start.
     """
     now = time.time()
-    if client is None:
-        lake_reader = _get_lake_reader()
-        if lake_reader is not None:
-            return lake_reader.discover_available_weeks()
-
-        if _AVAILABLE_WEEKS_CACHE["weeks"] and (now - _AVAILABLE_WEEKS_CACHE["timestamp"] < 300):
-            return _AVAILABLE_WEEKS_CACHE["weeks"]
-
-    own_client = False
-    if client is None:
+    lake_reader = _get_lake_reader()
+    if lake_reader is None:
         _no_disk_database_fallback()
-
-    try:
-        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        table_name = "tick_data" if "tick_data" in tables else ("ticks" if "ticks" in tables else None)
-        if not table_name:
-            return []
-
-        query = f"""
-            SELECT DISTINCT CAST(timestamp AS DATE) as d
-            FROM {table_name}
-            ORDER BY d ASC
-        """
-        rows = client.execute(query).fetchall()
-        if not rows:
-            return []
-
-        week_days_map = collections.defaultdict(set)
-        for r in rows:
-            d = r[0]
-            if isinstance(d, datetime):
-                d = d.date()
-            if d and d.weekday() < 5:
-                monday = d - timedelta(days=d.weekday())
-                mon_str = monday.strftime("%Y-%m-%d")
-                week_days_map[mon_str].add(d)
-
-        if not week_days_map:
-            return []
-
-        sorted_mondays = sorted(week_days_map.keys(), reverse=True)
-        weeks = []
-        for i, mon_str in enumerate(sorted_mondays):
-            is_current = (i == 0)
-            mon_date = datetime.strptime(mon_str, "%Y-%m-%d").date()
-            fri_date = mon_date + timedelta(days=4)
-            fri_str = fri_date.strftime("%Y-%m-%d")
-
-            mon_lbl = mon_date.strftime("%b %d")
-            fri_lbl = fri_date.strftime("%b %d, %Y")
-            label = f"{mon_lbl} – {fri_lbl}" + (" (Current)" if is_current else "")
-
-            weeks.append({
-                "week_start": mon_str,
-                "week_end": fri_str,
-                "start_date": mon_str,
-                "end_date": fri_str,
-                "label": label,
-                "is_current": is_current,
-                "trading_days_count": len(week_days_map[mon_str])
-            })
-
-        if own_client:
-            _AVAILABLE_WEEKS_CACHE["timestamp"] = now
-            _AVAILABLE_WEEKS_CACHE["weeks"] = weeks
-
-        return weeks
-    except Exception:
-        return []
-    finally:
-        if own_client and client:
-            try:
-                client.close()
-            except Exception:
-                pass
+    return lake_reader.discover_available_weeks()
 
 
 # Backward compatibility alias
@@ -863,7 +254,6 @@ get_available_streaming_weeks = discover_available_weeks
 def get_streaming_continuity_analysis(
     days: int = 5,
     symbol: str = "all",
-    client=None,
     include_extended: bool = False,
     week_start: str = None,
     target_date: str = None,
@@ -873,7 +263,7 @@ def get_streaming_continuity_analysis(
 ) -> dict:
     """
     Bird's Eye View Data Continuity & Integrity Visualizer Analysis Engine.
-    Exclusively queries streaming.duckdb (tick_data / ticks table). Zero access to historical.duckdb.
+    Reads only the Parquet tick lake; there is no other store.
 
     Evaluates regular market session hours (09:30 to 16:00 ET, 390 min) or extended hours
     (04:00 to 20:00 ET, 960 min) across trading days (Mon-Fri, excluding holidays and weekends).
@@ -899,571 +289,17 @@ def get_streaming_continuity_analysis(
     view_mode = "all" if is_all else symbol
     include_extended = bool(include_extended)
 
-    if client is None:
-        lake_reader = _get_lake_reader()
-        if lake_reader is not None:
-            return lake_reader.get_streaming_continuity_analysis(
-                days=days,
-                symbol=symbol,
-                include_extended=include_extended,
-                week_start=week_start,
-                target_date=target_date,
-                week_offset=week_offset,
-                target_week=target_week,
-                end_date=end_date,
-            )
-
-    own_client = False
-    if client is None:
+    lake_reader = _get_lake_reader()
+    if lake_reader is None:
         _no_disk_database_fallback()
-
-    try:
-        available_weeks = discover_available_weeks(client=client)
-        if target_week and not week_start:
-            week_start = target_week
-        if end_date and not target_date:
-            target_date = end_date
-        if week_offset is not None and not week_start:
-            try:
-                w_off = int(week_offset)
-                if 0 <= w_off < len(available_weeks):
-                    week_start = available_weeks[w_off].get("week_start") or available_weeks[w_off].get("start_date")
-            except Exception:
-                pass
-        active_week_start = week_start or (available_weeks[0]["week_start"] if available_weeks else None)
-
-        if not client:
-            return {
-                "status": "healthy",
-                "database": "streaming",
-                "view_mode": view_mode,
-                "symbol": symbol,
-                "monitored_symbols_count": 19 if is_all else 1,
-                "extended_hours": include_extended,
-                "hours": "extended" if include_extended else "regular",
-                "days": [],
-                "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
-                "spectrogram": {},
-                "symbols_breakdown": {},
-                "symbols": {},
-                "available_weeks": available_weeks,
-                "week_start": active_week_start,
-                "target_date": target_date,
-            }
-
-        # Resolve monitored symbols inventory from streaming_database_symbols
-        monitored_symbols = []
-        try:
-            tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-            if "streaming_database_symbols" in tables:
-                s_rows = client.execute("SELECT display_name FROM streaming_database_symbols WHERE is_active = true ORDER BY display_name").fetchall()
-                monitored_symbols = [r[0] for r in s_rows if r[0]]
-        except Exception:
-            pass
-
-        if not monitored_symbols:
-            monitored_symbols = list(MONITORED_19_SYMBOLS)
-
-        if not is_all:
-            eval_symbols = [symbol]
-            monitored_count = 1
-        else:
-            eval_symbols = monitored_symbols
-            monitored_count = len(monitored_symbols)
-
-        # Check table presence
-        tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
-        table_name = "tick_data" if "tick_data" in tables else ("ticks" if "ticks" in tables else None)
-        if not table_name:
-            return {
-                "status": "healthy",
-                "database": "streaming",
-                "view_mode": view_mode,
-                "symbol": symbol,
-                "monitored_symbols_count": monitored_count,
-                "extended_hours": include_extended,
-                "hours": "extended" if include_extended else "regular",
-                "days": [],
-                "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
-                "spectrogram": {},
-                "symbols_breakdown": {},
-                "symbols": {},
-                "available_weeks": available_weeks,
-                "week_start": active_week_start,
-                "target_date": target_date,
-            }
-
-        count_row = client.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
-        if not count_row or count_row[0] == 0:
-            empty_spec = {s: {"symbol": s, "coverage_pct": 100.0, "status": "healthy", "total_gaps": 0, "total_outage_minutes": 0, "gaps": []} for s in eval_symbols}
-            return {
-                "status": "healthy",
-                "database": "streaming",
-                "view_mode": view_mode,
-                "symbol": symbol,
-                "monitored_symbols_count": monitored_count,
-                "extended_hours": include_extended,
-                "hours": "extended" if include_extended else "regular",
-                "days": [],
-                "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
-                "spectrogram": empty_spec if is_all else {},
-                "symbols_breakdown": empty_spec if is_all else {},
-                "symbols": empty_spec if is_all else {},
-                "available_weeks": available_weeks,
-                "week_start": active_week_start,
-                "target_date": target_date,
-            }
-
-        # Timezone conversion SQL for exchange-local time
-        ts_type = detect_timestamp_column_type(client, table_name)
-        local_ts_sql = build_exchange_local_sql(ts_type, "timestamp")
-
-        # Discover trading dates in streaming database
-        start_time_sql = "04:00:00" if include_extended else "09:30:00"
-        end_time_sql = "20:00:00" if include_extended else "16:00:00"
-
-        cal = USFederalHolidayCalendar()
-        holidays = set(cal.holidays(start="2020-01-01", end="2035-01-01").date)
-
-        if target_date:
-            t_parts = target_date.strip().split("-")
-            t_date = date(int(t_parts[0]), int(t_parts[1]), int(t_parts[2]))
-            target_dates = [t_date]
-            active_week_start = (t_date - timedelta(days=t_date.weekday())).strftime("%Y-%m-%d")
-        elif week_start:
-            ws_parts = week_start.strip().split("-")
-            ws_date = date(int(ws_parts[0]), int(ws_parts[1]), int(ws_parts[2]))
-            mon = ws_date - timedelta(days=ws_date.weekday())
-            fri = mon + timedelta(days=4)
-            active_week_start = mon.strftime("%Y-%m-%d")
-
-            mon_str = mon.strftime("%Y-%m-%d")
-            fri_str = fri.strftime("%Y-%m-%d")
-            mon_utc = datetime(mon.year, mon.month, mon.day, 0, 0, 0, tzinfo=ET).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
-            fri_utc = datetime(fri.year, fri.month, fri.day, 23, 59, 59, tzinfo=ET).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
-            dates_res_week = client.execute(f"""
-                SELECT DISTINCT CAST({local_ts_sql} AS DATE) as d
-                FROM {table_name}
-                WHERE {build_timestamp_range_clause(ts_type, 'timestamp', '>=')}
-                  AND {build_timestamp_range_clause(ts_type, 'timestamp', '<=')}
-                  AND CAST({local_ts_sql} AS DATE) >= ?::DATE
-                  AND CAST({local_ts_sql} AS DATE) <= ?::DATE
-                  AND CAST({local_ts_sql} AS TIME) >= TIME '{start_time_sql}'
-                  AND CAST({local_ts_sql} AS TIME) <= TIME '{end_time_sql}'
-                ORDER BY d ASC
-            """, [mon_utc, fri_utc, mon_str, fri_str]).fetchall()
-            target_dates = []
-            for r in dates_res_week:
-                d = r[0]
-                if isinstance(d, datetime):
-                    d = d.date()
-                if d and d.weekday() < 5 and d not in holidays:
-                    target_dates.append(d)
-            if not target_dates:
-                target_dates = [mon + timedelta(days=i) for i in range(5) if (mon + timedelta(days=i)) not in holidays]
-        else:
-            max_ts_row = client.execute(f"SELECT MAX(timestamp) FROM {table_name}").fetchone()
-            if not max_ts_row or not max_ts_row[0]:
-                return {
-                    "database": "streaming",
-                    "view_mode": view_mode,
-                    "symbol": symbol,
-                    "monitored_symbols_count": monitored_count,
-                    "extended_hours": include_extended,
-                    "hours": "extended" if include_extended else "regular",
-                    "days": [],
-                    "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
-                    "spectrogram": {},
-                    "symbols_breakdown": {},
-                    "symbols": {},
-                    "available_weeks": available_weeks,
-                    "week_start": active_week_start,
-                    "target_date": target_date,
-                }
-
-            max_ts_val = max_ts_row[0]
-            if isinstance(max_ts_val, str):
-                max_ts_val = datetime.strptime(max_ts_val.split('.')[0], "%Y-%m-%d %H:%M:%S")
-
-            lookback_days = max(30, days * 4)
-            cutoff_dt = max_ts_val - timedelta(days=lookback_days)
-            cutoff_str = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-            dates_res = client.execute(f"""
-                SELECT DISTINCT CAST({local_ts_sql} AS DATE) as d
-                FROM {table_name}
-                WHERE {build_timestamp_range_clause(ts_type, 'timestamp', '>=')}
-                  AND CAST({local_ts_sql} AS TIME) >= TIME '{start_time_sql}'
-                  AND CAST({local_ts_sql} AS TIME) <= TIME '{end_time_sql}'
-                ORDER BY d ASC
-            """, [cutoff_str]).fetchall()
-
-            trading_dates = []
-            for r in dates_res:
-                d = r[0]
-                if isinstance(d, datetime):
-                    d = d.date()
-                if d and d.weekday() < 5 and d not in holidays:
-                    trading_dates.append(d)
-
-            # Fallback if fewer than `days` trading dates found in pruned window
-            if len(trading_dates) < days:
-                dates_res_full = client.execute(f"""
-                    SELECT DISTINCT CAST({local_ts_sql} AS DATE) as d
-                    FROM {table_name}
-                    WHERE CAST({local_ts_sql} AS TIME) >= TIME '{start_time_sql}'
-                      AND CAST({local_ts_sql} AS TIME) <= TIME '{end_time_sql}'
-                    ORDER BY d ASC
-                """).fetchall()
-                trading_dates = []
-                for r in dates_res_full:
-                    d = r[0]
-                    if isinstance(d, datetime):
-                        d = d.date()
-                    if d and d.weekday() < 5 and d not in holidays:
-                        trading_dates.append(d)
-
-            if not trading_dates:
-                return {
-                    "database": "streaming",
-                    "view_mode": view_mode,
-                    "symbol": symbol,
-                    "monitored_symbols_count": monitored_count,
-                    "extended_hours": include_extended,
-                    "hours": "extended" if include_extended else "regular",
-                    "days": [],
-                    "summary": {"total_gaps": 0, "total_outage_minutes": 0, "average_coverage": 100.0, "gaps": []},
-                    "spectrogram": {},
-                    "symbols_breakdown": {},
-                    "symbols": {},
-                    "available_weeks": available_weeks,
-                    "week_start": active_week_start,
-                    "target_date": target_date,
-                }
-
-            target_dates = trading_dates[-days:]
-            active_week_start = (target_dates[0] - timedelta(days=target_dates[0].weekday())).strftime("%Y-%m-%d") if target_dates else (available_weeks[0]["week_start"] if available_weeks else None)
-
-        # Query 1-minute buckets across target dates
-        min_date_str = target_dates[0].strftime("%Y-%m-%d")
-        max_date_str = target_dates[-1].strftime("%Y-%m-%d")
-
-        min_utc_str = datetime(target_dates[0].year, target_dates[0].month, target_dates[0].day, 0, 0, 0, tzinfo=ET).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
-        max_utc_str = datetime(target_dates[-1].year, target_dates[-1].month, target_dates[-1].day, 23, 59, 59, tzinfo=ET).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
-
-        sym_filter = ""
-        params = [min_utc_str, max_utc_str, min_date_str, max_date_str]
-        if not is_all:
-            sym_filter = "AND symbol = ?"
-            params.append(symbol)
-
-        start_time_bucket = "04:00:00" if include_extended else "09:30:00"
-        end_time_bucket = "19:59:59" if include_extended else "15:59:59"
-
-        q = f"""
-            SELECT 
-                CAST({local_ts_sql} AS DATE) as d,
-                strftime(time_bucket(INTERVAL '1 minute', {local_ts_sql}), '%H:%M') as m,
-                symbol,
-                count(*) as tick_count
-            FROM {table_name}
-            WHERE {build_timestamp_range_clause(ts_type, 'timestamp', '>=')}
-              AND {build_timestamp_range_clause(ts_type, 'timestamp', '<=')}
-              AND CAST({local_ts_sql} AS DATE) >= ?::DATE
-              AND CAST({local_ts_sql} AS DATE) <= ?::DATE
-              AND CAST({local_ts_sql} AS TIME) >= TIME '{start_time_bucket}'
-              AND CAST({local_ts_sql} AS TIME) <= TIME '{end_time_bucket}'
-              {sym_filter}
-            GROUP BY 1, 2, 3
-            ORDER BY 1, 2, 3
-        """
-        rows = client.execute(q, params).fetchall()
-
-        # Build minute map: day_str -> minute_str -> set of symbols
-        day_minute_symbols = collections.defaultdict(lambda: collections.defaultdict(set))
-        for d_val, m_val, sym_val, _ in rows:
-            d_str = d_val.strftime("%Y-%m-%d") if hasattr(d_val, "strftime") else str(d_val)
-            day_minute_symbols[d_str][m_val].add(sym_val)
-
-        # Build session minutes (390 min for regular 09:30-15:59, 960 min for extended 04:00-19:59)
-        session_minutes = []
-        if include_extended:
-            cur_t = datetime(2000, 1, 1, 4, 0)
-            end_t = datetime(2000, 1, 1, 20, 0)
-        else:
-            cur_t = datetime(2000, 1, 1, 9, 30)
-            end_t = datetime(2000, 1, 1, 16, 0)
-        while cur_t < end_t:
-            session_minutes.append(cur_t.strftime("%H:%M"))
-            cur_t += timedelta(minutes=1)
-        session_day_minutes = len(session_minutes)
-
-        def next_minute_str(m_str: str) -> str:
-            hh, mm = map(int, m_str.split(":"))
-            nxt = datetime(2000, 1, 1, hh, mm) + timedelta(minutes=1)
-            return nxt.strftime("%H:%M")
-
-        def is_continuity_gap_flagged(missing_minutes_list: list, is_ext: bool) -> bool:
-            if not missing_minutes_list:
-                return False
-            dur = len(missing_minutes_list)
-            if not is_ext:
-                return dur >= 1
-            rth_missing = sum(1 for m in missing_minutes_list if "09:30" <= m < "16:00")
-            if rth_missing >= 1:
-                return True
-            return dur >= 5
-
-        day_objs = []
-        all_gaps = []
-        spectrogram = {}
-
-        # Initialize spectrogram trackers for all monitored symbols if is_all
-        if is_all:
-            for s in eval_symbols:
-                spectrogram[s] = {
-                    "symbol": s,
-                    "active_minutes": 0,
-                    "total_minutes": len(target_dates) * session_day_minutes,
-                    "coverage_pct": 100.0,
-                    "status": "healthy",
-                    "total_gaps": 0,
-                    "total_outage_minutes": 0,
-                    "gaps": [],
-                }
-
-        for td in target_dates:
-            td_str = td.strftime("%Y-%m-%d")
-            day_name = td.strftime("%A")
-            min_data = day_minute_symbols[td_str]
-
-            day_buckets = []
-            day_gaps = []
-
-            # 1. Evaluate per-minute status and attach exact UTC epoch seconds
-            minute_statuses = {}
-            for m in session_minutes:
-                active_syms = min_data.get(m, set()).intersection(eval_symbols)
-                cnt = len(active_syms)
-                if is_all:
-                    if cnt == len(eval_symbols):
-                        m_status = "healthy"
-                    elif cnt > 0:
-                        m_status = "partial"
-                    else:
-                        m_status = "outage"
-                else:
-                    m_status = "healthy" if cnt > 0 else "outage"
-
-                minute_statuses[m] = m_status
-
-                # Calculate start_epoch and end_epoch in UTC seconds for minute m on date td
-                b_hh, b_mm = map(int, m.split(":"))
-                b_dt_et = datetime(td.year, td.month, td.day, b_hh, b_mm, tzinfo=ET)
-                b_start_epoch = int(b_dt_et.timestamp())
-                b_end_epoch = b_start_epoch + 60
-
-                day_buckets.append({
-                    "time": m,
-                    "status": m_status,
-                    "active_count": cnt,
-                    "total_count": len(eval_symbols),
-                    "start_epoch": b_start_epoch,
-                    "end_epoch": b_end_epoch,
-                })
-
-                if is_all:
-                    for s in active_syms:
-                        spectrogram[s]["active_minutes"] += 1
-
-            # 2. Detect global outage gaps (all monitored symbols silent)
-            outage_segments = []
-            cur_outage = []
-            for m in session_minutes:
-                if minute_statuses[m] == "outage":
-                    cur_outage.append(m)
-                else:
-                    if cur_outage:
-                        outage_segments.append(cur_outage)
-                        cur_outage = []
-            if cur_outage:
-                outage_segments.append(cur_outage)
-
-            global_blackout_minutes = set()
-            for seg in outage_segments:
-                if not is_continuity_gap_flagged(seg, include_extended):
-                    continue
-                dur = len(seg)
-                start_m = seg[0]
-                end_m = next_minute_str(seg[-1])
-                for m in seg:
-                    global_blackout_minutes.add(m)
-
-                s_hh, s_mm = map(int, start_m.split(":"))
-                g_dt_et = datetime(td.year, td.month, td.day, s_hh, s_mm, tzinfo=ET)
-                g_start_epoch = int(g_dt_et.timestamp())
-                g_end_epoch = g_start_epoch + (dur * 60)
-
-                gap_obj = {
-                    "date": td_str,
-                    "start_time": f"{td_str} {start_m}:00",
-                    "end_time": f"{td_str} {end_m}:00",
-                    "start_str": start_m,
-                    "end_str": end_m,
-                    "start_epoch": g_start_epoch,
-                    "end_epoch": g_end_epoch,
-                    "duration": dur,
-                    "duration_minutes": dur,
-                    "missing_minutes": dur,
-                    "status": "outage",
-                    "type": "outage",
-                    "severity": "outage",
-                    "symbol": "ALL" if is_all else symbol,
-                    "impacted_symbols": list(eval_symbols),
-                    "description": f"{dur}m global blackout ({start_m} - {end_m} ET)" if is_all else f"{dur}m gap on {symbol} ({start_m} - {end_m} ET)"
-                }
-                day_gaps.append(gap_obj)
-                all_gaps.append(gap_obj)
-
-            # 3. Detect per-symbol gaps
-            if is_all:
-                for s in eval_symbols:
-                    cur_sym_gap = []
-                    sym_gap_segments = []
-                    for m in session_minutes:
-                        if s not in min_data.get(m, set()):
-                            cur_sym_gap.append(m)
-                        else:
-                            if cur_sym_gap:
-                                sym_gap_segments.append(cur_sym_gap)
-                                cur_sym_gap = []
-                    if cur_sym_gap:
-                        sym_gap_segments.append(cur_sym_gap)
-
-                    for seg in sym_gap_segments:
-                        if not is_continuity_gap_flagged(seg, include_extended):
-                            continue
-                        dur = len(seg)
-                        start_m = seg[0]
-                        end_m = next_minute_str(seg[-1])
-                        is_blackout = all(m in global_blackout_minutes for m in seg)
-                        gap_status = "outage" if is_blackout else "partial"
-
-                        sg_hh, sg_mm = map(int, start_m.split(":"))
-                        sg_dt_et = datetime(td.year, td.month, td.day, sg_hh, sg_mm, tzinfo=ET)
-                        sg_start_epoch = int(sg_dt_et.timestamp())
-                        sg_end_epoch = sg_start_epoch + (dur * 60)
-
-                        s_gap_obj = {
-                            "date": td_str,
-                            "start_time": f"{td_str} {start_m}:00",
-                            "end_time": f"{td_str} {end_m}:00",
-                            "start_str": start_m,
-                            "end_str": end_m,
-                            "start_epoch": sg_start_epoch,
-                            "end_epoch": sg_end_epoch,
-                            "duration": dur,
-                            "duration_minutes": dur,
-                            "missing_minutes": dur,
-                            "status": gap_status,
-                            "type": gap_status,
-                            "severity": gap_status,
-                            "symbol": s,
-                            "impacted_symbols": [s],
-                            "description": f"{dur}m gap on {s} ({start_m} - {end_m} ET)"
-                        }
-                        spectrogram[s]["gaps"].append(s_gap_obj)
-                        if not is_blackout:
-                            day_gaps.append(s_gap_obj)
-                            all_gaps.append(s_gap_obj)
-
-            # Day coverage calculation
-            if is_all:
-                day_sym_coverages = []
-                for s in eval_symbols:
-                    s_active = sum(1 for m in session_minutes if s in min_data.get(m, set()))
-                    day_sym_coverages.append((s_active / float(session_day_minutes)) * 100.0)
-                day_cov = round(sum(day_sym_coverages) / len(day_sym_coverages), 2)
-            else:
-                active_cnt = sum(1 for m in session_minutes if len(min_data.get(m, set())) > 0)
-                day_cov = round((active_cnt / float(session_day_minutes)) * 100.0, 2)
-
-            # Day status
-            has_outage = any(g.get("status") == "outage" for g in day_gaps)
-            has_partial = any(g.get("status") == "partial" for g in day_gaps)
-            if has_outage:
-                day_status = "outage"
-            elif has_partial:
-                day_status = "partial"
-            else:
-                day_status = "healthy"
-
-            day_objs.append({
-                "date": td_str,
-                "day_name": day_name,
-                "coverage_pct": day_cov,
-                "status": day_status,
-                "buckets": day_buckets,
-                "gaps": day_gaps,
-            })
-
-        # Finalize spectrogram if is_all
-        if is_all:
-            for s in eval_symbols:
-                tot_min = spectrogram[s]["total_minutes"]
-                act_min = spectrogram[s]["active_minutes"]
-                cov = round((act_min / tot_min) * 100.0, 2) if tot_min > 0 else 100.0
-                spectrogram[s]["coverage_pct"] = cov
-                spectrogram[s]["total_gaps"] = len(spectrogram[s]["gaps"])
-                spectrogram[s]["total_outage_minutes"] = sum(g["duration"] for g in spectrogram[s]["gaps"])
-                if spectrogram[s]["total_outage_minutes"] == 0:
-                    spectrogram[s]["status"] = "healthy"
-                elif any(g["status"] == "outage" for g in spectrogram[s]["gaps"]):
-                    spectrogram[s]["status"] = "outage"
-                else:
-                    spectrogram[s]["status"] = "partial"
-
-        # Overall summary
-        total_gaps = len(all_gaps)
-        if is_all:
-            total_outage_mins = sum(g["duration"] for g in all_gaps if g.get("status") == "outage")
-        else:
-            total_outage_mins = sum(g["duration"] for g in all_gaps)
-
-        avg_cov = round(sum(d["coverage_pct"] for d in day_objs) / len(day_objs), 2) if day_objs else 100.0
-
-        summary = {
-            "total_gaps": total_gaps,
-            "total_outage_minutes": total_outage_mins,
-            "average_coverage": avg_cov,
-            "gaps": all_gaps,
-        }
-
-        overall_status = "healthy"
-        if total_outage_mins > 0:
-            overall_status = "outage" if any(g.get("status") == "outage" for g in all_gaps) else "partial"
-
-        return {
-            "status": overall_status,
-            "database": "streaming",
-            "view_mode": view_mode,
-            "symbol": symbol,
-            "monitored_symbols_count": monitored_count,
-            "extended_hours": include_extended,
-            "hours": "extended" if include_extended else "regular",
-            "days": day_objs,
-            "summary": summary,
-            "spectrogram": spectrogram if is_all else {},
-            "symbols_breakdown": spectrogram if is_all else {},
-            "symbols": spectrogram if is_all else {},
-            "available_weeks": available_weeks,
-            "week_start": active_week_start,
-            "target_date": target_date,
-        }
-    finally:
-        if own_client and client:
-            try:
-                client.close()
-            except Exception:
-                pass
+    return lake_reader.get_streaming_continuity_analysis(
+                    days=days,
+                    symbol=symbol,
+                    include_extended=include_extended,
+                    week_start=week_start,
+                    target_date=target_date,
+                    week_offset=week_offset,
+                    target_week=target_week,
+                    end_date=end_date,
+                )
 

@@ -18,13 +18,13 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 
 - [ ] **BASE-01**: The lake's current candle output is recorded once as the reference behaviour **before** any code change, so an accidental change during the refactor is detectable.
 - [x] **STOR-01**: No code path opens or creates a disk-backed DuckDB database during normal runtime. `tests/stream/test_no_disk_db_backend.py` proves it and would fail if one were reintroduced. `src/dashboard/analytics.py` no longer imports `src.database` and its six silent disk fallbacks (`get_streaming_db_connection(read_only=True)`) are gone — an unavailable lake now raises. *Residual:* the file keeps a test-only `client=` injection seam that runs DuckDB SQL against a caller-supplied client; production never passes one, and STOR-05 removes the seam with the legacy tests.
-- [ ] **STOR-02**: `src/stream/runner.py` is lake-only — the DuckDB writer fallback is **removed**, not merely disabled, and `init_streaming_db` / `save_ticks_to_storage` are gone.
-- [ ] **STOR-03**: The streaming symbol inventory is read from `_control/registry.json`; the legacy database lookups are removed.
+- [x] **STOR-02**: `src/stream/runner.py` is lake-only — the DuckDB writer fallback is **removed**, not merely disabled, and `init_streaming_db` / `save_ticks_to_storage` are gone.
+- [x] **STOR-03**: The streaming symbol inventory is read from `_control/registry.json`; the legacy database lookups are removed with `src/database`. Proven by `tests/test_symbol_maps_separation.py::test_lake_registry_holds_exactly_the_approved_equities` and `tests/dashboard/test_registry_endpoints.py`.
 - [x] **STOR-04**: Satisfied without a new helper — DASH-03 made `src/utils/integrity.py` open no DuckDB connection of its own; it queries through `TickLakeReader`, which owns the in-memory engine. There is nothing to relocate when `src/database` is deleted.
-- [ ] **STOR-05**: `src/database/{connection,schema,operations}.py` are deleted with every importer resolved.
-- [ ] **DASH-01**: `/api/historical/*` routes and their analytics functions are removed; retained tick routes serve the lake.
-- [ ] **DASH-02**: The dashboard is a **single Parquet-only view**. The Historical Dashboard (nav, chart container, symbol list, source selector, 'Historical DB' stat) is deleted. Charts render tick-derived candles from the lake; dates predating tick capture return an honest empty state and never imply bars were converted.
-- [ ] **DASH-03**: `src/utils/integrity.py` tick-health checks read the lake; cross-store drift analysis is removed.
+- [x] **STOR-05**: `src/database/{connection,schema,operations}.py` are deleted with every importer resolved.
+- [x] **DASH-01**: `/api/historical/*` routes and their analytics functions are removed; retained tick routes serve the lake.
+- [x] **DASH-02**: The dashboard is a **single Parquet-only view**. The Historical Dashboard (nav, chart container, symbol list, source selector, 'Historical DB' stat) is deleted. Charts render tick-derived candles from the lake; dates predating tick capture return an honest empty state and never imply bars were converted.
+- [x] **DASH-03**: `src/utils/integrity.py` tick-health checks read the lake; cross-store drift analysis is removed.
 - [ ] **GAP-01**: Databento gap-fill publishes ticks into the Parquet lake, reads symbols from `_control/registry.json`, performs its already-backfilled check against the lake (never a database), and honours maintenance/publisher fences.
 - [ ] **GAP-02**: `databento` is declared in `requirements.txt` and its operational symbol scope is restricted to the 19 approved symbols.
 
@@ -79,13 +79,13 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 |-------------|-------|--------|
 | BASE-01 | 46 | Complete |
 | STOR-01 | 46 | Complete |
-| STOR-02 | 46 | Pending |
-| STOR-03 | 46 | Pending |
+| STOR-02 | 46 | Complete |
+| STOR-03 | 46 | Complete |
 | STOR-04 | 46 | Complete |
-| STOR-05 | 46 | Pending |
-| DASH-01 | 46 | Pending |
-| DASH-02 | 46 | Pending |
-| DASH-03 | 46 | Pending |
+| STOR-05 | 46 | Complete |
+| DASH-01 | 46 | Complete |
+| DASH-02 | 46 | Complete |
+| DASH-03 | 46 | Complete |
 | GAP-01 | 46 | Complete |
 | GAP-02 | 46 | Complete |
 | RMV-01 | 47 | Pending |
