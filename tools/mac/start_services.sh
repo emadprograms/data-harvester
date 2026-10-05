@@ -45,7 +45,7 @@ sleep 1
 
 # 4. Launch Streamer under Supervisor
 echo "Starting Streamer supervisor (Capital.com 24/7 tick engine)..."
-nohup "$PYTHON_BIN" "$REPO_ROOT/tools/service_supervisor.py" --name streamer --module src.stream.runner >/dev/null 2>&1 &
+nohup "$PYTHON_BIN" "$REPO_ROOT/tools/service_supervisor.py" --name streamer --module src.stream.runner --enforce-window --maintenance >/dev/null 2>&1 &
 STREAMER_SUPERVISOR_PID=$!
 disown -h "$STREAMER_SUPERVISOR_PID" 2>/dev/null || true
 

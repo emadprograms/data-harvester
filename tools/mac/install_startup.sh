@@ -48,6 +48,8 @@ cat <<EOF > "$STREAMER_PLIST"
         <string>streamer</string>
         <string>--module</string>
         <string>src.stream.runner</string>
+        <string>--enforce-window</string>
+        <string>--maintenance</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
