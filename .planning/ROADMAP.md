@@ -116,9 +116,7 @@ See: [.planning/milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 4. **Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D)**: Real OS SIGINT/SIGTERM runner lifecycle test verifying `_shutdown_signal_handler` and queue drain; assertion-bearing barriers at admission, intent, staged fsync, promotion, receipt, and ack; honest gap reporting recording explicit visible gap start/end and loss unknown when unquantifiable; guaranteed documented RAM loss boundary.
 5. **Phase 43 (Pass 1): Initial Corrected Benchmarks & Baseline Measurement (Package G)**: Run initial corrected benchmarks before the Phase 41 compaction decision; >=19-symbol hot-skew datasets at 1M/10M scale to measure raw-partition query latency and fan-out; continuous background peak RSS/CPU sampling; real arrival-to-visible p99 latency through actual runner and separate reader; enforced qualification upper limits.
 6. **Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E) [x]**: Required capacity monitoring (files/day per symbol, small-file sizes, free space, rate-limited threshold warnings); conditional compaction implementation and tests if required by Phase 43 Pass 1 benchmark SLAs (with maintenance journal, consumer drain, multiset equivalence verification, immutable receipt lineage, and crash-safe promotion).
-7. **Phase 42 (Decision): Market Rewind & Bounded Replay Iterator (Package F)**: Route Phase 41 into Phase 42 unconditionally. Decision branches:
-   - **Yes (market rewind included in release)**: implement and test replay iterator (`src/storage/replay.py`, snapshot file inventory iterator, deterministic `(timestamp, symbol, ingest_id)` order, cursor resume across fresh processes) -> proceed to Phase 43 Pass 2.
-   - **No (market rewind omitted)**: go directly to Phase 43 Pass 2.
+7. **Phase 42 (Decision): Market Rewind & Bounded Replay Iterator (Package F) [x]**: Route Phase 41 into Phase 42 unconditionally. Decision branch YES evaluated, implemented, and fully qualified: `src/storage/replay.py` provides `ReplaySnapshot`, `ReplayCursor`, and `TickLakeReplayIterator` with keyset pagination over frozen file inventories, deterministic `(timestamp, symbol, ingest_id)` order, stable tie-breaking, and cross-process cursor resumption. (completed 2026-10-05, commit `42a7c0fa`).
 8. **Phase 43 (Pass 2): Re-run Performance Qualification (Package G)**: Re-run qualification suite after any relevant runtime changes (e.g. compaction).
 9. **Phase 44: 24-Hour Sustained Multi-Process Endurance Run (Package H)**: Duration-driven multi-process harness running continuously for at least 24 hours with real runner, dashboard, and independent reader under live synthetic ingestion; separate reconciliation for admitted, durable, published, and rejected records (ticks during documented provider gaps are not mistaken for lost durable records); bounded memory/handles; zero zombie processes.
 10. **Phase 45: Operational Rehearsal, Candidate CI & Milestone Closeout Audit (Package I)**: Final candidate code freeze; execution of full offline test suite; authenticated candidate CI log verification; requirement-level traceability reconciliation; publish machine-readable release report and final evidence audit with no required unresolved gates.
@@ -239,8 +237,9 @@ flowchart TD
 
 ---
 
-#### Phase 42: Market Rewind & Bounded Replay Iterator Decision (Package F - Decision Gated)
+#### Phase 42: Market Rewind & Bounded Replay Iterator Decision (Package F - Decision Gated) [x]
 
+**Status**: Completed 2026-10-05 (commit `42a7c0fa`)
 **Goal**: Formally evaluate the Market Rewind release inclusion decision: if YES, implement and test the bounded deterministic replay iterator; if NO, document the omission and route directly to Pass 2 qualification.
 **Depends on**: Phase 41
 **Requirements**: [RPLY-01, RPLY-02, RPLY-03, RPLY-04]
@@ -250,7 +249,7 @@ flowchart TD
   3. If included: deterministic total ordering `(timestamp, symbol, ingest_id)` with stable tie-breaking and cursor resumption survives fresh process restarts.
   4. Portable reader contract remains fully verified and operational regardless of the replay iterator inclusion decision.
 
-**Plans**: 0 plans (run `/gsd-plan-phase 42` to break down)
+**Plans**: 1 plan complete (commit `42a7c0fa`)
 
 ---
 
@@ -296,8 +295,8 @@ flowchart TD
 | 39. Reader Root Correctness & Executable Contract | v4.3 | 1/1 | Complete | 2026-10-04 |
 | 40. Durability Boundaries & Provider Gap Ledger | v4.3 | 1/1 | Complete | 2026-10-05 |
 | 43. Performance Benchmarks (Pass 1) | v4.3 | 1/1 | Complete | 2026-10-05 |
-| 41. Capacity Monitoring, Offline Compaction & Purge | v4.3 | 0/TBD | Not started | - |
-| 42. Market Rewind & Replay Iterator Decision | v4.3 | 0/TBD | Not started | - |
+| 41. Capacity Monitoring, Offline Compaction & Purge | v4.3 | 1/1 | Complete | 2026-10-05 |
+| 42. Market Rewind & Replay Iterator Decision | v4.3 | 1/1 | Complete | 2026-10-05 |
 | 43. Performance Qualification (Pass 2) | v4.3 | 0/TBD | Not started | - |
 | 44. 24-Hour Sustained Endurance Run | v4.3 | 0/TBD | Not started | - |
 | 45. Candidate CI & Milestone Closeout Audit | v4.3 | 0/TBD | Not started | - |
