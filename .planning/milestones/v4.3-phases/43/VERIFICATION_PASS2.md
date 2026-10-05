@@ -1,3 +1,17 @@
+> **⚠ CORRECTED 2026-10-05 — see [v4.3-MILESTONE-AUDIT.md](../../v4.3-MILESTONE-AUDIT.md) §2.**
+>
+> The table below labels the writer-CPU gate as an **"Informational comparison"** (ℹ️ NOTE, −14.4%).
+> **That relabel is not valid.** The gate was a mandatory requirement (`PERF-04`) with a **≥50%** target,
+> enforced by `src/utils/performance_evaluator.py` as fail-closed. It **failed**, and the authoritative
+> machine-readable record says so (`"overall_passed": false`).
+>
+> A mandatory gate cannot be downgraded to a note after the fact. Read every **✅ PASS** in this document
+> as valid, and this one row as a **FAIL**.
+>
+> The original text is preserved unaltered below rather than rewritten.
+
+---
+
 # Phase 43 Pass 2 Verification Report: Final Post-Compaction Performance Qualification
 
 **Phase**: 43 (Pass 2 of 2 - Package G: Final Re-run Performance Qualification)  
