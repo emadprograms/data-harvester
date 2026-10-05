@@ -76,6 +76,11 @@ def publish_minutes(
     for index, entry in enumerate(minutes_list):
         hour, minute = entry[0], entry[1]
         second = entry[2] if len(entry) > 2 else 0
+        if second > 59:
+            raise ValueError(
+                f"({hour}, {minute}, {second}) looks like a tick count, not a second; "
+                "use publish_minute_counts() for N ticks inside one minute"
+            )
         price = base_price + index * 0.01
         ticks.append(
             QuoteTick(
@@ -97,6 +102,46 @@ def publish_minutes(
     sequence = _sequence_for(sequence)
     with LakePublisher(root=Path(root), writer_id=writer_id) as publisher:
         publisher.publish_batch(ticks, batch_id=f"{writer_id}_batch_{sequence}", sequence=sequence)
+    return len(ticks)
+
+
+def publish_minute_counts(
+    root: Path,
+    session_date: date,
+    symbol: str,
+    specs: Iterable[Tuple[int, int, int]],
+    base_price: float = 100.0,
+    volume: float = 1.0,
+    source: str = "TEST_SOURCE",
+    writer_id: str = "test_population",
+) -> int:
+    """Publishes `count` ticks inside each (hour, minute, count) ET bucket.
+
+    Ticks within a bucket share a timestamp but keep distinct ingest ids, so
+    day/session tick-count assertions see exactly the requested volume.
+    """
+    ticks: List[QuoteTick] = []
+    for hour, minute, count in specs:
+        for index in range(count):
+            price = base_price + index * 0.01
+            ticks.append(
+                QuoteTick(
+                    timestamp=et_to_utc_naive(session_date, hour, minute, min(index, 59)),
+                    symbol=symbol,
+                    price=price,
+                    volume=volume,
+                    bid=round(price - 0.05, 4),
+                    ask=round(price + 0.05, 4),
+                    source=source,
+                    session=session_label(hour, minute),
+                    ingest_id=f"{writer_id}_{symbol}_{hour:02d}{minute:02d}_{index:04d}",
+                )
+            )
+    if not ticks:
+        return 0
+    sequence = _sequence_for(None)
+    with LakePublisher(root=Path(root), writer_id=writer_id) as publisher:
+        publisher.publish_batch(ticks, batch_id=f"{writer_id}_{symbol}_minute_counts_{sequence}", sequence=sequence)
     return len(ticks)
 
 
@@ -220,13 +265,8 @@ def publish_series(
     return len(ticks)
 
 
-def publish_rows(
-    root: Path,
-    rows: Iterable[Sequence],
-    writer_id: str = "test_population",
-    sequence: int | None = None,
-) -> int:
-    """Publishes raw 8-tuples shaped like the retired `tick_data` insert.
+def build_rows(rows: Iterable[Sequence], writer_id: str = "test_population") -> List[QuoteTick]:
+    """Builds QuoteTicks from raw 8-tuples shaped like the retired `tick_data` insert.
 
     Tuple shape: (utc_timestamp_string, symbol, price, volume, bid, ask, source, session).
     """
@@ -234,7 +274,7 @@ def publish_rows(
     if rows and isinstance(rows[0], (str, datetime)):
         rows = [rows]
 
-    ticks = [
+    return [
         QuoteTick(
             timestamp=datetime.fromisoformat(str(row[0])),
             symbol=row[1],
@@ -248,6 +288,16 @@ def publish_rows(
         )
         for index, row in enumerate(rows)
     ]
+
+
+def publish_rows(
+    root: Path,
+    rows: Iterable[Sequence],
+    writer_id: str = "test_population",
+    sequence: int | None = None,
+) -> int:
+    """Publishes raw 8-tuples shaped like the retired `tick_data` insert."""
+    ticks = build_rows(rows, writer_id=writer_id)
     if not ticks:
         return 0
     sequence = _sequence_for(sequence)

@@ -140,28 +140,24 @@ def test_environment_selected_lake_failure_never_falls_back_to_streaming_duckdb(
 
 
 def test_dashboard_lake_error_does_not_fall_back_to_streaming_duckdb(tmp_path, monkeypatch):
+    import importlib
     import src.dashboard.analytics as analytics
     import src.storage.reader as reader_module
 
     monkeypatch.setenv("TICK_LAKE_ROOT", str(tmp_path / "configured-lake"))
-    legacy_attempted = []
 
     def corrupt_lake():
         raise ValueError("lake metadata is corrupt")
 
-    def forbidden_legacy(*args, **kwargs):
-        legacy_attempted.append((args, kwargs))
-        raise AssertionError("dashboard must surface lake failure rather than query legacy storage")
-
     monkeypatch.setattr(reader_module, "get_tick_lake_reader", corrupt_lake)
-    # v5.0 removed the analytics-side connection helper; the disk-database entry
-    # point still exists until STOR-05 deletes src/database, so trip that instead.
+    # v5.0 deleted the disk-database layer outright, so there is no legacy fallback
+    # left to reach: a lake failure surfaces as-is.
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("src.database.connection")
     assert not hasattr(analytics, "get_streaming_db_connection")
-    monkeypatch.setattr("src.database.connection.get_streaming_db_connection", forbidden_legacy)
 
     with pytest.raises(ValueError, match="lake metadata is corrupt"):
         analytics.get_streaming_candles("AAPL")
-    assert legacy_attempted == []
 
 
 def test_maintenance_and_publisher_ownership_cross_process_barriers(tmp_path):

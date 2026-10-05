@@ -1,11 +1,11 @@
 """
 Tests for test isolation guards in conftest.py.
 Verifies that:
-1. Attempting duckdb.connect("data/streaming.duckdb") or /Volumes/Micron-E 0256 A/...
+1. Attempting duckdb.connect on a production path (repo data/ or /Volumes/Micron-E 0256 A/...)
    raises ProductionAccessBlockedError.
 2. Attempting external socket connection without @pytest.mark.live raises network violation error.
-3. Default paths in DEFAULT_DATA_DIR, DEFAULT_STREAMING_DB_PATH, DEFAULT_HISTORICAL_DB_PATH
-   are redirected to safe temporary directories.
+3. The resolved tick-lake root is redirected to a safe temporary directory, never to the
+   repo data/ directory or the Micron production volume.
 """
 import os
 import socket
@@ -19,12 +19,7 @@ from tests.conftest import (
     NetworkBlockedError,
     is_protected_path,
 )
-from src.database.connection import (
-    DEFAULT_DATA_DIR,
-    DEFAULT_STREAMING_DB_PATH,
-    DEFAULT_HISTORICAL_DB_PATH,
-    MICRON_DATA_DIR,
-)
+from src.storage.config import MICRON_DATA_DIR
 
 
 class TestProductionPathGuard:
@@ -36,6 +31,8 @@ class TestProductionPathGuard:
             "data/streaming.duckdb",
             "data/historical.duckdb",
             "data/market_data.duckdb",
+            "data/tick_lake",
+            os.path.join(MICRON_DATA_DIR, "tick_lake"),
             os.path.abspath("data/streaming.duckdb"),
             os.path.abspath("data/historical.duckdb"),
             MICRON_DATA_DIR,
@@ -183,29 +180,17 @@ class TestNetworkIsolationGuard:
 
 
 class TestDefaultPathsRedirection:
-    """Verifies that default database and data paths are isolated away from production."""
+    """Verifies the resolved tick-lake root is isolated away from production."""
 
-    def test_default_data_dir_not_pointing_to_production(self):
-        """DEFAULT_DATA_DIR must not resolve to the Micron production volume or unisolated data symlink."""
-        resolved = os.path.realpath(DEFAULT_DATA_DIR)
+    def test_resolved_lake_root_not_pointing_to_production(self):
+        """resolve_tick_lake_root must not resolve to the Micron volume or the repo data directory."""
+        from src.storage.config import resolve_tick_lake_root
+
+        resolved = os.path.realpath(str(resolve_tick_lake_root()))
         assert "/Volumes/Micron-E 0256 A" not in resolved, (
-            f"DEFAULT_DATA_DIR resolves to production external volume: {resolved}"
+            f"tick lake root resolves to the production external volume: {resolved}"
         )
         repo_data_real = os.path.realpath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "data"))
-        assert resolved != repo_data_real, (
-            f"DEFAULT_DATA_DIR points directly to repo data symlink: {resolved}"
-        )
-
-    def test_default_streaming_db_path_isolated(self):
-        """DEFAULT_STREAMING_DB_PATH must not point to production database files."""
-        resolved = os.path.realpath(DEFAULT_STREAMING_DB_PATH)
-        assert "/Volumes/Micron-E 0256 A" not in resolved, (
-            f"DEFAULT_STREAMING_DB_PATH resolves to production volume: {resolved}"
-        )
-
-    def test_default_historical_db_path_isolated(self):
-        """DEFAULT_HISTORICAL_DB_PATH must not point to production database files."""
-        resolved = os.path.realpath(DEFAULT_HISTORICAL_DB_PATH)
-        assert "/Volumes/Micron-E 0256 A" not in resolved, (
-            f"DEFAULT_HISTORICAL_DB_PATH resolves to production volume: {resolved}"
+        assert not resolved.startswith(repo_data_real + os.sep), (
+            f"tick lake root points directly at the repo data directory: {resolved}"
         )

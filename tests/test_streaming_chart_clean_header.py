@@ -39,7 +39,7 @@ import pytest
 from bs4 import BeautifulSoup
 
 from src.dashboard.analytics import get_streaming_candles
-from tests.support.lake_population import create_lake, publish_minutes
+from tests.support.lake_population import create_lake, publish_minute_counts
 
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
@@ -254,7 +254,7 @@ global.fetch = async (url) => {{
 
 
 # ============================================================================
-# 1. Backend Analytics Tests: DuckDB Total Ticks Calculation
+# 1. Backend Analytics Tests: Total Ticks Calculation
 # ============================================================================
 
 class TestStreamingCandlesTickCounts:
@@ -265,7 +265,7 @@ class TestStreamingCandlesTickCounts:
 
     def test_get_streaming_candles_returns_day_and_session_ticks(self, tmp_path, monkeypatch):
         """
-        Tests with in-memory DuckDB fixture that querying `get_streaming_candles(symbol, date=..., hours=...)`
+        Tests with a lake fixture that querying `get_streaming_candles(symbol, date=..., hours=...)`
         returns `day_total_ticks` and `session_total_ticks`.
         """
         lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
@@ -282,7 +282,7 @@ class TestStreamingCandlesTickCounts:
         # Total for full ET day = 5 + 15 + 50 + 20 + 10 = 100 ticks.
         # Extended session (04:00–20:00 ET) = 15 + 50 + 20 = 85 ticks.
         # Regular session (09:30–16:00 ET) = 50 ticks.
-        publish_minutes(lake, target_date,
+        publish_minute_counts(lake, target_date,
             "AAPL",
             [
                 (2, 30, 5),
@@ -294,8 +294,8 @@ class TestStreamingCandlesTickCounts:
         )
 
         # Also populate ticks on a different day and for another symbol to ensure proper filtering:
-        publish_minutes(lake, date(2026, 9, 29), "AAPL", [(10, 0, 40)])
-        publish_minutes(lake, target_date, "MSFT", [(10, 0, 60)])
+        publish_minute_counts(lake, date(2026, 9, 29), "AAPL", [(10, 0, 40)])
+        publish_minute_counts(lake, target_date, "MSFT", [(10, 0, 60)])
 
         # 1. Query extended session
         res_ext = get_streaming_candles("AAPL", date="2026-09-28", hours="extended")

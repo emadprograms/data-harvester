@@ -816,8 +816,8 @@ def test_p25_03_spread_calculation_with_null_and_nan(tmp_path):
 
 def test_p25_03_analytics_decoupling_zero_streaming_duckdb_access(tmp_path, monkeypatch):
     """
-    TEST-P25-03: Patch src.database.connection.get_streaming_db_connection to raise RuntimeError.
-    Call analytics functions for existing and non-existent symbols. Zero calls to streaming.duckdb.
+    TEST-P25-03: The disk-database layer no longer exists to be reached.
+    Call analytics functions for existing and non-existent symbols; every call is served by the lake.
     """
     lake_root = tmp_path / "lake"
     init_tick_lake(lake_root)
@@ -827,14 +827,13 @@ def test_p25_03_analytics_decoupling_zero_streaming_duckdb_access(tmp_path, monk
 
     monkeypatch.setenv("TICK_LAKE_ROOT", str(lake_root))
 
-    def forbidden_streaming_db(*args, **kwargs):
-        raise RuntimeError("Forbidden access: streaming.duckdb should never be accessed when tick lake exists!")
-
-    # The disk-database entry point must never be reached. analytics no longer
-    # even has a connection helper of its own to call (v5.0 removed it).
-    monkeypatch.setattr("src.database.connection.get_streaming_db_connection", forbidden_streaming_db)
+    # The disk-database layer is physically gone: there is no module to import and no
+    # connection helper to call, so a legacy fallback cannot happen even in principle.
+    import importlib
     import src.dashboard.analytics as analytics_module
 
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("src.database.connection")
     assert not hasattr(analytics_module, "get_streaming_db_connection")
 
     # 1. get_streaming_candles (both existing and non-existent symbols)
