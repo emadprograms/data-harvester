@@ -29,7 +29,7 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 - [ ] **STOR-04**: The in-memory connection helper required by `src/utils/integrity.py` survives the `src/database` deletion, relocated to the storage layer.
 - [ ] **STOR-05**: `src/database/{connection,schema,operations}.py` are deleted with every importer resolved.
 - [ ] **DASH-01**: `/api/historical/*` routes and their analytics functions are removed; retained tick routes serve the lake.
-- [ ] **DASH-02**: Charts render tick-derived candles from the lake. Dates predating tick capture return an honest empty state and never imply bars were converted.
+- [ ] **DASH-02**: The dashboard is a **single Parquet-only view**. The Historical Dashboard (nav, chart container, symbol list, source selector, 'Historical DB' stat) is deleted. Charts render tick-derived candles from the lake; dates predating tick capture return an honest empty state and never imply bars were converted.
 - [ ] **DASH-03**: `src/utils/integrity.py` tick-health checks read the lake; cross-store drift analysis is removed.
 - [ ] **GAP-01**: Databento gap-fill publishes ticks into the Parquet lake, reads symbols from `_control/registry.json`, performs its already-backfilled check against the lake (never a database), and honours maintenance/publisher fences.
 - [ ] **GAP-02**: `databento` is declared in `requirements.txt` and its operational symbol scope is restricted to the 19 approved symbols.
@@ -40,7 +40,7 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 - [ ] **RMV-02**: The bar subsystem is deleted — `main.py` harvest CLI, `src/data/harvester.py`, `src/data/normalizer.py`, `src/api/massive.py`, `src/api/yahoo.py`, `src/api/binance.py`, `tools/backfill_massive.py`, `tools/benchmark_baseline.py`, `tools/audit_database_integrity.py`, `src/dashboard/harvester_job.py`, `src/utils/discord.py`.
 - [ ] **RMV-03**: Bar-era frontend surfaces are removed — historical navigation, data-source selector, harvester controls, stale database labels.
 - [ ] **RMV-04**: `yfinance` and `polygon-api-client` are removed from `requirements.txt`. **`duckdb` stays** (in-memory engine). Retained: `pyarrow`, `pandas`, `pytz`/`tzdata`, `websockets`, `requests`, `python-dotenv`, `psutil`, `pytest`.
-- [ ] **RMV-05**: The owner deletes `data/historical.duckdb` and `data/streaming.duckdb` after Phase 46 confirmation.
+- [ ] **RMV-05**: The owner deletes `data/historical.duckdb` and `data/streaming.duckdb` **immediately after Phase 46 verification** - no retention or confirmation period. Permanent loss of the bar history was accepted by the owner on 2026-10-05.
 - [ ] **RMV-06**: Reference cleanup covers code and current user-facing docs; `.planning/` archives are left intact.
 - [ ] **RMV-07**: `src/config.py`'s dead bar constants are removed, and Capital credentials are retained (live auth depends on them).
 - [ ] **RMV-08**: The unused replay subsystem is removed — `src/storage/replay.py`, `tests/storage/test_replay.py`, its exports in `src/storage/__init__.py`, and the `create_replay_iterator`/`create_replay_snapshot` methods on `TickLakeReader`. `PROJECT.md` places market-rewind out of scope; it was built during v4.3 against that decision and is reachable only programmatically.

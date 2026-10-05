@@ -166,7 +166,7 @@ flowchart TD
 1. No reference to either `.duckdb` file remains in code or current docs.
 2. Bar pipeline, providers, Discord, harvester job, dead tools and the unused replay subsystem removed.
 3. `yfinance` and `polygon-api-client` gone; **`duckdb` stays**.
-4. Owner deletes both `.duckdb` files.
+4. Owner deletes both `.duckdb` files immediately after verification - no retention period.
 5. `.planning/` archives untouched.
 
 #### Phase 49: Schedule, Off-Hours Compaction & Closure
@@ -210,7 +210,8 @@ v4.3 backlog items are archived with that milestone. Active backlog for v5.0:
 | Databento gap-fill rewired to the Parquet lake | **Required** | 47 |
 | Bar subsystem, dead providers, Discord removal | **Required** | 48 |
 | Unused replay subsystem removal (`replay.py`, exports, reader methods, tests) | **Required** | 48 |
-| Owner deletion of `historical.duckdb` + `streaming.duckdb` | **Owner action** | 48 |
+| Owner deletion of `historical.duckdb` + `streaming.duckdb` (no retention period) | **Owner action** | 48 |
+| Single Parquet-only dashboard (Historical view deleted) | **Required** | 47 |
 | 04:00–20:00 ET schedule + unattended off-hours compaction | **Required** | 49 |
 | Removing the DuckDB library / PyArrow resampling | **Out of scope** (owner-rejected) | — |
 | 24-hour endurance run, hosted CI log verification | **Out of scope** (waived in v4.3) | — |

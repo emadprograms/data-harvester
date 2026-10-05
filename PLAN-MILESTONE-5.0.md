@@ -14,6 +14,10 @@ This is deliberately the smaller of two options. The alternative — removing th
 
 **Option A keeps all of that.** `src/storage/reader.py`, `compaction.py` and `replay.py` are **not modified** by this milestone.
 
+## 1a. Governing principle: maximum declutter
+
+The owner's instruction (2026-10-05): **reduce clutter in this repo as much as possible.** Where a choice exists between keeping something "just in case" and removing it, remove it. The dashboard becomes a single Parquet-only view; the ~2 years of bar history is permanently dropped rather than retained; unused subsystems are deleted rather than left dormant. Nothing is kept for potential future use.
+
 ## 2. End state
 
 - No `data/historical.duckdb`, no `data/streaming.duckdb`. No code can open or create a disk-backed DuckDB database.
@@ -26,7 +30,7 @@ This is deliberately the smaller of two options. The alternative — removing th
 
 ## 3. Definition of done
 
-1. `data/historical.duckdb` and `data/streaming.duckdb` deleted by the owner; no code path can recreate or open one.
+1. `data/historical.duckdb` and `data/streaming.duckdb` deleted by the owner immediately after Phase 46 verification; no code path can recreate or open one.
 2. No reference to either file, or to the bar subsystem, remains in `src/`, `tools/`, `tests/`, `main.py` or the docs.
 3. Candles still compute correctly (behaviour unchanged — the engine was never touched).
 4. All 19 symbols collected and readable from the lake.
@@ -56,7 +60,7 @@ Deleting before verifying destroys anything unmigrated. **The agent never copies
 ## 6. Phases
 
 ### Phase 46 — Baseline & Legacy Tick Migration Verification *(runs on the owner's machine)*
-Confirm the lake's current candle output as the reference. Run `plan → export → verify → verify-published → audit-lake` against the real `streaming.duckdb`; reconcile row counts per symbol and date. Owner confirms, then deletes both `.duckdb` files.
+Confirm the lake's current candle output as the reference. Run `plan → export → verify → verify-published → audit-lake` against the real `streaming.duckdb`; reconcile row counts per symbol and date. On a clean verify, the owner deletes both `.duckdb` files. **No retention or confirmation period** - the owner accepted permanent loss of the bar history on 2026-10-05.
 
 **Requires:** access to the real data — this checkout has no `data/` directory.
 
