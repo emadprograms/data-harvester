@@ -6,25 +6,21 @@ A high-performance, 100% local market data harvesting and streaming engine runni
 ## Core Value
 Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
 
-## Current Milestone (v4.3) — In Progress
+## Current Milestone (v5.0) — In Progress
 
-**v4.3: Final Tick-Lake Implementation and Verification** — Phases 37–45 (planning started 2026-10-04)
+**v5.0: DuckDB-Free Tick-Only Parquet** — Phases 46–51 (started 2026-10-05)
 
-Goal: Finish the historical DuckDB-to-Parquet migration and concurrent ingestion/analytics work, correct incomplete qualification, implement the remaining operational capabilities (capacity monitoring, offline compaction/purge if needed, market rewind decision & replay iterator, 24-hour endurance), and produce one final evidence-backed signoff with zero required unresolved gates based strictly on `docs/plans/milestone-4.3-final-concurrency-closeout.md`.
+**Goal:** Reduce the system to one storage format, one query engine, and one data type — ticks in Parquet, read with PyArrow. DuckDB is removed entirely: not only as a store, but as the analytical engine. The streamer ingests the 19 approved equity symbols during 04:00–20:00 ET only, and compaction runs unattended in the closed window.
 
-- **Agreed Scope & Adjustments (9 Phases):**
-  1. **Phase 37 (Package A)**: Preflight, safe test isolation, production write guards, and fail-closed release report validator with table-driven mutation tests (C43-06).
-  2. **Phase 38 (Package B)**: Migration source-coverage ledger (resolves C43-01 without payload deduplication), provenance-scoped final verification (resolves C43-02 without xfail), complete-lake audit, and coordinator cutover/rollback rehearsal.
-  3. **Phase 39 (Package C)**: Fast reader failure on unavailable roots without legacy DuckDB fallback, barrier-controlled snapshot race test (resolves C43-07), and isolated executable contract verification.
-  4. **Phase 40 (Package D)**: Real OS runner lifecycle tests, assertion-bearing durability barrier crash matrix, fake provider sequence ledger with honest gap accounting, and guaranteed RAM loss boundary.
-  5. **Phase 43 (Pass 1, Package G)**: Initial corrected benchmarks at >=19 symbols / 1M/10M scale, continuous peak RSS/CPU sampling, real arrival-to-visible p99 latency, and enforced qualification upper limits to measure raw-partition fan-out.
-  6. **Phase 41 (Package E)**: Capacity monitoring and alerts; conditional offline compaction and physical purge under a durable maintenance journal with consumer drain and receipt lineage if required by Pass 1 SLAs.
-  7. **Phase 42 (Package F)**: Market Rewind release inclusion decision; if YES, implement and test bounded deterministic replay iterator; if NO, omit and proceed to Pass 2.
-  8. **Phase 43 (Pass 2, Package G)**: Re-run performance qualification after runtime or compaction changes.
-  9. **Phase 44 (Package H)**: 24-hour continuous multi-process endurance run with live synthetic ingestion, periodic checkpointing, and separate four-category reconciliation.
-  10. **Phase 45 (Package I)**: Final candidate freeze, authenticated hosted CI log verification, requirement traceability reconciliation, and hardened release audit.
-- **Execution sequence:** `Phase 37 -> 38 -> 39 -> 40 -> 43 (Pass 1) -> 41 -> 42 (Decision: Yes -> implement replay -> 43 Pass 2; No -> 43 Pass 2) -> 44 -> 45`.
-- **Artifacts:** [REQUIREMENTS.md](REQUIREMENTS.md) (37 requirements) · [ROADMAP.md](ROADMAP.md) (Phases 37–45) · [STATE.md](STATE.md)
+**End state:**
+- `historical.duckdb`, `streaming.duckdb`, and the entire 1-minute bar pipeline are deleted by the owner; no code can open or recreate a disk-backed DuckDB database.
+- Every query previously served by DuckDB SQL (`time_bucket`, `arg_min`/`arg_max`, `read_parquet`, `EXCEPT ALL`) is served by PyArrow against the Parquet tick lake.
+- Capital.com is the sole live source; Databento is the sole gap-repair source, writing into the same lake.
+- Symbols are exactly: AAPL, ADBE, AMD, AMZN, APP, AVGO, BABA, GOOGL, META, MSFT, MU, NDAQ, NVDA, ORCL, PANW, QCOM, SHOP, TSLA, TSM.
+
+**Hard sequencing constraint:** the legacy tick migration must complete and verify **before** DuckDB is removed — the migration tool uses DuckDB to read the legacy `.duckdb` source.
+
+**Artifacts:** [REQUIREMENTS.md](REQUIREMENTS.md) (v5.0 requirements) · [ROADMAP.md](ROADMAP.md) (Phases 46–51) · [STATE.md](STATE.md) · [PLAN-MILESTONE-5.0.md](../PLAN-MILESTONE-5.0.md)
 
 ## Current State (Shipped v4.1)
 - **Partitioned Parquet Tick Lake (`data/tick_lake/ticks`)**: Fully decoupled append-only storage organized by Hive two-level partitioning (`symbol=<ENCODED_SYMBOL>/date=<YYYY-MM-DD>/*.parquet`). Live ticks never touch a disk-backed DuckDB database, completely eliminating write locks between ingestion and analytical readers.
@@ -112,7 +108,7 @@ Goal: Finish the historical DuckDB-to-Parquet migration and concurrent ingestion
 _Phase-level requirement detail for v4.1 is archived at [.planning/milestones/v4.1-REQUIREMENTS.md](milestones/v4.1-REQUIREMENTS.md)._
 
 ### Active
-*None currently active — Milestone v4.1 shipped on 2026-10-03. Candidate follow-ups are listed in [.planning/ROADMAP.md](ROADMAP.md).*
+v5.0 requirements are defined in [REQUIREMENTS.md](REQUIREMENTS.md): DuckDB-free tick-only Parquet storage; authoritative 19-symbol inventory; 04:00–20:00 ET ingestion window with unattended off-hours compaction; PyArrow-based reading and resampling.
 
 ### Out of Scope
 - Direct `market-rewind` frontend modifications (deferred per user instruction: focus on data harvesting, storage, and integrity dashboard)
@@ -151,5 +147,21 @@ _Phase-level requirement detail for v4.1 is archived at [.planning/milestones/v4
 | Context-Aware Gap Range Discovery | Dynamic recorded date range targeting prevents false gap alarms on archived historical data | ✓ Good |
 | Tests-only hardening milestone (v4.1) | Freezing application code while adding 122 adversarial tests proves the lake design rather than hiding defects behind concurrent refactors | ✓ Good |
 
+## Evolution
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-10-04 after Milestone v4.3 initialization and planning.*
+*Last updated: 2026-10-05 — Milestone v5.0 (DuckDB-Free Tick-Only Parquet) started; v4.3 closed with a documented waiver of phases 44–45.*
