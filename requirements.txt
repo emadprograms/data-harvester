@@ -1,5 +1,4 @@
 pandas
-yfinance
 duckdb==1.5.5
 pyarrow==22.0.0
 databento==0.86.0
@@ -9,6 +8,5 @@ urllib3
 pytz
 python-dotenv
 pytest
-polygon-api-client
 tzdata
 psutil

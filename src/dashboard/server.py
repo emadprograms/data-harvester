@@ -60,7 +60,6 @@ from src.dashboard.analytics import (
     get_streaming_continuity_analysis,
     discover_available_weeks,
 )
-from src.dashboard.harvester_job import harvester_manager
 
 logger = logging.getLogger("dashboard_server")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -318,17 +317,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
 
         # 10. API: Harvester Job Status
-        if path == "/api/harvester/status":
-            job = harvester_manager.get_status()
-            self._send_json(job)
-            return
-
         # 11. API: Harvester Job Full Logs
-        if path == "/api/harvester/logs":
-            logs = harvester_manager.get_all_logs()
-            self._send_json({"logs": logs, "total_lines": len(logs)})
-            return
-
         # 12. API: Available Streaming Weeks
         if path == "/api/streaming/continuity/weeks":
             weeks = discover_available_weeks()
@@ -465,15 +454,6 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
 
         # 3. Trigger Harvest Job
-        if path == "/api/harvester/run":
-            target_date = payload.get("date")
-            if target_date:
-                target_date = target_date.strip()
-            ok, msg, job_status = harvester_manager.start_job(target_date)
-            status_code = 200 if ok else 409
-            self._send_json({"success": ok, "message": msg, "job": job_status}, status=status_code)
-            return
-
         self._send_json({"error": "Not Found", "path": path}, status=404)
 
     def do_DELETE(self):

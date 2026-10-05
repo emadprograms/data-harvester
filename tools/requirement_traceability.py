@@ -54,7 +54,7 @@ REQUIREMENTS: List[Dict[str, object]] = [
         "description": "Baseline characterization of legacy DuckDB CPU seconds, latency percentiles, event-loop lag",
         "nodes": [],
         "granularity": "none",
-        "gap": "No automated node. Only the manual script tools/benchmark_baseline.py exists; no test asserts baseline CPU/latency numbers.",
+        "gap": "The manual baseline script was removed with the bar era (v5.0 Phase 47); no node asserts baseline CPU/latency numbers.",
     },
     {
         "id": "LAKE-P1-01",

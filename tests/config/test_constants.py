@@ -19,11 +19,6 @@ class TestConfig(unittest.TestCase):
         for col in required:
             self.assertIn(col, config_module.SCHEMA_COLS)
 
-    def test_binance_domains(self):
-        """Binance domains list must be non-empty and contains valid URLs."""
-        self.assertGreater(len(config_module.BINANCE_DOMAINS), 0)
-        self.assertTrue(all(d.startswith("http") for d in config_module.BINANCE_DOMAINS))
-
     def test_no_capital_api_constant(self):
         """Capital.com has been removed — ensure no stale constant exists."""
         # This is a regression test to ensure we don't accidentally re-add it

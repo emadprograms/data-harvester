@@ -1516,55 +1516,6 @@ class TickLakeReader:
             return ds.dataset([], schema=LAKE_SCHEMA_V1, format="parquet")
         return ds.dataset([str(f) for f in sorted(set(files))], format="parquet")
 
-    def create_replay_iterator(
-        self,
-        symbols: Optional[Union[str, List[str]]] = None,
-        start_date: Optional[Union[str, date, datetime]] = None,
-        end_date: Optional[Union[str, date, datetime]] = None,
-        batch_size: int = 5000,
-        cursor: Optional[Any] = None,
-        snapshot: Optional[Any] = None,
-        output_format: str = "record_batch",
-        **kwargs: Any,
-    ) -> Any:
-        """
-        Creates a bounded chronological snapshot replay iterator over frozen file inventories
-        yielding Arrow batches without full-history RAM materialization or large-OFFSET scans.
-        """
-        from src.storage.replay import TickLakeReplayIterator
-        return TickLakeReplayIterator(
-            lake_root=self.root,
-            snapshot=snapshot,
-            symbols=symbols,
-            start_date=start_date,
-            end_date=end_date,
-            batch_size=batch_size,
-            cursor=cursor,
-            output_format=output_format,
-            max_threads=self.max_threads,
-            max_memory=self.max_memory,
-            **kwargs,
-        )
-
-    def create_replay_snapshot(
-        self,
-        symbols: Optional[Union[str, List[str]]] = None,
-        start_date: Optional[Union[str, date, datetime]] = None,
-        end_date: Optional[Union[str, date, datetime]] = None,
-        persist: bool = True,
-    ) -> Any:
-        """
-        Freezes an explicit file inventory for replay queries.
-        """
-        from src.storage.replay import ReplaySnapshot
-        return ReplaySnapshot.create(
-            lake_root=self.root,
-            symbols=symbols,
-            start_date=start_date,
-            end_date=end_date,
-            persist=persist,
-        )
-
     def get_lake_health_report(self) -> Dict[str, Any]:
         """Computes active files count, total size, row count, status."""
         self.validate_lake()

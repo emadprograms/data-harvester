@@ -123,5 +123,4 @@ window.addEventListener('DOMContentLoaded', () => {
   setInterval(fetchMarketSession, 1000);
   setInterval(fetchStreamStatus, 4000);
   setInterval(fetchStreamTape, 3000);
-  setInterval(pollHarvesterLogs, 5000);
 });
