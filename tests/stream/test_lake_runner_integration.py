@@ -3,7 +3,7 @@ Integration tests for StreamingEngine refactored lifecycle with TickLakeWriter (
 
 Verifies StreamingEngine initializes TickLakeWriter without opening DuckDB, implements
 honest task_done acknowledgment, provides bounded queue backpressure, routes Capital.com
-and Binance callbacks to Parquet, and guarantees zero data loss on graceful shutdown drain.
+and guarantees zero data loss on graceful shutdown drain.
 """
 import asyncio
 from datetime import datetime, timezone
@@ -160,50 +160,6 @@ def test_capital_callback_to_parquet_e2e(tmp_path):
         assert df.iloc[0]["bid"] == 182.45
         assert df.iloc[0]["ask"] == 182.55
         assert df.iloc[0]["source"] == "CAPITAL"
-        con.close()
-
-    asyncio.run(_run())
-
-
-def test_binance_callback_to_parquet_e2e(tmp_path):
-    """
-    Simulates Binance trade and kline callbacks; verifies normalization and
-    Parquet publication.
-    """
-    async def _run():
-        lake_root = tmp_path / "lake"
-        engine = StreamingEngine(lake_root=lake_root, flush_interval=0.05, enable_binance=True)
-        engine.running = True
-
-        worker_task = asyncio.create_task(engine._lake_writer_worker())
-
-        try:
-            # 1. Binance trade tick
-            binance_trade = ("2026-10-02 14:30:00.654321", "BTCUSDT", 65000.0, 0.75, None, None, "BINANCE", "REG")
-            await engine._handle_binance_tick(binance_trade)
-
-            # 2. Binance closed kline bar
-            binance_bar = ("2026-10-02 14:30:00.000000", "ETHUSDT", 2500.0, 2510.0, 2490.0, 2505.0, 15.0, "REG", "BINANCE")
-            await engine._handle_binance_bar(binance_bar, is_closed=True)
-
-            await asyncio.wait_for(engine.write_queue.join(), timeout=3.0)
-            await asyncio.sleep(0.1)
-        finally:
-            engine.stop()
-            worker_task.cancel()
-            try:
-                await worker_task
-            except asyncio.CancelledError:
-                pass
-            await engine.shutdown()
-
-        con = duckdb.connect(":memory:")
-        df = con.execute(f"SELECT symbol, price, source FROM read_parquet('{lake_root}/ticks/*/*/*.parquet')").fetchdf()
-        assert len(df) == 2
-        symbols = set(df["symbol"].tolist())
-        assert "BTCUSDT" in symbols
-        assert "ETHUSDT" in symbols
-        assert all(df["source"] == "BINANCE")
         con.close()
 
     asyncio.run(_run())

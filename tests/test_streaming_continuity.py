@@ -23,12 +23,12 @@ Coverage:
    - Per-symbol filtering (NVDA vs AAPL)
    - Market hours enforcement (09:30-16:00 ET, excluding overnight and weekends)
    - Spectrogram breakdown for 19 monitored symbols
-   - Empty database graceful handling
+   - Empty lake graceful handling
 
 2. REST API Endpoints (src/dashboard/server.py):
    - GET /api/streaming/continuity with ?days=5 and ?symbol=all / ?symbol=NVDA
-   - HTTP 200 and JSON response with "database": "streaming"
-   - Strict database isolation: never touches historical.duckdb
+   - HTTP 200 and JSON response with "database": "streaming" (the source label
+     the tick lake has always emitted; there is no second store to isolate from)
 
 3. Dashboard HTML Structure (src/dashboard/static/index.html):
    - In #stream-tab-chart, positioned directly above #streaming-chart-container:
@@ -455,7 +455,7 @@ class TestBackendContinuityAnalyticsEngine:
 # ============================================================================
 
 class TestStreamingContinuityRESTAPI:
-    """Tests the /api/streaming/continuity REST endpoint and database isolation."""
+    """Tests the /api/streaming/continuity REST endpoint reads the lake only."""
 
     def test_api_streaming_continuity_endpoint(self, api_test_server):
         """

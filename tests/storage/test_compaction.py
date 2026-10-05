@@ -205,7 +205,7 @@ def test_compaction_multiset_equivalence_duplicates_nulls_and_floats(tmp_path):
         volume=50.0,
         bid=0.000009,
         ask=0.000011,
-        source="BINANCE",
+        source="DATABENTO",
         session="REG",
         ingest_id="googl_sub_01",
     ))

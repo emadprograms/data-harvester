@@ -23,7 +23,7 @@ from src.storage.config import MICRON_DATA_DIR
 
 
 class TestProductionPathGuard:
-    """Verifies that automated tests cannot access or mutate production database paths."""
+    """Verifies that automated tests cannot access or mutate production lake paths."""
 
     @pytest.mark.parametrize(
         "blocked_path",

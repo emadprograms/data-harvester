@@ -3,18 +3,19 @@
 Standalone Multi-Process Concurrency & Performance Validator.
 Milestone v4.0 - Phase 21 (P8: Production Cutover, Concurrency Validation & Handoff).
 
-Validates high-concurrency invariants across 4 independent processes:
+Validates high-concurrency invariants across 3 independent processes:
 1. Process 1 (Writer): Async TickLakeWriter ingesting 6,000 synthetic ticks across 5 symbols
    with 5ms heartbeat measuring event-loop scheduling lag.
 2. Process 2 (Dashboard Server): Subprocess running dashboard REST API under concurrent load
    (150+ requests across candles, tape, status, continuity).
 3. Process 3 (Repo B Reader): Subprocess with ZERO data-harvester imports querying Parquet
    via in-memory DuckDB (docs/contracts/repo_b_tick_lake_contract.md).
-4. Process 4 (Lock Isolation Guard): Subprocess holding an exclusive write lock on a dummy
-   streaming.duckdb file, proving the lake operates with zero lock contention.
+
+v5.0 removed the disk-database lock-isolation process: there is no disk database left to
+lock, so the writer and readers can only contend on Parquet partitions and the lake locks.
 
 Gates Asserted:
-- 0 DuckDB file lock errors (duckdb.IOException)
+- 0 reader I/O lock errors (duckdb.IOException)
 - 0 Parquet footer / row tearing corruptions
 - Writer p99 event-loop lag < 20.0ms
 - Dashboard p95 query latency < 100.0ms
@@ -458,31 +459,6 @@ asyncio.run(main())
 """
 
 
-def _run_lock_guard_process(db_path: Path):
-    """Holds an exclusive lock on dummy streaming.duckdb until terminated."""
-    code = f"""
-import duckdb, time
-con = duckdb.connect(r'{db_path}', read_only=False)
-con.execute('CREATE TABLE IF NOT EXISTS locks (id INT PRIMARY KEY, locked_at TIMESTAMP);')
-con.execute('INSERT INTO locks VALUES (1, now());')
-print('LOCK_ACQUIRED', flush=True)
-while True:
-    time.sleep(1)
-"""
-    proc = subprocess.Popen(
-        [sys.executable, "-c", code],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    # Wait for confirmation that lock was established
-    line = proc.stdout.readline()
-    if "LOCK_ACQUIRED" not in line:
-        proc.terminate()
-        raise RuntimeError("Failed to acquire exclusive lock in Process 4")
-    return proc
-
-
 # ============================================================================
 # CONCURRENCY VALIDATION ORCHESTRATOR
 # ============================================================================
@@ -497,7 +473,7 @@ def run_concurrency_validation(
     cleanup: bool = True,
 ) -> ValidationSummary:
     """
-    Executes the multi-process concurrency benchmark and evaluates all 6 gates.
+    Executes the multi-process concurrency benchmark and evaluates all 7 gates.
     """
     temp_dir_obj = None
     if lake_root is None:
@@ -537,7 +513,6 @@ def run_concurrency_validation(
 
     t_bench_start = time.perf_counter()
 
-    lock_proc: Optional[subprocess.Popen] = None
     server_proc: Optional[subprocess.Popen] = None
     repo_b_proc: Optional[subprocess.Popen] = None
     writer_proc: Optional[subprocess.Popen] = None
@@ -545,24 +520,7 @@ def run_concurrency_validation(
     sampler = ResourceSampler(interval_seconds=0.05, include_children=True)
 
     try:
-        # Step 1: Start Process 4 (Lock Isolation Guard)
-        dummy_db_dir = lake_root.parent / "dummy_legacy"
-        dummy_db_dir.mkdir(parents=True, exist_ok=True)
-        dummy_db_path = dummy_db_dir / "streaming.duckdb"
-
-        lock_proc = _run_lock_guard_process(dummy_db_path)
-        sampler.register_target("lock", lock_proc.pid)
-        
-        # Assert that dummy_db is indeed exclusively locked by Process 4
-        import duckdb
-        lock_verified = False
-        try:
-            _ = duckdb.connect(str(dummy_db_path), read_only=False)
-        except duckdb.IOException:
-            lock_verified = True
-        assert lock_verified, "Lock guard failed to establish exclusive lock on streaming.duckdb"
-
-        # Step 2: Determine ephemeral port and launch Process 2 (Dashboard Server)
+        # Step 1: Determine ephemeral port and launch Process 2 (Dashboard Server)
         if port == 0:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.bind((host, 0))
@@ -717,7 +675,7 @@ def run_concurrency_validation(
         # Step 9: Stop resource sampler and reap all child processes safely
         res_summary = sampler.stop()
 
-        for p in [writer_proc, repo_b_proc, server_proc, lock_proc]:
+        for p in [writer_proc, repo_b_proc, server_proc]:
             if p is not None and p.poll() is None:
                 try:
                     p.terminate()
@@ -802,7 +760,7 @@ def run_concurrency_validation(
     # Evaluate the 7 Gates
     gates = [
         ValidationGate(
-            name="DuckDB File Lock Errors (IOException)",
+            name="Reader I/O Lock Errors (IOException)",
             target="== 0",
             actual=str(metrics.duckdb_io_exceptions_total),
             passed=(metrics.duckdb_io_exceptions_total == 0),

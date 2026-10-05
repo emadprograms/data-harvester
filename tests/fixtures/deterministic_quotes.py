@@ -343,7 +343,7 @@ def generate_null_and_capital_quotes(symbol: str = "AAPL", base_time: Optional[d
             volume=500.0,
             bid=None,
             ask=None,
-            source="BINANCE",
+            source="DATABENTO",
             session="REG",
             ingest_id="trade_null_spread",
         ),

@@ -252,3 +252,45 @@ def test_server_exposes_no_harvester_routes() -> None:
     source = _read("src/dashboard/server.py")
     assert "/api/harvester" not in source
     assert "harvester_manager" not in source
+
+
+# ------------------------------------------------- RMV-10 crypto stream residue
+
+CRYPTO_STREAM_FILES = (
+    "src/stream/binance_stream.py",
+    "src/stream/aggregator.py",
+)
+
+CRYPTO_STREAM_TOKENS = (
+    "BinanceStreamer",
+    "BinanceKline",
+    "CandleAggregator",
+    "binance_streamer",
+    "binance_ticker",
+    "enable_binance",
+    "_handle_binance_tick",
+    "_handle_binance_bar",
+    "--enable-binance",
+)
+
+
+def test_crypto_stream_files_are_deleted() -> None:
+    for relative in CRYPTO_STREAM_FILES:
+        assert not (REPO_ROOT / relative).exists(), f"crypto stream file survived: {relative}"
+
+
+def test_no_crypto_stream_api_survives_in_src() -> None:
+    offenders = []
+    for path in (REPO_ROOT / "src").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for token in CRYPTO_STREAM_TOKENS:
+            if token in source:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {token}")
+    assert not offenders, f"crypto stream API survived: {offenders}"
+
+
+def test_streaming_scope_is_the_equities_only() -> None:
+    """The runner takes its symbols from the equity registry; crypto is not an option."""
+    source = _read("src/stream/runner.py")
+    for token in ("BTC", "USDT", "wss://stream.binance.com"):
+        assert token not in source, f"crypto residue in the runner: {token}"

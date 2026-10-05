@@ -16,7 +16,6 @@ import os
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from src.storage.registry import RegistryError
-from src.stream.binance_stream import BinanceStreamer
 from src.stream.capital_stream import CapitalStreamer
 
 logging.basicConfig(
@@ -112,7 +111,6 @@ class StreamingEngine:
     def __init__(
         self,
         flush_interval=None,
-        enable_binance=False,
         lake_root=None,
         max_queue_size=10000,
         max_batch_rows=None,
@@ -131,7 +129,6 @@ class StreamingEngine:
             max_batch_rows, "STREAM_MAX_BATCH_ROWS", DEFAULT_STREAM_MAX_BATCH_ROWS
         )
         self.max_queue_size = _positive_int(max_queue_size, "STREAM_MAX_QUEUE_SIZE", 10000)
-        self.enable_binance = enable_binance
         self.mock_mode = mock_mode
         self.drain_delay = float(drain_delay)
         self.mock_ticks_per_sec = float(mock_ticks_per_sec)
@@ -180,7 +177,6 @@ class StreamingEngine:
             self.lake_writer = None
             raise
 
-        self.binance_streamer = None
         self.capital_streamer = None
         self.active_streaming_symbols = set()
         self.epic_to_display = {}
@@ -266,20 +262,6 @@ class StreamingEngine:
         """Backward-compatible best-effort synchronous bar admission."""
         return self._enqueue_tick(bar_tuple)
 
-    async def _handle_binance_tick(self, tick_tuple):
-        """Feeds a raw trade tick from Binance directly into the write queue with fencing."""
-        if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1:
-            sym = tick_tuple[1]
-            if self._subscriptions_initialized or self.active_streaming_symbols:
-                if sym not in self.active_streaming_symbols:
-                    return
-        await self._enqueue_tick_async(tick_tuple)
-
-    async def _handle_binance_bar(self, bar_tuple, is_closed=True):
-        """Backward-compatible handler for Binance bars."""
-        if is_closed:
-            await self._enqueue_tick_async(bar_tuple)
-
     async def _handle_capital_tick(self, tick):
         """Feeds a tick from Capital.com directly into the write queue, filtering out excluded/purged assets."""
         if isinstance(tick, dict):
@@ -325,15 +307,6 @@ class StreamingEngine:
         last_flush = time.monotonic()
         cancelled = False
 
-        def normalize_bar(tick):
-            if (
-                isinstance(tick, (list, tuple))
-                and len(tick) == 9
-                and tick[8] in ("CAPITAL", "BINANCE", "SIMULATED", "MANUAL")
-            ):
-                return (tick[0], tick[1], tick[5], tick[6], None, None, tick[8], tick[7])
-            return tick
-
         try:
             while self.running or not self.write_queue.empty() or buffer:
                 # A failed batch remains at the head of this worker-owned buffer. New
@@ -347,10 +320,10 @@ class StreamingEngine:
                         wait_time = min(wait_time, max(0.001, remaining))
                     try:
                         tick = await asyncio.wait_for(self.write_queue.get(), timeout=wait_time)
-                        buffer.append(normalize_bar(tick))
+                        buffer.append(tick)
                         while len(buffer) < self.max_batch_rows:
                             try:
-                                buffer.append(normalize_bar(self.write_queue.get_nowait()))
+                                buffer.append(self.write_queue.get_nowait())
                             except asyncio.QueueEmpty:
                                 break
                     except asyncio.TimeoutError:
@@ -597,21 +570,6 @@ class StreamingEngine:
             asyncio.create_task(self._symbol_watcher_worker()),
         ]
 
-        # Optional Binance streamer (disabled by default per user specification)
-        if self.enable_binance:
-            binance_symbols = []
-            if self.registry is not None:
-                for entry in self.registry.get_active_symbols():
-                    if entry.binance_ticker:
-                        binance_symbols.append(entry.binance_ticker)
-            if binance_symbols:
-                self.binance_streamer = BinanceStreamer(
-                    symbols=binance_symbols,
-                    stream_type="trade",
-                    on_tick_callback=self._handle_binance_tick
-                )
-                tasks.append(asyncio.create_task(self.binance_streamer.start()))
-
         logger.info("🚀 24/7 Capital.com Tick Streaming Engine started successfully.")
         try:
             await asyncio.gather(*tasks)
@@ -625,8 +583,6 @@ class StreamingEngine:
         self.running = False
         if self.capital_streamer:
             self.capital_streamer.stop()
-        if self.binance_streamer:
-            self.binance_streamer.stop()
         if self._active_overflow_gap_id is not None and self.gap_ledger is not None:
             try:
                 self.gap_ledger.close_gap(
@@ -649,8 +605,6 @@ class StreamingEngine:
 
         if self.capital_streamer:
             self.capital_streamer.stop()
-        if self.binance_streamer:
-            self.binance_streamer.stop()
 
         if self._active_overflow_gap_id is not None and self.gap_ledger is not None:
             try:
@@ -736,7 +690,6 @@ def main():
     parser.add_argument("--fail-immediately", action="store_true", help="Exit immediately with returncode 1 (for supervisor flapping chaos)")
     parser.add_argument("--drain-delay", type=float, default=0.0, help="Artificial delay during shutdown drain in seconds")
     parser.add_argument("--ticks-per-sec", type=float, default=50.0, help="Tick production rate in mock mode")
-    parser.add_argument("--enable-binance", action="store_true", help="Enable optional Binance streamer")
 
     args, _ = parser.parse_known_args()
 
@@ -750,7 +703,6 @@ def main():
         flush_interval=args.flush_interval,
         max_batch_rows=args.max_batch_rows,
         max_queue_size=args.max_queue_size,
-        enable_binance=args.enable_binance,
         mock_mode=args.mock,
         drain_delay=args.drain_delay,
         mock_ticks_per_sec=args.ticks_per_sec,

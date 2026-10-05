@@ -241,7 +241,7 @@ class CapacityMonitor:
                 details={"partitions": critical_partitions[:10], "total_critical": len(critical_partitions)},
             ).to_dict())
             recommendations.append(
-                f"Run offline compaction immediately on {len(critical_partitions)} fragmented partitions to eliminate DuckDB glob overhead."
+                f"Run offline compaction immediately on {len(critical_partitions)} fragmented partitions to eliminate glob overhead."
             )
         elif warning_partitions:
             alerts.append(CapacityAlert(

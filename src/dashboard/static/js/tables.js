@@ -33,7 +33,7 @@ function renderStreamingSymbolsTable(symbols) {
   tbody.innerHTML = '';
 
   if (!symbols || symbols.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="py-6 text-center text-slate-500">No symbols registered in streaming.duckdb. Add one above.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="py-6 text-center text-slate-500">No symbols registered in the lake registry. Add one above.</td></tr>';
     return;
   }
 
@@ -112,7 +112,7 @@ async function addStreamingSymbol() {
 }
 
 async function deleteStreamingSymbol(symbol) {
-  if (!confirm(`Are you sure? Removing this symbol will delete all its tick data from streaming.duckdb.`)) {
+  if (!confirm(`Are you sure? Removing this symbol fences it now and its tick partitions are dropped by the next compaction.`)) {
     return;
   }
 

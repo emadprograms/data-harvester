@@ -204,7 +204,7 @@ def fetch_and_normalize_day(
     ts_col = "ts_event" if "ts_event" in df.columns else "ts_recv"
     ts_series = pd.to_datetime(df[ts_col], utc=True)
 
-    # Format timestamp string with microseconds for DuckDB
+    # Format timestamp string with microseconds for the lake schema
     timestamps = ts_series.dt.strftime("%Y-%m-%d %H:%M:%S.%f")
 
     # Map prices: use trade execution price; if missing or 0, fallback to midpoint of bid/ask
