@@ -38,7 +38,7 @@ This is deliberately the smaller of two options. The alternative — removing th
 
 **Stays (untouched):** `src/storage/reader.py` · `compaction.py` · `replay.py` · `publication.py` · `parquet_writer.py` · `registry.py` · `capacity.py` · the DuckDB in-memory query engine.
 
-**Deleted:** `data/historical.duckdb` + `data/streaming.duckdb` (owner action) · `src/database/{connection,schema,operations}.py` (disk-backed DB layer) · `main.py` harvest CLI · `src/data/harvester.py`, `normalizer.py` · `src/api/massive.py`, `yahoo.py`, `binance.py` · `tools/backfill_massive.py`, `benchmark_baseline.py`, `audit_database_integrity.py` · `src/utils/discord.py` · `src/dashboard/harvester_job.py` · `/api/historical/*` and their frontend callers · `yfinance`, `polygon-api-client` dependencies.
+**Deleted:** `data/historical.duckdb` + `data/streaming.duckdb` (owner action) · `src/database/{connection,schema,operations}.py` (disk-backed DB layer) · `src/storage/replay.py` + `tests/storage/test_replay.py` + replay exports/methods (unused; owner did not request it) · `main.py` harvest CLI · `src/data/harvester.py`, `normalizer.py` · `src/api/massive.py`, `yahoo.py`, `binance.py` · `tools/backfill_massive.py`, `benchmark_baseline.py`, `audit_database_integrity.py` · `src/utils/discord.py` · `src/dashboard/harvester_job.py` · `/api/historical/*` and their frontend callers · `yfinance`, `polygon-api-client` dependencies.
 
 **Rewired:** `src/stream/runner.py` (drop the DuckDB writer fallback; symbols from the registry) · `src/dashboard/{server,analytics}.py` (lake-only) · `src/utils/integrity.py` (tick checks against the lake; drop cross-store drift) · `src/data/databento_backfill.py` (write to the lake).
 
@@ -68,7 +68,7 @@ Confirm the lake's current candle output as the reference. Run `plan → export 
 ### Phase 48 — Remove the Bar Subsystem & Dead Providers
 Delete the harvest CLI, bar pipeline, provider clients, Discord, the harvester dashboard job, the dead tools, and the historical endpoints. Remove `yfinance` and `polygon-api-client`. Clean imports, `.env.example`, README and operations guide.
 
-**Exit:** `grep -ri "historical.duckdb\|streaming.duckdb"` returns nothing in code or current docs; the app runs with no bar code present.
+**Exit:** `grep -ri "historical.duckdb\|streaming.duckdb"` returns nothing in code or current docs; the app runs with no bar code present; the replay subsystem is gone.
 
 ### Phase 49 — Schedule, Off-Hours Compaction & Closure
 Timezone policy module (`ZoneInfo("America/New_York")`, `[04:00, 20:00)`, injectable clock), supervisor lifecycle states, direct-runner guard so a manual start cannot bypass the window, admission stop at 20:00 with a single drain, and unattended idempotent compaction under one maintenance lease. Registry restricted to the 19 symbols with out-of-scope rejection. Test disposition, one completion report, stop.
@@ -83,6 +83,7 @@ Timezone policy module (`ZoneInfo("America/New_York")`, `[04:00, 20:00)`, inject
 | R4 | Tests that construct disk DuckDBs | Disposition each: retarget to the lake, or delete with the feature |
 | R5 | Frontend changes are unverifiable here (8 tests skip without Node) | Keep frontend changes minimal; flag anything unverified |
 | R6 | Scope creep back toward full DuckDB removal | The owner rejected it; engine files are explicitly out of scope |
+| R7 | Removing replay breaks `reader.py` | Only two thin wrapper methods reference it; both are deleted with the module, and `reader.py` is otherwise untouched |
 
 ## 8. Effort
 

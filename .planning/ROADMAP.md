@@ -159,12 +159,12 @@ flowchart TD
 
 #### Phase 48: Remove the Bar Subsystem & Dead Providers
 
-**Goal:** Delete everything whose only purpose was 1-minute bars, and clean the surviving surface.
+**Goal:** Delete everything whose only purpose was 1-minute bars or an unrequested feature, and clean the surviving surface.
 **Depends on:** Phase 47
-**Requirements:** [RMV-01, RMV-02, RMV-03, RMV-04, RMV-05, RMV-06, RMV-07]
+**Requirements:** [RMV-01, RMV-02, RMV-03, RMV-04, RMV-05, RMV-06, RMV-07, RMV-08]
 **Success criteria:**
 1. No reference to either `.duckdb` file remains in code or current docs.
-2. Bar pipeline, providers, Discord, harvester job and dead tools removed.
+2. Bar pipeline, providers, Discord, harvester job, dead tools and the unused replay subsystem removed.
 3. `yfinance` and `polygon-api-client` gone; **`duckdb` stays**.
 4. Owner deletes both `.duckdb` files.
 5. `.planning/` archives untouched.
@@ -209,6 +209,7 @@ v4.3 backlog items are archived with that milestone. Active backlog for v5.0:
 | Dashboard, analytics, integrity off the disk databases | **Required** | 47 |
 | Databento gap-fill rewired to the Parquet lake | **Required** | 47 |
 | Bar subsystem, dead providers, Discord removal | **Required** | 48 |
+| Unused replay subsystem removal (`replay.py`, exports, reader methods, tests) | **Required** | 48 |
 | Owner deletion of `historical.duckdb` + `streaming.duckdb` | **Owner action** | 48 |
 | 04:00–20:00 ET schedule + unattended off-hours compaction | **Required** | 49 |
 | Removing the DuckDB library / PyArrow resampling | **Out of scope** (owner-rejected) | — |

@@ -43,6 +43,7 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 - [ ] **RMV-05**: The owner deletes `data/historical.duckdb` and `data/streaming.duckdb` after Phase 46 confirmation.
 - [ ] **RMV-06**: Reference cleanup covers code and current user-facing docs; `.planning/` archives are left intact.
 - [ ] **RMV-07**: `src/config.py`'s dead bar constants are removed, and Capital credentials are retained (live auth depends on them).
+- [ ] **RMV-08**: The unused replay subsystem is removed — `src/storage/replay.py`, `tests/storage/test_replay.py`, its exports in `src/storage/__init__.py`, and the `create_replay_iterator`/`create_replay_snapshot` methods on `TickLakeReader`. `PROJECT.md` places market-rewind out of scope; it was built during v4.3 against that decision and is reachable only programmatically.
 
 ### Phase 49: Schedule, Off-Hours Compaction & Closure
 
@@ -95,6 +96,7 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 | RMV-05 | 48 | Pending |
 | RMV-06 | 48 | Pending |
 | RMV-07 | 48 | Pending |
+| RMV-08 | 48 | Pending |
 | SCHED-01 | 49 | Pending |
 | SCHED-02 | 49 | Pending |
 | SCHED-03 | 49 | Pending |
@@ -105,7 +107,7 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 | CO-02 | 49 | Pending |
 | CO-03 | 49 | Pending |
 
-**Coverage:** 30 requirements, 30 mapped, 0 unmapped ✓
+**Coverage:** 31 requirements, 31 mapped, 0 unmapped ✓
 
 ---
 
