@@ -14,12 +14,10 @@ from src.data.databento_backfill import (
     get_target_stock_symbols,
     get_day_trading_bounds,
     generate_candidate_trading_days,
-    insert_ticks_to_streaming_db,
     run_databento_backfill,
     EXCLUDED_SYMBOLS,
     NY_TZ
 )
-from src.database.connection import DuckDBClient
 
 
 def test_databento_sdk_is_only_required_for_live_client(monkeypatch):
@@ -80,43 +78,6 @@ def test_generate_candidate_trading_days():
         assert days[i] > days[i + 1]
 
 
-def test_duckdb_ticks_insertion_in_memory():
-    """Verify that normalized ticks DataFrame is inserted accurately into DuckDB ticks table."""
-    mem_client = DuckDBClient(":memory:", read_only=False)
-    mem_client.execute("""
-        CREATE TABLE ticks (
-            timestamp TIMESTAMP,
-            symbol VARCHAR,
-            price DOUBLE,
-            volume DOUBLE,
-            bid DOUBLE,
-            ask DOUBLE,
-            source VARCHAR,
-            session VARCHAR
-        )
-    """)
-
-    mock_df = pd.DataFrame({
-        "timestamp": ["2026-09-24 13:15:00.123456", "2026-09-24 14:00:00.654321"],
-        "symbol": ["NVDA", "AAPL"],
-        "price": [125.50, 220.10],
-        "volume": [10.0, 50.0],
-        "bid": [125.48, 220.08],
-        "ask": [125.52, 220.12],
-        "source": ["DATABENTO", "DATABENTO"],
-        "session": ["PRE", "REG"]
-    })
-
-    inserted = insert_ticks_to_streaming_db(mock_df, streaming_client=mem_client)
-    assert inserted == 2
-
-    rows = mem_client.execute("SELECT symbol, price, source, session FROM ticks ORDER BY timestamp").fetchall()
-    assert len(rows) == 2
-    assert rows[0] == ("NVDA", 125.50, "DATABENTO", "PRE")
-    assert rows[1] == ("AAPL", 220.10, "DATABENTO", "REG")
-    mem_client.close()
-
-
 def test_budget_cap_stops_execution():
     """Verify that the backfill loop respects max_budget and stops immediately when cap is reached."""
     mock_client = MagicMock()
@@ -134,7 +95,7 @@ def test_budget_cap_stops_execution():
                     "source": ["DATABENTO"],
                     "session": ["REG"]
                 })
-                with patch("src.data.databento_backfill.insert_ticks_to_streaming_db", return_value=1):
+                with patch("src.data.databento_backfill.publish_ticks_to_lake", return_value=1):
                     # Budget is $25.0 -> can only afford 2 days ($20 total). 3rd day ($30) exceeds $25.
                     res = run_databento_backfill(
                         max_budget=25.0,

@@ -151,7 +151,7 @@ def test_stream_runner_drops_excluded_assets(tmp_path):
 
 
 def test_databento_backfill_targets_streaming_symbol_map():
-    """Verify get_target_stock_symbols reads symbols directly from streaming_symbol_map."""
+    """Verify get_target_stock_symbols reads the lake registry, scoped to the 19 approved equities."""
     symbols = get_target_stock_symbols()
     assert len(symbols) == 19
     assert "NVDA" in symbols

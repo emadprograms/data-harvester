@@ -1,12 +1,16 @@
 """
-Databento Tick Backfiller for streaming.duckdb.
+Databento tick gap-filler for the Parquet tick lake.
+
 Iteratively backfills historical tick-by-tick TBBO (Trade and Top-of-Book Quotes)
-one trading day at a time going backward from the most recent session.
-Strictly targets single-stock symbols (excluding all ETFs, crypto, and commodities)
-during the last 30 minutes of premarket (09:00-09:30 ET) and regular session (09:30-16:00 ET).
+one trading day at a time going backward from the most recent session. Ticks are
+published into the lake through the product writer, so the lake's maintenance and
+publisher fences apply. Strictly targets single-stock symbols (excluding all ETFs,
+crypto, and commodities) within the approved 19-symbol scope, during the last 30
+minutes of premarket (09:00-09:30 ET) and the regular session (09:30-16:00 ET).
 Tracks cost before every query to strictly respect the credit budget.
 """
 import os
+from pathlib import Path
 import time
 import logging
 from datetime import datetime, date, timedelta, timezone
@@ -21,7 +25,7 @@ except ModuleNotFoundError as exc:  # Optional for offline utilities and injecte
     if exc.name != "databento":
         raise
     db = None
-from src.database.connection import get_streaming_db_connection, get_historical_db_connection
+from src.config import APPROVED_EQUITY_SYMBOLS
 
 logger = logging.getLogger("databento_backfill")
 NY_TZ = ZoneInfo("America/New_York")
@@ -38,69 +42,42 @@ EXCLUDED_SYMBOLS = {
 }
 
 
-def get_target_stock_symbols(historical_client=None, streaming_client=None) -> List[str]:
+def _is_approved_equity(symbol: str) -> bool:
+    """Single-stock equities only: no ETFs, crypto pairs or futures."""
+    return (
+        symbol in APPROVED_EQUITY_SYMBOLS
+        and symbol not in EXCLUDED_SYMBOLS
+        and not symbol.endswith("USDT")
+        and "=" not in symbol
+        and "/" not in symbol
+    )
+
+
+def get_target_stock_symbols() -> List[str]:
     """
-    Retrieves tracked symbols from streaming_symbol_map in streaming.duckdb.
-    Falls back to historical symbol_map with EXCLUDED_SYMBOLS filter if streaming table not found.
+    Active symbols from the lake's _control/registry.json, restricted to the
+    approved single-stock equity scope.
     """
-    # 1. Try dedicated streaming_symbol_map first
-    s_client = streaming_client
-    own_s_client = False
-    if s_client is None:
-        s_client = get_streaming_db_connection(read_only=True)
-        own_s_client = True
+    from src.storage.config import resolve_tick_lake_root
+    from src.storage.registry import SymbolRegistry
 
-    if s_client:
-        try:
-            tables = [t[0] for t in s_client.execute("SHOW TABLES").fetchall()]
-            s_tbl = "streaming_database_symbols" if "streaming_database_symbols" in tables else ("streaming_symbol_map" if "streaming_symbol_map" in tables else None)
-            if s_tbl:
-                rows = s_client.execute(
-                    f"SELECT display_name FROM {s_tbl} WHERE is_active = TRUE ORDER BY display_name"
-                ).fetchall()
-                if rows:
-                    return [r[0].strip().upper() for r in rows]
-        except Exception:
-            pass
-        finally:
-            if own_s_client:
-                s_client.close()
-
-    # 2. Fallback to historical symbols with exclusions
-    own_client = False
-    if historical_client is None:
-        historical_client = get_historical_db_connection(read_only=True)
-        own_client = True
-
-    if not historical_client:
+    try:
+        registry = SymbolRegistry(root=resolve_tick_lake_root())
+    except Exception:
+        return []
+    if not registry.root.exists():
         return []
 
     try:
-        table_name = "historical_database_symbols"
-        tables = [t[0] for t in historical_client.execute("SHOW TABLES").fetchall()]
-        if "historical_database_symbols" not in tables:
-            if "historical_symbol_map" in tables:
-                table_name = "historical_symbol_map"
-            elif "symbol_map" in tables:
-                table_name = "symbol_map"
+        entries = registry.get_active_symbols()
+    except Exception:
+        return []
 
-        rows = historical_client.execute(
-            f"SELECT display_name FROM {table_name} ORDER BY display_name"
-        ).fetchall()
-        stock_symbols = []
-        for r in rows:
-            sym = r[0].strip().upper()
-            if (
-                sym not in EXCLUDED_SYMBOLS
-                and not sym.endswith("USDT")
-                and "=" not in sym
-                and "/" not in sym
-            ):
-                stock_symbols.append(sym)
-        return stock_symbols
-    finally:
-        if own_client:
-            historical_client.close()
+    symbols = {
+        (entry.display_name or entry.symbol or "").strip().upper()
+        for entry in entries
+    }
+    return sorted(sym for sym in symbols if sym and _is_approved_equity(sym))
 
 
 def get_day_trading_bounds(trading_date: date) -> Tuple[datetime, datetime, datetime]:
@@ -161,35 +138,33 @@ def estimate_day_cost(
     return float(cost)
 
 
-def is_day_already_backfilled(trading_date: date, symbols: List[str], streaming_client=None) -> bool:
+def is_day_already_backfilled(trading_date: date, symbols: Optional[List[str]] = None) -> bool:
     """
-    Checks if Databento tick data already exists in streaming.duckdb for the given date and symbols.
+    Checks whether DATABENTO ticks already exist in the lake for the trading day.
+
+    Only gap-filled history counts: a day captured live by Capital.com must not
+    stop the gap-filler from adding what it is missing.
     """
-    date_str = trading_date.strftime("%Y-%m-%d")
-    for attempt in range(6):
-        client = streaming_client or get_streaming_db_connection(read_only=True)
-        if not client:
-            time.sleep(0.3)
-            continue
+    from src.storage.config import resolve_tick_lake_root
+    from src.storage.reader import TickLakeReader
+
+    start_utc, _, end_utc = get_day_trading_bounds(trading_date)
+    window = (start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None))
+
+    try:
+        reader = TickLakeReader(root=resolve_tick_lake_root())
+    except Exception:
+        return False
+
+    filled = 0
+    for symbol in (symbols or [None]):
         try:
-            row = client.execute(
-                """
-                SELECT COUNT(*) FROM tick_data 
-                WHERE source = 'DATABENTO' 
-                  AND timestamp::DATE = ?::DATE
-                """,
-                [date_str]
-            ).fetchone()
-            count = row[0] if row else 0
-            return count > 1000  # Substantial tick records already exist
-        except Exception as e:
-            if "Could not set lock" in str(e) or "Conflicting lock" in str(e):
-                time.sleep(0.3 * (attempt + 1))
-                continue
+            rows = reader.query_ticks(symbol=symbol, start=window[0], end=window[1], limit=1001)
+        except Exception:
             return False
-        finally:
-            if streaming_client is None and client:
-                client.close()
+        filled += sum(1 for row in rows if str(row.get("source", "")).upper() == "DATABENTO")
+        if filled > 1000:
+            return True
     return False
 
 
@@ -201,7 +176,7 @@ def fetch_and_normalize_day(
     dataset: str = "DBEQ.BASIC"
 ) -> pd.DataFrame:
     """
-    Downloads tick TBBO data from Databento and maps it into the streaming.duckdb tick_data schema:
+    Downloads tick TBBO data from Databento and maps it into the lake's tick schema:
     [timestamp, symbol, price, volume, bid, ask, source, session]
     """
     start_utc, reg_open_utc, end_utc = get_day_trading_bounds(trading_date)
@@ -263,45 +238,29 @@ def fetch_and_normalize_day(
     return norm_df
 
 
-def insert_ticks_to_streaming_db(df: pd.DataFrame, streaming_client=None) -> int:
+def publish_ticks_to_lake(df: pd.DataFrame, lake_root: Optional[Any] = None) -> int:
     """
-    Inserts normalized ticks DataFrame in bulk directly into streaming.duckdb tick_data table.
-    Retries gracefully if the live streaming daemon holds an intermittent lock.
+    Publishes normalized ticks into the Parquet tick lake — the only store.
+
+    Goes through the product writer, so an in-progress maintenance window or a
+    competing publisher makes this raise rather than write a partial day.
     """
     if df.empty:
         return 0
 
-    max_retries = 10
-    for attempt in range(max_retries):
-        client = streaming_client or get_streaming_db_connection()
-        if not client:
-            time.sleep(0.5 * (attempt + 1))
-            continue
+    from src.storage.config import resolve_tick_lake_root
+    from src.storage.parquet_writer import TickLakeWriter
 
-        try:
-            # High-performance bulk registration & insertion
-            tables = [t[0] for t in client.conn.execute("SHOW TABLES").fetchall()]
-            target_table = "tick_data" if "tick_data" in tables else "ticks"
-            client.conn.register("_batch_ticks_df", df)
-            client.conn.execute(f"""
-                INSERT INTO {target_table} (timestamp, symbol, price, volume, bid, ask, source, session)
-                SELECT timestamp, symbol, price, volume, bid, ask, source, session
-                FROM _batch_ticks_df
-            """)
-            client.conn.unregister("_batch_ticks_df")
-            client.conn.commit()
-            return len(df)
-        except Exception as e:
-            err_msg = str(e)
-            if "Could not set lock" in err_msg or "Conflicting lock" in err_msg:
-                time.sleep(0.5 * (attempt + 1))
-                continue
-            raise
-        finally:
-            if streaming_client is None and client:
-                client.close()
+    root = Path(lake_root) if lake_root is not None else Path(resolve_tick_lake_root())
+    records = df.to_dict("records")
 
-    raise RuntimeError("Failed to obtain write lock on streaming.duckdb after multiple attempts.")
+    writer = TickLakeWriter(root=root, writer_id="databento_backfill")
+    try:
+        writer.write_ticks(records)
+        writer.flush(block=True)
+    finally:
+        writer.close()
+    return len(records)
 
 
 def generate_candidate_trading_days(start_from_date: date, count: int = 60) -> List[date]:
@@ -327,7 +286,7 @@ def run_databento_backfill(
     1. Targets single-stock symbols only.
     2. Starts from yesterday (most recent closed session) and goes backward.
     3. Checks cost before every day and stops if budget is reached.
-    4. Ingests and stores into streaming.duckdb.
+    4. Publishes into the Parquet tick lake.
     """
     if client is None:
         client = get_databento_client()
@@ -369,7 +328,7 @@ def run_databento_backfill(
 
         # Check if already backfilled
         if is_day_already_backfilled(trading_day, symbols):
-            print(f"⏩ [{day_str}] Already backfilled in streaming.duckdb. Skipping.", flush=True)
+            print(f"⏩ [{day_str}] Already backfilled in the tick lake. Skipping.", flush=True)
             continue
 
         # Estimate cost for this trading day
@@ -393,7 +352,7 @@ def run_databento_backfill(
         df_day = fetch_and_normalize_day(client, symbols, trading_day, schema="tbbo")
 
         if not df_day.empty:
-            ticks_inserted = insert_ticks_to_streaming_db(df_day)
+            ticks_inserted = publish_ticks_to_lake(df_day)
             accumulated_cost += day_cost
             total_ticks_ingested += ticks_inserted
             completed_days.append(day_str)

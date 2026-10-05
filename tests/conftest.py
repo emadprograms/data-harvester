@@ -175,12 +175,17 @@ def _seed_isolated_session_tick_lake():
 
 
 def _seed_isolated_session_registry():
-    """The lake's symbol registry lists the symbols the tick seed publishes."""
+    """The lake registry holds exactly the approved 19 equities (SYMB-01).
+
+    The tick seed publishes a wider set so candle/gap tests have data; the
+    registry is the symbol authority and mirrors production scope.
+    """
+    from src.config import APPROVED_EQUITY_SYMBOLS
     from src.storage.registry import SymbolRegistry, init_registry
 
     init_registry(_SESSION_LAKE_ROOT)
     registry = SymbolRegistry(root=_SESSION_LAKE_ROOT)
-    for sym in STANDARD_HISTORICAL_SYMBOLS:
+    for sym in APPROVED_EQUITY_SYMBOLS:
         registry.add_symbol(symbol=sym, display_name=sym, capital_ticker=sym)
 
 

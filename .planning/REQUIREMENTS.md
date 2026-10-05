@@ -86,8 +86,8 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 | DASH-01 | 46 | Pending |
 | DASH-02 | 46 | Pending |
 | DASH-03 | 46 | Pending |
-| GAP-01 | 46 | Pending |
-| GAP-02 | 46 | Pending |
+| GAP-01 | 46 | Complete |
+| GAP-02 | 46 | Complete |
 | RMV-01 | 47 | Pending |
 | RMV-02 | 47 | Pending |
 | RMV-03 | 47 | Pending |

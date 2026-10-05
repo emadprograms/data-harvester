@@ -2,6 +2,7 @@ pandas
 yfinance
 duckdb==1.5.5
 pyarrow==22.0.0
+databento==0.86.0
 websockets
 requests
 urllib3
