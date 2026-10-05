@@ -463,6 +463,10 @@ def test_runner_sigint_sigterm_lifecycle(tmp_path):
 
             # Wait for graceful drain and clean termination
             stdout, stderr = proc.communicate(timeout=6.0)
+            combined_output = (stdout or b"") + (stderr or b"")
+            assert b"_shutdown_signal_handler" in combined_output, (
+                f"Expected '_shutdown_signal_handler' in runner output under {sig.name}. Output: {combined_output.decode()}"
+            )
             assert proc.returncode == 0, (
                 f"Expected returncode 0 on {sig.name}, got {proc.returncode}. "
                 f"Stderr: {stderr.decode()}"

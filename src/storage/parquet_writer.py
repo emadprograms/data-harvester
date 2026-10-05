@@ -17,6 +17,7 @@ import uuid
 
 import pyarrow as pa
 
+from src.storage.barriers import trigger_persistence_barrier
 from src.storage.config import (
     encode_symbol,
     init_tick_lake,
@@ -355,6 +356,7 @@ class TickLakeWriter:
         if self._status != "RUNNING":
             raise RuntimeError(f"Cannot write tick when writer status is {self._status}")
 
+        trigger_persistence_barrier("admission", tick=tick)
         valid, normalized_tick = self._validate_and_normalize_tick(tick)
         if not valid:
             self._metrics.total_quarantined += 1
@@ -434,6 +436,7 @@ class TickLakeWriter:
                         batch_id=batch_id,
                         sequence=sequence,
                     )
+                    trigger_persistence_barrier("acknowledgment", receipt=receipt, attempt=attempt)
                     self._prepared_batch = None
                     self._prepared_source_signature = None
                     self._metrics.total_published += receipt.row_count

@@ -72,52 +72,27 @@ def _positive_int(value: Any, env_name: str, default: int) -> int:
     return int(numeric)
 
 
-class MockStreamer:
+from src.stream.fake_provider import FakeProvider
+
+
+class MockStreamer(FakeProvider):
     """Mock streamer generating synthetic ticks for offline/test execution without real network/credentials."""
-    def __init__(self, epics: List[str], on_tick_callback, ticks_per_sec: float = 50.0):
-        self.epics = list(epics) if epics is not None else []
-        self.on_tick_callback = on_tick_callback
-        self.ticks_per_sec = float(ticks_per_sec)
-        self.running = False
-        self._task: Optional[asyncio.Task] = None
-
-    async def start(self):
-        self.running = True
-        self._task = asyncio.create_task(self._run_loop())
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
-
-    async def _run_loop(self):
-        idx = 0
-        interval = 1.0 / self.ticks_per_sec if self.ticks_per_sec > 0 else 0.02
-        while self.running:
-            if self.epics:
-                epic = self.epics[idx % len(self.epics)]
-                now = datetime.now(timezone.utc)
-                tick = {
-                    "epic": epic,
-                    "price": 100.0 + (idx % 100) * 0.1,
-                    "timestamp": now,
-                    "bid": 99.95,
-                    "ask": 100.05,
-                    "volume": 1.0,
-                }
-                res = self.on_tick_callback(tick)
-                if asyncio.iscoroutine(res):
-                    await res
-                idx += 1
-            await asyncio.sleep(interval)
-
-    def stop(self):
-        self.running = False
-        if self._task and not self._task.done():
-            self._task.cancel()
-
-    async def update_subscriptions(self, epics: List[str]) -> bool:
-        self.epics = list(epics)
-        return True
+    def __init__(
+        self,
+        epics: List[str],
+        on_tick_callback,
+        ticks_per_sec: float = 50.0,
+        gap_ledger=None,
+        replay_capable: bool = False,
+    ):
+        super().__init__(
+            epics=epics,
+            on_tick_callback=on_tick_callback,
+            ticks_per_sec=ticks_per_sec,
+            provider_name="MOCK_CAPITAL",
+            gap_ledger=gap_ledger,
+            replay_capable=replay_capable,
+        )
 
 
 class BoundedWriteQueue(asyncio.Queue):
@@ -237,11 +212,31 @@ class StreamingEngine:
         self.epic_to_display = {}
         self._subscriptions_initialized = False
 
-    def _record_drop(self, count: int = 1) -> None:
+        self.gap_ledger = None
+        self._active_overflow_gap_id: Optional[str] = None
+        if self.lake_root is not None:
+            from src.stream.gap_ledger import GapLedger
+            self.gap_ledger = GapLedger(self.lake_root)
+
+    def _record_drop(self, count: int = 1, symbol: str = "all", reason: str = "BUFFER_OVERFLOW") -> None:
         """Increments drop counter and synchronizes drop count to writer metrics immediately."""
         self.ticks_dropped += count
         if self.writer is not None and hasattr(self.writer, "_metrics"):
             self.writer._metrics.total_dropped = self.ticks_dropped
+        if self.gap_ledger is not None:
+            if self._active_overflow_gap_id is None:
+                try:
+                    now = datetime.now(timezone.utc)
+                    self._active_overflow_gap_id = self.gap_ledger.open_gap(
+                        provider="STREAMING_ENGINE",
+                        symbol=symbol,
+                        reason=reason,
+                        start_time=now,
+                        status="LOSS_UNKNOWN",
+                        details={"dropped_count": count},
+                    )
+                except Exception:
+                    pass
 
     @property
     def ticks_committed(self) -> int:
@@ -258,8 +253,8 @@ class StreamingEngine:
         try:
             self.write_queue.put_nowait(tick_tuple)
         except asyncio.QueueFull:
-            self._record_drop(1)
-            sym = tick_tuple[1] if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1 else str(tick_tuple)
+            sym = tick_tuple[1] if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1 else "all"
+            self._record_drop(1, symbol=str(sym), reason="BUFFER_OVERFLOW")
             logger.warning("write_queue full (%d), synchronously rejected tick: %s", self.write_queue.maxsize, sym)
             return False
         self.ticks_enqueued += 1
@@ -453,6 +448,16 @@ class StreamingEngine:
                 self.total_ticks_saved += committed_rows
                 for _ in range(batch_len):
                     self.write_queue.task_done()
+                if self._active_overflow_gap_id is not None and self.write_queue.empty() and self.gap_ledger is not None:
+                    try:
+                        self.gap_ledger.close_gap(
+                            self._active_overflow_gap_id,
+                            end_time=datetime.now(timezone.utc),
+                            details_update={"final_dropped_count": self.ticks_dropped},
+                        )
+                    except Exception:
+                        pass
+                    self._active_overflow_gap_id = None
                 self._storage_error = None
                 self.storage_error_event.clear()
                 last_flush = time.monotonic()
@@ -684,6 +689,7 @@ class StreamingEngine:
                 epics=capital_symbols,
                 on_tick_callback=self._handle_capital_tick,
                 ticks_per_sec=self.mock_ticks_per_sec,
+                gap_ledger=self.gap_ledger,
             )
         else:
             self.capital_streamer = CapitalStreamer(
@@ -739,6 +745,16 @@ class StreamingEngine:
             self.capital_streamer.stop()
         if self.binance_streamer:
             self.binance_streamer.stop()
+        if self._active_overflow_gap_id is not None and self.gap_ledger is not None:
+            try:
+                self.gap_ledger.close_gap(
+                    self._active_overflow_gap_id,
+                    end_time=datetime.now(timezone.utc),
+                    details_update={"final_dropped_count": self.ticks_dropped},
+                )
+            except Exception:
+                pass
+            self._active_overflow_gap_id = None
 
     async def shutdown(self, drain_timeout: float = 10.0):
         """Stop providers and report failure rather than acknowledge unsaved work."""
@@ -751,6 +767,17 @@ class StreamingEngine:
         if self.binance_streamer:
             self.binance_streamer.stop()
 
+        if self._active_overflow_gap_id is not None and self.gap_ledger is not None:
+            try:
+                self.gap_ledger.close_gap(
+                    self._active_overflow_gap_id,
+                    end_time=datetime.now(timezone.utc),
+                    details_update={"final_dropped_count": self.ticks_dropped},
+                )
+            except Exception:
+                pass
+            self._active_overflow_gap_id = None
+
         try:
             await asyncio.wait_for(self.write_queue.join(), timeout=drain_timeout)
         except asyncio.TimeoutError as exc:
@@ -759,6 +786,20 @@ class StreamingEngine:
                 f"Streaming drain timed out with {self.pending_accepted_ticks} accepted items pending "
                 f"({getattr(self.write_queue, 'unfinished_tasks', 0)} unfinished queue tasks)"
             )
+            if self.gap_ledger is not None:
+                try:
+                    now = datetime.now(timezone.utc)
+                    self.gap_ledger.record_gap(
+                        provider="STREAMING_ENGINE",
+                        symbol="all",
+                        reason="SHUTDOWN_UNFLUSHED",
+                        start_time=now,
+                        end_time=now,
+                        status="LOSS_UNKNOWN",
+                        details={"pending_items": self.pending_accepted_ticks},
+                    )
+                except Exception:
+                    pass
             if self.writer is not None:
                 try:
                     self.writer.set_operational_status("DRAIN_FAILED", queue_depth=self.pending_accepted_ticks)
@@ -772,6 +813,20 @@ class StreamingEngine:
                 await self.writer.close_async()
             except Exception as exc:
                 self.drain_succeeded = False
+                if self.gap_ledger is not None:
+                    try:
+                        now = datetime.now(timezone.utc)
+                        self.gap_ledger.record_gap(
+                            provider="STREAMING_ENGINE",
+                            symbol="all",
+                            reason="SHUTDOWN_UNFLUSHED",
+                            start_time=now,
+                            end_time=now,
+                            status="LOSS_UNKNOWN",
+                            details={"pending_items": self.pending_accepted_ticks},
+                        )
+                    except Exception:
+                        pass
                 try:
                     self.writer.set_operational_status("DRAIN_FAILED", queue_depth=self.pending_accepted_ticks)
                 except Exception:
@@ -819,16 +874,17 @@ def main():
     async def _async_main():
         stop_event = asyncio.Event()
 
-        def _handle_signal():
-            logger.info("Received exit signal, initiating graceful shutdown...")
+        def _shutdown_signal_handler(sig_num=None, frame=None):
+            sig_name = signal.Signals(sig_num).name if sig_num is not None else "EXIT"
+            logger.info(f"Signal {sig_name} caught by _shutdown_signal_handler, initiating graceful shutdown...")
             stop_event.set()
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
-                loop.add_signal_handler(sig, _handle_signal)
+                loop.add_signal_handler(sig, lambda s=sig: _shutdown_signal_handler(s))
             except NotImplementedError:
-                signal.signal(sig, lambda s, f: stop_event.set())
+                signal.signal(sig, lambda s, f: _shutdown_signal_handler(s, f))
 
         engine_task = asyncio.create_task(engine.start())
         stop_task = asyncio.create_task(stop_event.wait())

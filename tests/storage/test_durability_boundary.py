@@ -241,7 +241,7 @@ def test_failed_publication_reports_pending_work_and_persists_nothing(tmp_path):
 
 
 def test_loss_boundary_is_documented_not_claimed():
-    """DURB-03: the guarantee is scoped to acknowledged writes, and says so."""
+    """DURB-03 / DURB-04: the guarantee is scoped to acknowledged writes, and says so."""
     # This is the contract the tests above establish. It is asserted here so that
     # changing the product's durability behaviour forces this statement to change.
     contract = {
@@ -254,3 +254,12 @@ def test_loss_boundary_is_documented_not_claimed():
     # A power-loss guarantee would require a durable inbox with group fsync before
     # acknowledgment; that is out of scope for v4.2 (see REQUIREMENTS.md).
     assert "unflushed" in contract["hard_kill"]
+
+    # Verify the canonical durability boundary contract statement from docs/contracts/durability_boundary_contract.md
+    contract_file = PROJECT_ROOT / "docs" / "contracts" / "durability_boundary_contract.md"
+    assert contract_file.is_file(), f"Missing durability boundary contract at {contract_file}"
+    contract_text = contract_file.read_text(encoding="utf-8")
+    expected_statement = "Durable tick spooling and provider replay are optional; this release guarantees the documented RAM loss boundary."
+    assert expected_statement in contract_text, (
+        f"Contract statement {expected_statement!r} not found in {contract_file}"
+    )

@@ -14,10 +14,12 @@ import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 import uuid
 
+import errno
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
+from src.storage.barriers import trigger_persistence_barrier
 from src.storage.config import (
     LakeMaintenanceInProgressError,
     StorageConfigError,
@@ -572,6 +574,7 @@ class LakePublisher:
                 staging_full_path = self.root / staging_relative_path
                 current_staging_file = staging_full_path
                 pq.write_table(file_table, staging_full_path, compression=self.compression)
+                trigger_persistence_barrier("staged_fsync", path=staging_full_path, symbol=symbol, date=date_str)
                 with open(staging_full_path, "rb") as handle:
                     os.fsync(handle.fileno())
 
@@ -608,7 +611,9 @@ class LakePublisher:
             with open(tmp_intent, "w", encoding="utf-8") as handle:
                 json.dump(intent_payload, handle, indent=2)
                 handle.flush()
+                trigger_persistence_barrier("intent_fsync", path=tmp_intent, payload=intent_payload)
                 os.fsync(handle.fileno())
+            trigger_persistence_barrier("intent_durability", path=intent_file, tmp_path=tmp_intent, payload=intent_payload)
             os.replace(tmp_intent, intent_file)
             intent_written = True
 
@@ -632,15 +637,20 @@ class LakePublisher:
                     staging_file.unlink(missing_ok=True)
                 else:
                     target_dest.parent.mkdir(parents=True, exist_ok=True)
+                    trigger_persistence_barrier("staged_promotion", src=staging_file, dst=target_dest, symbol=target["symbol"])
                     os.replace(staging_file, target_dest)
+
+                trigger_persistence_barrier("directory_fsync", path=target_dest.parent, symbol=target["symbol"])
+                if sys.platform != "win32":
                     try:
                         dir_fd = os.open(str(target_dest.parent), os.O_RDONLY)
                         try:
                             os.fsync(dir_fd)
                         finally:
                             os.close(dir_fd)
-                    except Exception:
-                        pass
+                    except OSError as err:
+                        if err.errno in (errno.ENOSPC, errno.EIO):
+                            raise
 
             published_at = datetime.now(timezone.utc).isoformat()
             file_details = [
@@ -679,7 +689,9 @@ class LakePublisher:
             with open(tmp_receipt, "w", encoding="utf-8") as handle:
                 json.dump(receipt_payload, handle, indent=2)
                 handle.flush()
+                trigger_persistence_barrier("receipt_fsync", path=tmp_receipt, payload=receipt_payload)
                 os.fsync(handle.fileno())
+            trigger_persistence_barrier("receipt_durability", path=receipt_file, tmp_path=tmp_receipt, payload=receipt_payload)
             os.replace(tmp_receipt, receipt_file)
             intent_file.unlink(missing_ok=True)
 
@@ -904,16 +916,26 @@ def _recover_pending_publications_locked(
         # Validate every candidate before promoting any staging file. Preserve an existing
         # destination on collision; recovery must never replace a published object.
         for target, target_dest, candidate, rel_path, _ in target_candidates:
-            if candidate == target_dest:
-                continue
-            target_dest.parent.mkdir(parents=True, exist_ok=True)
-            if target_dest.exists():
-                if not target_dest.is_file() or _sha256_file(target_dest) != str(target["sha256"]):
-                    all_targets_ready = False
-                    break
-                candidate.unlink(missing_ok=True)
-            else:
-                os.replace(candidate, target_dest)
+            if candidate != target_dest:
+                target_dest.parent.mkdir(parents=True, exist_ok=True)
+                if target_dest.exists():
+                    if not target_dest.is_file() or _sha256_file(target_dest) != str(target["sha256"]):
+                        all_targets_ready = False
+                        break
+                    candidate.unlink(missing_ok=True)
+                else:
+                    try:
+                        trigger_persistence_barrier("staged_promotion", src=candidate, dst=target_dest, symbol=target["symbol"])
+                        os.replace(candidate, target_dest)
+                    except Exception:
+                        all_targets_ready = False
+                        break
+
+            try:
+                trigger_persistence_barrier("directory_fsync", path=target_dest.parent, symbol=target["symbol"])
+            except Exception:
+                all_targets_ready = False
+                break
         if not all_targets_ready:
             continue
 
@@ -943,7 +965,9 @@ def _recover_pending_publications_locked(
         with open(tmp_receipt, "w", encoding="utf-8") as handle:
             json.dump(receipt_payload, handle, indent=2)
             handle.flush()
+            trigger_persistence_barrier("receipt_fsync", path=tmp_receipt, payload=receipt_payload)
             os.fsync(handle.fileno())
+        trigger_persistence_barrier("receipt_durability", path=receipt_file, tmp_path=tmp_receipt, payload=receipt_payload)
         os.replace(tmp_receipt, receipt_file)
         intent_file.unlink(missing_ok=True)
         recovered_receipts.append(PublishReceipt(

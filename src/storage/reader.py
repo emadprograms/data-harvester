@@ -1000,6 +1000,19 @@ class TickLakeReader:
             "ticks_last_minute": 0,
         }
 
+    def read_gaps(self, symbol: Optional[str] = None, provider: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Read recorded provider gaps, disconnects, buffer drops, and handoffs
+        from <lake_root>/_control/gaps.json.
+        """
+        self.validate_lake()
+        self._check_maintenance()
+        if not self.root:
+            return []
+        from src.stream.gap_ledger import GapLedger
+        ledger = GapLedger(self.root)
+        return ledger.read_gaps(symbol=symbol, provider=provider)
+
     def discover_available_weeks(self) -> List[Dict[str, Any]]:
         """Discover available trading weeks from lake partitions grouped Mon-Fri."""
         self.validate_lake()
