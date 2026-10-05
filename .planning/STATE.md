@@ -44,6 +44,7 @@ Progress: [░░░░░░░░░░] 0%
 - **Data sources:** Capital.com for live ticks; Databento for gap repair, writing into the lake. Massive/Polygon, Yahoo, Binance and Discord are removed with the bar subsystem.
 - **Symbols:** exactly 19 approved equities — AAPL, ADBE, AMD, AMZN, APP, AVGO, BABA, GOOGL, META, MSFT, MU, NDAQ, NVDA, ORCL, PANW, QCOM, SHOP, TSLA, TSM. `_control/registry.json` is the single authority.
 - **Schedule:** ingestion 04:00–20:00 ET (Mon–Fri); compaction unattended in the closed interval.
+- **Remove the unused replay subsystem (owner decision, 2026-10-05):** `src/storage/replay.py` (819 lines), its 693 lines of tests, its exports, and the two `create_replay_*` methods on `TickLakeReader`. It was built in v4.3 Phase 42 against `PROJECT.md`'s explicit out-of-scope placement of market-rewind, has no UI, no API endpoint and no runner integration, and was never requested by the owner.
 - **Stop rule:** one completion report, then the milestone stops. No new phases or follow-up programme.
 
 **v4.3 outcomes (closed 2026-10-05, archived):**
