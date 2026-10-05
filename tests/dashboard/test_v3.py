@@ -182,8 +182,8 @@ class TestDashboardRestEndpoints:
         status, data = http_get(f"{dashboard_server}/api/integrity?symbol=SPY")
         assert status == 200
         assert data["symbols_audited"] == ["SPY"]
-        assert "anomalies" in data
-        assert "gaps" in data
+        assert isinstance(data["quiet_intervals"], list)
+        assert "overall_passed" in data
 
 
 class TestHarvesterJobManager:
