@@ -1,7 +1,10 @@
 # Milestone 5.0 — Parquet-only storage (DuckDB retained as query engine)
 
 **Date:** 2026-10-05
-**Status:** Plan for execution.
+**Status:** Executed through Phase 48 (2026-10-05); Phase 49 is owner-run.
+**Where it landed:** `.planning/ROADMAP.md` (progress table) · `.planning/REQUIREMENTS.md`
+(46-48 complete, 49 open) · `.planning/STATE.md` (handoff) ·
+`docs/operations/phase49_migration_runbook.md` (the owner procedure).
 **Scope:** One bounded removal/refactor. Four phases (46–49). No sub-programmes, no audits of the work itself.
 
 ---
@@ -12,7 +15,7 @@
 
 This is deliberately the smaller of two options. The alternative — removing the DuckDB library entirely and reimplementing resampling in PyArrow — was considered and rejected by the owner: it would rewrite `reader.py`, rebuild `time_bucket`/`arg_min`/`arg_max` grouping (concentrated DST risk), replace `EXCEPT ALL` reconciliation, and invalidate roughly 30 of 93 test files.
 
-**Option A keeps all of that.** `src/storage/reader.py`, `compaction.py` and `replay.py` are **not modified** by this milestone.
+**Option A keeps all of that.** `src/storage/reader.py` and `compaction.py` are **not modified** by this milestone; `src/storage/replay.py` was deleted in Phase 47 (RMV-08, owner decision to remove the unused replay subsystem) — a removal, not a rewrite.
 
 ## 1a. Governing principle: maximum declutter
 

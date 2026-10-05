@@ -115,11 +115,11 @@ Archive: [milestones/v4.3-ROADMAP.md](milestones/v4.3-ROADMAP.md) · [milestones
 
 ---
 
-### 🟡 v5.0 Parquet-Only Storage (DuckDB retained as query engine) (In Progress)
+### 🟢 v5.0 Parquet-Only Storage (DuckDB retained as query engine) — code phases complete, Phase 49 owner-run
 
 **Milestone Goal:** Remove DuckDB as **storage**. No `.duckdb` files exist; all persisted market data is Parquet ticks. DuckDB remains as the in-memory query engine reading those files.
 
-**Scope decision (owner, 2026-10-05):** the larger alternative — removing the DuckDB library and reimplementing resampling in PyArrow — was considered and **rejected**. Accordingly `src/storage/reader.py`, `compaction.py` and `replay.py` are **not modified** by this milestone.
+**Scope decision (owner, 2026-10-05):** the larger alternative — removing the DuckDB library and reimplementing resampling in PyArrow — was considered and **rejected**. Accordingly `src/storage/reader.py` and `compaction.py` are **not modified** by this milestone; `src/storage/replay.py` was deleted in Phase 47 (RMV-08, owner decision), which is a removal, not a rewrite.
 
 **Source plan:** [`PLAN-MILESTONE-5.0.md`](../PLAN-MILESTONE-5.0.md)
 
@@ -140,6 +140,7 @@ flowchart TD
 
 #### Phase 46: Rewire Off the Disk Databases
 
+**Status:** ✅ Complete 2026-10-05 (STOR-01..05, DASH-01..03, BASE-01, GAP-01/02).
 **Goal:** Capture the reference candle behaviour first, then make normal runtime unable to open a disk-backed DuckDB database, with the lake as the only source for ticks, symbols and dashboard reads.
 **Depends on:** Nothing (entry phase). Runs entirely in this checkout.
 **Requirements:** [BASE-01, STOR-01, STOR-02, STOR-03, STOR-04, STOR-05, DASH-01, DASH-02, DASH-03, GAP-01, GAP-02]
@@ -153,6 +154,7 @@ flowchart TD
 
 #### Phase 47: Remove the Historical Bar Archive & Dead Providers
 
+**Status:** ✅ Complete 2026-10-05 (RMV-01..04, 06..10; guards `tests/test_bar_era_removal.py`, `tests/test_disk_database_layer_removed.py`).
 **Goal:** Delete everything whose only purpose was the 1-minute bar archive (the Massive/Polygon/Yahoo/Binance harvesters, their CLI and dashboard job) or an unrequested feature, and clean the surviving surface.
 
 **Explicitly retained:** the tick-lake gap visualisation — shaded missing-data regions, continuity ribbons and `detect_stream_quiet_intervals`. This phase removes bar *storage*, never the chart that shows where data is missing.
@@ -168,6 +170,7 @@ flowchart TD
 
 #### Phase 48: Schedule, Off-Hours Compaction, Notifications & Test Disposition
 
+**Status:** ✅ Complete 2026-10-05 (SCHED-01..05, SYMB-01, NOTIF-01, CO-01/02; full offline suite 988 passed).
 **Goal:** Enforce 04:00-20:00 ET weekday ingestion, run compaction unattended in the closed interval, restrict the registry to 19 symbols, notify, and disposition the test suite.
 **Depends on:** Phase 47
 **Requirements:** [SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SYMB-01, NOTIF-01, CO-01, CO-02]
@@ -183,6 +186,7 @@ flowchart TD
 
 #### Phase 49: Final Gate, Deletion & Closure
 
+**Status:** ⏳ Owner-run; procedure rehearsed against a synthetic legacy database and published as [`docs/operations/phase49_migration_runbook.md`](../docs/operations/phase49_migration_runbook.md).
 **Goal:** Verify the lake holds what the legacy tick store held, delete both `.duckdb` files, and close the milestone.
 **Depends on:** Phase 48. **Runs on the owner's machine** - this checkout has no `data/` directory.
 **Requirements:** [MIG-01, MIG-02, MIG-03, RMV-05, CO-03]
@@ -200,10 +204,13 @@ flowchart TD
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 46. Rewire Off the Disk Databases | v5.0 | 0/TBD | Not started | - |
-| 47. Remove Bar Subsystem & Dead Providers | v5.0 | 0/TBD | Not started | - |
-| 48. Schedule, Compaction, Notifications & Test Disposition | v5.0 | 0/TBD | Not started | - |
-| 49. Final Gate, Deletion & Closure (owner machine) | v5.0 | 0/TBD | Not started | - |
+| 46. Rewire Off the Disk Databases | v5.0 | 1/1 | Complete ✅ | 2026-10-05 |
+| 47. Remove Bar Subsystem & Dead Providers | v5.0 | 1/1 | Complete ✅ | 2026-10-05 |
+| 48. Schedule, Compaction, Notifications & Test Disposition | v5.0 | 1/1 | Complete ✅ | 2026-10-05 |
+| 49. Final Gate, Deletion & Closure (owner machine) | v5.0 | — | Not started — owner-run, runbook §1–§5 | — |
+
+**Suite state at handoff:** 988 passed, 0 failures, 0 xfails (`pytest tests/ -q`), branch tip
+`a706406` on `arena/01a10aa6-data-harvester`, PR #9.
 
 ---
 
