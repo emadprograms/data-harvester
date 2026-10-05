@@ -8,7 +8,7 @@ import json
 import pytest
 import duckdb
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from src.stream.capital_stream import CapitalStreamer
 from src.stream.runner import StreamingEngine
@@ -91,7 +91,7 @@ def test_streaming_engine_reload_symbols(tmp_path):
 
             mock_streamer = AsyncMock()
             mock_streamer.update_subscriptions = AsyncMock(return_value=True)
-            mock_streamer.stop = AsyncMock()
+            mock_streamer.stop = MagicMock()  # engine.stop() calls this synchronously
             engine.capital_streamer = mock_streamer
 
             success = await engine.reload_symbols()

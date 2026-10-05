@@ -138,6 +138,44 @@ def _seed_isolated_session_historical_db():
 _seed_isolated_session_historical_db()
 
 
+# --- v5.0 (Phase 46): equivalent tick-lake population -------------------------
+# The Parquet tick lake is the only store, so the fixture population the dashboard
+# and analytics tests read is published here rather than in a disk database.
+LAKE_REFERENCE_DATE = "2026-07-10"
+
+
+def _seed_isolated_session_tick_lake():
+    from pathlib import Path as _Path
+    from src.storage.publication import LakePublisher
+    from tests.fixtures.deterministic_quotes import QuoteTick
+
+    base_dt = datetime(2026, 7, 10, 13, 30, 0)
+    ticks = []
+    for sym in STANDARD_HISTORICAL_SYMBOLS:
+        tick_count = 90 if sym in ("NVDA", "AAPL", "SPY") else 5
+        base_price = 125.0 if sym == "NVDA" else (220.0 if sym == "AAPL" else (550.0 if sym == "SPY" else 100.0))
+        for i in range(tick_count):
+            ts = base_dt + timedelta(minutes=i)
+            price = round(base_price + i * 0.05, 4)
+            ticks.append(QuoteTick(
+                timestamp=ts,
+                symbol=sym,
+                price=price,
+                volume=round(1000.0 + i * 10.0, 2),
+                bid=round(price - 0.01, 4),
+                ask=round(price + 0.01, 4),
+                source="CAPITAL",
+                session="REG",
+                ingest_id=f"seed_{sym}_{i:04d}",
+            ))
+
+    with LakePublisher(root=_Path(_SESSION_LAKE_ROOT), writer_id="conftest_seed") as publisher:
+        publisher.publish_batch(ticks, batch_id="conftest_seed_batch", sequence=1)
+
+
+_seed_isolated_session_tick_lake()
+
+
 
 # ============================================================================
 # PRODUCTION PATH GUARD
