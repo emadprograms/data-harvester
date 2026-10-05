@@ -170,6 +170,9 @@ class StreamingEngine:
         self.ticks_enqueued = 0
         self.ticks_dropped = 0
         self._pending_accepted_items = 0
+        # SCHED-04: the window owns admission. Once it closes, no new tick is
+        # accepted; everything already accepted still drains exactly once.
+        self.admission_open = True
         self.storage_error_event = asyncio.Event()
         self._storage_resume_event = asyncio.Event()
         self._storage_resume_event.set()
@@ -244,9 +247,19 @@ class StreamingEngine:
         """Queue items still owned by the writer, whether queued or in-flight."""
         return self._pending_accepted_items
 
+    def close_admission(self, reason: str = "window closed") -> None:
+        """Stop accepting new ticks (window closed); already-accepted work still drains."""
+        if self.admission_open:
+            self.admission_open = False
+            logger.info("Tick admission closed: %s", reason)
+
     def _enqueue_tick(self, tick_tuple) -> bool:
         """Best-effort synchronous admission; returns False and counts a pre-admission drop on full."""
         self.ticks_received += 1
+        if not self.admission_open:
+            sym = tick_tuple[1] if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1 else "all"
+            self._record_drop(1, symbol=str(sym), reason="WINDOW_CLOSED")
+            return False
         try:
             self.write_queue.put_nowait(tick_tuple)
         except asyncio.QueueFull:
@@ -261,6 +274,10 @@ class StreamingEngine:
     async def _enqueue_tick_async(self, tick_tuple) -> None:
         """Lossless async admission that waits for bounded queue capacity."""
         self.ticks_received += 1
+        if not self.admission_open:
+            sym = tick_tuple[1] if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1 else "all"
+            self._record_drop(1, symbol=str(sym), reason="WINDOW_CLOSED")
+            return
         await self.write_queue.put(tick_tuple)
         self.ticks_enqueued += 1
         self._pending_accepted_items += 1
@@ -730,7 +747,26 @@ class StreamingEngine:
         )
 
 
-def _run_streamer(engine, lake_root=None) -> int:
+async def window_watchdog(stop_event, clock=None, poll_seconds: float = 5.0) -> None:
+    """Ask the runner to stop when the ingestion window closes (SCHED-04).
+
+    Admission stops the moment the window ends; the normal shutdown path then
+    drains every accepted tick exactly once.
+    """
+    clock = clock or now_et
+    while True:
+        if not is_eligible(clock()):
+            logger.info(
+                "Ingestion window closed (%s); stopping admission and draining.",
+                describe_window(clock()),
+            )
+            stop_event.set()
+            return
+        await asyncio.sleep(poll_seconds)
+
+
+def _run_streamer(engine, lake_root=None, clock=None, watchdog_poll_seconds: float = 5.0,
+                  watch_window: bool = True) -> int:
     """Run the engine until a signal, mapping the outcome to an exit code.
 
     Exit codes (imported by the supervisor, SCHED-02/04):
@@ -756,8 +792,19 @@ def _run_streamer(engine, lake_root=None) -> int:
         engine_task = asyncio.create_task(engine.start())
         stop_task = asyncio.create_task(stop_event.wait())
 
+        workers = [engine_task, stop_task]
+        # Mock runs intentionally bypass the window (they never authenticate or
+        # subscribe), so the watchdog only governs live runs.
+        live_window = watch_window and not getattr(engine, "mock_mode", False)
+        if live_window:
+            workers.append(
+                asyncio.create_task(
+                    window_watchdog(stop_event, clock=clock, poll_seconds=watchdog_poll_seconds)
+                )
+            )
+
         done, pending = await asyncio.wait(
-            [engine_task, stop_task],
+            workers,
             return_when=asyncio.FIRST_COMPLETED,
         )
 

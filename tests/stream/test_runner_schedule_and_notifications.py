@@ -15,7 +15,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -247,3 +247,152 @@ def test_notifications_are_not_even_dispatched_without_a_webhook(monkeypatch):
     )
     notifications.notify_detached(notifications.SESSION_STARTED, detail="no-op")
     assert spawned == []
+
+
+# -------------------------------- SCHED-04: close means stop admitting, drain once
+
+
+def test_window_watchdog_stops_the_runner_at_close():
+    """The runner watches the window and asks itself to stop when it closes."""
+    async def run():
+        stop_event = asyncio.Event()
+        inside = et(2026, 10, 6, 19, 59, 59)
+        outside = et(2026, 10, 6, 20, 0, 0)
+        seen = []
+
+        def clock():
+            seen.append(1)
+            return inside if len(seen) <= 2 else outside
+
+        await asyncio.wait_for(
+            runner_module.window_watchdog(stop_event, clock=clock, poll_seconds=0.01),
+            timeout=5,
+        )
+        assert stop_event.is_set(), "the watchdog never asked the runner to stop"
+        assert len(seen) >= 3
+
+    asyncio.run(run())
+
+
+def test_window_watchdog_is_silent_while_the_window_is_open():
+    async def run():
+        stop_event = asyncio.Event()
+        task = asyncio.create_task(
+            runner_module.window_watchdog(
+                stop_event,
+                clock=lambda: et(2026, 10, 6, 12, 0),
+                poll_seconds=0.01,
+            )
+        )
+        await asyncio.sleep(0.1)
+        assert not stop_event.is_set()
+        assert not task.done()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+
+
+def test_admission_closes_with_the_window(tmp_path):
+    """At 20:00 the engine stops accepting ticks: no queue growth after close."""
+    lake_root = create_lake(tmp_path / "admission-lake", symbols=["AAPL"])
+    engine = StreamingEngine(lake_root=lake_root, flush_interval=0.05)
+    try:
+        tick = ("2026-10-06 19:59:00.000000", "AAPL", 150.0, 1.0, 149.9, 150.1, "CAPITAL", "REG")
+        assert engine._enqueue_tick(tick) is True
+
+        engine.close_admission(reason="window closed at 20:00 ET")
+        assert engine.admission_open is False
+
+        assert engine._enqueue_tick(tick) is False
+        assert engine.write_queue.qsize() == 1, "a tick was accepted after the window closed"
+        assert engine.ticks_dropped >= 1
+    finally:
+        engine.writer.close()
+        engine.stop()
+
+
+def test_async_admission_is_also_closed(tmp_path):
+    async def run():
+        lake_root = create_lake(tmp_path / "admission-async", symbols=["AAPL"])
+        engine = StreamingEngine(lake_root=lake_root, flush_interval=0.05)
+        try:
+            engine.close_admission(reason="window closed")
+            tick = ("2026-10-06 20:00:01.000000", "AAPL", 150.0, 1.0, 149.9, 150.1, "CAPITAL", "REG")
+            await asyncio.wait_for(engine._enqueue_tick_async(tick), timeout=1.0)
+            assert engine.write_queue.qsize() == 0
+            assert engine.ticks_dropped >= 1
+        finally:
+            engine.writer.close()
+            engine.stop()
+
+    asyncio.run(run())
+
+
+def test_the_close_path_drains_exactly_once(tmp_path):
+    """The runner stops the engine once, drains once, and exits 0 on window close."""
+    calls = {"stop": 0, "start": 0}
+
+    class FakeEngine:
+        drain_succeeded = True
+
+        def __init__(self):
+            self._stopped = None
+
+        async def start(self):
+            self._stopped = asyncio.Event()
+            calls["start"] += 1
+            await self._stopped.wait()
+
+        def stop(self):
+            calls["stop"] += 1
+            if self._stopped is not None:
+                self._stopped.set()
+
+    engine = FakeEngine()
+    ticks = [et(2026, 10, 6, 19, 59, 50)]
+
+    def clock():
+        # Inside for the first few polls, then past 20:00.
+        ticks.append(ticks[-1] + timedelta(seconds=5))
+        return ticks[-1]
+
+    exit_code = runner_module._run_streamer(
+        engine, lake_root=tmp_path / "lake", clock=clock, watchdog_poll_seconds=0.01
+    )
+    assert exit_code == 0
+    assert calls == {"stop": 1, "start": 1}, f"expected exactly one drain, got {calls}"
+
+
+def test_manual_stop_still_drains_once(tmp_path):
+    """A child that stops itself inside the window is drained once, not twice."""
+    calls = {"stop": 0}
+
+    class SelfStoppingEngine:
+        drain_succeeded = True
+
+        def __init__(self):
+            self._stopped = None
+
+        async def start(self):
+            self._stopped = asyncio.Event()
+            await asyncio.sleep(0.05)
+            self.stop()
+            await self._stopped.wait()
+
+        def stop(self):
+            calls["stop"] += 1
+            if self._stopped is not None:
+                self._stopped.set()
+
+    exit_code = runner_module._run_streamer(
+        SelfStoppingEngine(),
+        lake_root=tmp_path / "lake",
+        clock=lambda: et(2026, 10, 6, 12, 0),
+        watchdog_poll_seconds=0.01,
+    )
+    assert exit_code == 0
+    assert calls["stop"] == 1
