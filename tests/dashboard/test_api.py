@@ -55,24 +55,6 @@ def test_api_symbols(api_test_server):
     assert "NVDA" in names
 
 
-def test_api_symbols_coverage(api_test_server):
-    """GET /api/symbols/coverage returns rich matrix with date spans, freshness, and sources."""
-    resp = requests.get(f"{api_test_server}/api/symbols/coverage")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "symbols" in data
-    assert "total_symbols" in data
-    assert "total_bars_database" in data
-    assert data["total_symbols"] > 0
-    assert data["total_bars_database"] > 0
-
-    first = data["symbols"][0]
-    assert "display_name" in first
-    assert "bar_count" in first
-    assert "freshness" in first
-    assert "sources_list" in first
-
-
 def test_api_market_session(api_test_server):
     """GET /api/market/session returns ET clock, session phase, and cutoff countdown."""
     resp = requests.get(f"{api_test_server}/api/market/session")
@@ -107,24 +89,12 @@ def test_api_stream_tape(api_test_server):
     assert len(data["ticks"]) <= 10
 
 
-def test_api_historical_overview(api_test_server):
-    """GET /api/historical/overview returns canonical DuckDB metrics and source breakdown."""
-    resp = requests.get(f"{api_test_server}/api/historical/overview")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "database" in data
-    assert data["database"] == "data/historical.duckdb"
-    assert "total_rows" in data
-    assert "sources" in data
-    assert data["total_rows"] > 0
-
-
 def test_api_candles_historical_source(api_test_server):
-    """GET /api/candles with source=historical queries historical.duckdb."""
+    """GET /api/candles with a legacy source=historical still serves the lake."""
     resp = requests.get(f"{api_test_server}/api/candles?symbol=NVDA&tf=1m&limit=5&source=historical")
     assert resp.status_code == 200
     data = resp.json()
-    assert data.get("database") == "historical"
+    assert data.get("database") == "streaming"
     assert data.get("symbol") == "NVDA"
     assert isinstance(data.get("candles"), list)
 
@@ -140,11 +110,9 @@ def test_api_candles_streaming_source(api_test_server):
 
 
 def test_api_dedicated_candles_endpoints(api_test_server):
-    """GET /api/historical/candles and /api/streaming/candles return segregated data."""
+    """The historical candle route is gone; the streaming route serves the lake."""
     resp_h = requests.get(f"{api_test_server}/api/historical/candles?symbol=AAPL&tf=1m&limit=5")
-    assert resp_h.status_code == 200
-    data_h = resp_h.json()
-    assert data_h.get("database") == "historical"
+    assert resp_h.status_code == 404
 
     resp_s = requests.get(f"{api_test_server}/api/streaming/candles?symbol=AAPL&tf=1m&limit=5")
     assert resp_s.status_code == 200

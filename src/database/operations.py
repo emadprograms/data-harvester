@@ -623,7 +623,7 @@ def query_candlesticks(symbol: str, start_time=None, end_time=None, timeframe="1
     Returns a pandas DataFrame.
 
     NOTE: buckets are aligned to raw UTC storage time. The dashboard's Historical Database page must
-    present bars on the NYSE clock, so it uses src.dashboard.analytics.get_historical_candles()
+    present bars on the NYSE clock, so it used the (now removed) historical analytics path
     (exchange-local bucketing + America/New_York labels) instead of this helper.
     """
     own_client = False
