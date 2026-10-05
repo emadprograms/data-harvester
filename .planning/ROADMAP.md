@@ -151,14 +151,16 @@ flowchart TD
 5. Dashboard, analytics and integrity read the lake; the in-memory helper survives relocation.
 6. Databento gap-fill publishes to the lake and respects maintenance fences.
 
-#### Phase 47: Remove the Bar Subsystem & Dead Providers
+#### Phase 47: Remove the Historical Bar Archive & Dead Providers
 
-**Goal:** Delete everything whose only purpose was 1-minute bars or an unrequested feature, and clean the surviving surface.
+**Goal:** Delete everything whose only purpose was the 1-minute bar archive (the Massive/Polygon/Yahoo/Binance harvesters, their CLI and dashboard job) or an unrequested feature, and clean the surviving surface.
+
+**Explicitly retained:** the tick-lake gap visualisation — shaded missing-data regions, continuity ribbons and `detect_stream_quiet_intervals`. This phase removes bar *storage*, never the chart that shows where data is missing.
 **Depends on:** Phase 46
 **Requirements:** [RMV-01, RMV-02, RMV-03, RMV-04, RMV-06, RMV-07, RMV-08, RMV-09]
 **Success criteria:**
 1. No reference to either `.duckdb` file remains in code or current docs.
-2. Bar pipeline, providers, harvester job, dead tools and the unused replay subsystem removed; `discord.py` rewritten for streamer notifications (not deleted).
+2. Bar-archive pipeline, providers, harvester job, dead tools and the unused replay subsystem removed; `discord.py` rewritten for streamer notifications (not deleted). Gap shading and continuity ribbons untouched (`tests/dashboard/test_gap_visualisation_survives.py` stays green).
 3. `yfinance` and `polygon-api-client` gone; **`duckdb` stays**.
 4. `.planning/` archives untouched.
 
