@@ -350,7 +350,7 @@ REQUIREMENTS: List[Dict[str, object]] = [
         "nodes": [
             "tests/storage/test_tick_lake_audit_storage_regressions.py::test_environment_selected_lake_failure_never_falls_back_to_streaming_duckdb",
             "tests/storage/test_tick_lake_audit_storage_regressions.py::test_dashboard_lake_error_does_not_fall_back_to_streaming_duckdb",
-            "tests/storage/test_tick_lake_audit_storage_regressions.py::test_explicit_legacy_backend_remains_available",
+            "tests/storage/test_tick_lake_audit_storage_regressions.py::test_explicit_legacy_backend_is_removed",
         ],
         "granularity": "test",
     },

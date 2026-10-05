@@ -53,10 +53,7 @@ from src.utils.integrity import (
 from src.dashboard.analytics import (
     _get_lake_reader,
     get_candles,
-    get_historical_candles,
     get_streaming_candles,
-    get_historical_overview,
-    get_symbols_coverage,
     get_stream_tape,
     get_ticks,
     get_stream_status,
@@ -211,11 +208,6 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
 
         # 3. API: Symbol Inventory
-        if path == "/api/historical/symbols":
-            symbols = get_symbol_inventory_list()
-            self._send_json({"symbols": symbols, "total": len(symbols), "database": "historical"})
-            return
-
         if path == "/api/streaming/symbols":
             reg = _get_lake_registry()
             if reg and reg.path.exists():
@@ -277,7 +269,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
 
         # 5. API: OHLCV Candlestick Query (with native time_bucket)
-        if path in ["/api/candles", "/api/historical/candles", "/api/streaming/candles"]:
+        if path in ["/api/candles", "/api/streaming/candles"]:
             sym = query.get("symbol", ["SPY"])[0]
             tf = query.get("timeframe", query.get("tf", ["1m"]))[0]
             start = query.get("start", [None])[0]
@@ -285,39 +277,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             date_param = query.get("date", [None])[0]
             hours_param = query.get("hours", query.get("extended", ["extended"]))[0]
 
-            if path == "/api/historical/candles":
-                db_source = "historical"
-            elif path == "/api/streaming/candles":
-                db_source = "streaming"
-            else:
-                raw_source = query.get("source", query.get("db", [None]))[0]
-                if not raw_source or raw_source.lower() not in ["historical", "streaming", "live"]:
-                    self._send_json({
-                        "error": "Missing or invalid required 'source' query parameter: must be 'historical' or 'streaming'"
-                    }, status=400)
-                    return
-                db_source = "streaming" if raw_source.lower() in ["streaming", "live"] else "historical"
-
             try:
                 limit = int(query.get("limit", [1000])[0])
             except ValueError:
                 limit = 1000
-            res = get_candles(sym, tf, start, end, limit, db_source=db_source, date=date_param, hours=hours_param)
-            self._send_json(res)
-            return
-
-        # 5b. API: Dedicated Historical Database Overview
-        if path == "/api/historical/overview":
-            res = get_historical_overview()
+            res = get_candles(sym, tf, start, end, limit, date=date_param, hours=hours_param)
             self._send_json(res)
             return
 
         # 6. API: Symbol Coverage & Health Summary
-        if path == "/api/symbols/coverage":
-            cov = get_symbols_coverage()
-            self._send_json(cov)
-            return
-
         # 7. API: Live Stream Tape
         if path == "/api/stream/tape":
             sym = query.get("symbol", [None])[0]

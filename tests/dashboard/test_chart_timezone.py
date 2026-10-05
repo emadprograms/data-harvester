@@ -1,45 +1,44 @@
 """
-Tests for US Eastern / NYSE Stock Exchange Timezone on Historical Database Charts.
-Verifies that:
-- get_historical_candles converts UTC timestamps to America/New_York (NYSE exchange time)
-- Regular session market open is at 09:30:00 and market close is at 16:00:00 in America/New_York
-- get_streaming_candles returns America/New_York timezone
-- Static files include NYSE (ET) badges and formatters
+Tests for US Eastern / NYSE Stock Exchange Timezone on Charts.
+
+v5.0 serves candles from the Parquet tick lake only. Verifies that:
+- lake candle payloads declare timezone America/New_York (NYSE exchange time)
+- regular session candles align with the 09:30-16:00 NYSE clock
+- aggregated timeframes also reflect the exchange clock
+- static files include NYSE (ET) badges and formatters
 """
-from src.dashboard.analytics import get_historical_candles, get_streaming_candles, get_candles
+from src.dashboard.analytics import get_streaming_candles, get_candles
+
+LAKE_DATE = "2026-07-10"
 
 
-def test_historical_candles_timezone_metadata():
-    """get_historical_candles payload must declare timezone as America/New_York."""
-    res = get_historical_candles("NVDA", timeframe="1m", limit=10)
-    assert res.get("database") == "historical"
+def test_lake_candles_timezone_metadata():
+    """The candle payload must declare timezone as America/New_York."""
+    res = get_candles("NVDA", timeframe="1m", limit=10, date=LAKE_DATE)
     assert res.get("timezone") == "America/New_York"
+    assert res.get("symbol") == "NVDA"
     assert isinstance(res.get("candles"), list)
 
 
-def test_historical_candles_nyse_market_hours():
-    """Regular session (REG) candles must align with 09:30 open and 16:00 close in America/New_York."""
-    res = get_historical_candles("NVDA", timeframe="1m", limit=2000)
+def test_lake_candles_align_with_nyse_market_hours():
+    """Every candle time must fall inside the 09:30-16:00 NYSE session."""
+    res = get_candles("NVDA", timeframe="1m", limit=2000, date=LAKE_DATE)
     assert res["count"] > 0
 
-    reg_candles = [c for c in res["candles"] if c.get("session") == "REG"]
-    assert len(reg_candles) > 0
-
-    # Every regular session candle time_str should fall between 09:30 and 16:00 NYSE time
-    for c in reg_candles:
+    for c in res["candles"]:
         time_part = c["time_str"].split(" ")[1]
-        assert "09:30:00" <= time_part <= "16:00:00", f"REG session candle outside NYSE hours: {c['time_str']}"
+        assert "09:30:00" <= time_part <= "16:00:00", f"candle outside NYSE hours: {c['time_str']}"
 
 
-def test_historical_candles_aggregated_buckets_timezone():
-    """Aggregated timeframes (1h, 1d) must also reflect NYSE stock exchange clock."""
-    res_1h = get_candles("NVDA", timeframe="1h", limit=10, db_source="historical")
+def test_lake_candles_aggregated_buckets_timezone():
+    """Aggregated timeframes (1h, 1d) must also reflect the NYSE exchange clock."""
+    res_1h = get_candles("NVDA", timeframe="1h", limit=10, date=LAKE_DATE)
     assert res_1h["count"] > 0
     assert res_1h.get("timezone") == "America/New_York"
     for c in res_1h["candles"]:
         assert ":" in c["time_str"]
 
-    res_1d = get_candles("NVDA", timeframe="1d", limit=10, db_source="historical")
+    res_1d = get_candles("NVDA", timeframe="1d", limit=10, date=LAKE_DATE)
     assert res_1d["count"] > 0
     assert res_1d.get("timezone") == "America/New_York"
     for c in res_1d["candles"]:
@@ -49,7 +48,7 @@ def test_historical_candles_aggregated_buckets_timezone():
 
 def test_streaming_candles_timezone_metadata():
     """get_streaming_candles must declare timezone as America/New_York."""
-    res = get_streaming_candles("AAPL", timeframe="1m", limit=10)
+    res = get_streaming_candles("AAPL", timeframe="1m", limit=10, date=LAKE_DATE)
     assert res.get("database") == "streaming"
     assert res.get("timezone") == "America/New_York"
 

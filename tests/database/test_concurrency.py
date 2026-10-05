@@ -137,8 +137,6 @@ def test_dashboard_concurrent_api_requests_no_duckdb_conflict(temp_test_db_dir, 
     monkeypatch.setattr("src.database.connection.DEFAULT_HISTORICAL_DB_PATH", hist_path)
     monkeypatch.setattr("src.database.connection.DEFAULT_STREAMING_DB_PATH", stream_path)
     monkeypatch.setattr("src.database.connection.DEFAULT_DB_PATH", hist_path)
-    monkeypatch.setattr("src.utils.integrity.DEFAULT_HISTORICAL_DB_PATH", hist_path)
-    monkeypatch.setattr("src.utils.integrity.DEFAULT_STREAMING_DB_PATH", stream_path)
 
     # Use a random high port
     port = 8993

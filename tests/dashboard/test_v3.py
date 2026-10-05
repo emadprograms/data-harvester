@@ -21,7 +21,6 @@ from datetime import datetime, timezone, timedelta
 from src.dashboard.server import create_dashboard_server
 from src.dashboard.analytics import (
     get_candles,
-    get_symbols_coverage,
     get_stream_tape,
     get_stream_status,
     get_market_session_info,
@@ -58,7 +57,7 @@ def http_post(url, payload):
 
 class TestAnalyticsEngine:
     def test_get_candles_1m(self):
-        res = get_candles("SPY", timeframe="1m", limit=10)
+        res = get_candles("SPY", timeframe="1m", limit=100, date="2026-07-10")
         assert res["symbol"] == "SPY"
         assert res["timeframe"] == "1m"
         assert res["count"] > 0
@@ -73,7 +72,7 @@ class TestAnalyticsEngine:
     def test_get_candles_all_timeframes(self):
         timeframes = ["5m", "15m", "30m", "1h", "4h", "1d"]
         for tf in timeframes:
-            res = get_candles("NVDA", timeframe=tf, limit=3)
+            res = get_candles("NVDA", timeframe=tf, limit=3, date="2026-07-10")
             assert res["symbol"] == "NVDA"
             assert res["timeframe"] == tf
             assert res["count"] > 0
@@ -94,16 +93,6 @@ class TestAnalyticsEngine:
         res = get_candles("NON_EXISTENT_SYMBOL_XYZ", timeframe="1m", limit=10)
         assert res["count"] == 0
         assert res["candles"] == []
-
-    def test_get_symbols_coverage(self):
-        cov = get_symbols_coverage()
-        assert cov["total_symbols"] > 0
-        assert cov["total_bars_database"] > 0
-        sym_entry = cov["symbols"][0]
-        assert "display_name" in sym_entry
-        assert "bar_count" in sym_entry
-        assert "asset_class" in sym_entry
-        assert "freshness" in sym_entry
 
     def test_get_stream_tape(self):
         tape = get_stream_tape(limit=10)
@@ -145,12 +134,6 @@ class TestDashboardRestEndpoints:
         assert status == 200
         assert data["symbol"] == "AAPL"
         assert data["timeframe"] == "5m"
-
-    def test_endpoint_symbols_coverage(self, dashboard_server):
-        status, data = http_get(f"{dashboard_server}/api/symbols/coverage")
-        assert status == 200
-        assert "symbols" in data
-        assert len(data["symbols"]) > 0
 
     def test_endpoint_stream_tape(self, dashboard_server):
         status, data = http_get(f"{dashboard_server}/api/stream/tape?limit=5")
