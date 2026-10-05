@@ -130,3 +130,48 @@ def test_session_window_gaps_are_unchanged(baseline_lake, hours) -> None:
     )
     observed = tuple((g["start_str"], g["end_str"], g["duration"]) for g in result["gaps"])
     assert observed == GAP_BASELINE[hours]
+
+
+# ------------------------------------------------------------------ CO-02
+#
+# Verification that the query engine was not modified by v5.0: the golden values
+# above are the evidence for the maths, and the two checks below pin the
+# interfaces and the dashboard layer's pass-through behaviour, so a future change
+# cannot quietly reshape candle output on its way to the UI.
+
+def test_candle_entry_point_signatures_are_unchanged() -> None:
+    import inspect
+
+    from src.storage.reader import TickLakeReader
+
+    get_candles = inspect.signature(TickLakeReader.get_candles)
+    assert list(get_candles.parameters) == [
+        "self", "symbol", "timeframe", "start", "end", "limit", "date", "hours",
+    ]
+    query_candles = inspect.signature(TickLakeReader.query_candles)
+    assert list(query_candles.parameters) == [
+        "self", "symbol", "timeframe", "start", "end", "limit", "inclusive_end",
+    ]
+
+
+def test_dashboard_returns_reader_candles_without_resampling_them(monkeypatch) -> None:
+    """`analytics.get_streaming_candles` must hand back the reader's result as-is."""
+    from unittest.mock import MagicMock
+
+    from src.dashboard import analytics
+
+    sentinel = {
+        "symbol": "AAPL",
+        "timeframe": "1m",
+        "count": 1,
+        "candles": [{"time": 1, "open": 2.0, "high": 3.0, "low": 1.0, "close": 2.5, "volume": 10.0}],
+    }
+    reader = MagicMock()
+    reader.get_candles.return_value = sentinel
+    monkeypatch.setattr(analytics, "_get_lake_reader", lambda: reader)
+
+    result = analytics.get_streaming_candles("AAPL", timeframe="1m")
+    assert result is sentinel, "the dashboard layer transformed candle output"
+    reader.get_candles.assert_called_once_with(
+        symbol="AAPL", timeframe="1m", start=None, end=None, limit=1000, date=None, hours="extended"
+    )
