@@ -60,13 +60,13 @@ import pytest
 import requests
 from bs4 import BeautifulSoup
 
-from src.database.connection import (
-    DuckDBClient,
-    get_historical_db_connection,
-    get_streaming_db_connection,
-)
-from src.database.schema import init_streaming_db
 from src.dashboard.server import create_dashboard_server
+from tests.support.lake_population import (
+    create_lake,
+    populate_trading_session,
+    populate_week,
+    publish_rows,
+)
 
 # Attempt importing backend analytics function; fallback to None for clean test reporting
 try:
@@ -91,63 +91,6 @@ MONITORED_19_SYMBOLS = [
 # ============================================================================
 # Helpers & Fixtures
 # ============================================================================
-
-def create_in_memory_streaming_db() -> DuckDBClient:
-    """Creates an in-memory DuckDB client initialized with streaming schema & 19 symbols."""
-    client = DuckDBClient(":memory:", read_only=False)
-    init_streaming_db(client)
-    return client
-
-
-def populate_trading_session_ticks(
-    client: DuckDBClient,
-    session_date: date,
-    symbols: list[str] = MONITORED_19_SYMBOLS,
-    start_hour: int = 9,
-    start_min: int = 30,
-    end_hour: int = 16,
-    end_min: int = 0,
-    interval_minutes: int = 1,
-    blackout_window: tuple[dtime, dtime] | None = None,
-    symbol_blackouts: dict[str, tuple[dtime, dtime]] | None = None,
-    base_price: float = 100.0,
-):
-    """
-    Populates regular market session ticks (09:30 to 16:00 ET) in DuckDB.
-    Timestamps are converted from America/New_York to UTC for storage.
-    """
-    start_dt_et = datetime(session_date.year, session_date.month, session_date.day, start_hour, start_min, tzinfo=ET)
-    end_dt_et = datetime(session_date.year, session_date.month, session_date.day, end_hour, end_min, tzinfo=ET)
-
-    rows = []
-    curr_et = start_dt_et
-    while curr_et <= end_dt_et:
-        curr_time = curr_et.time()
-
-        # Check global blackout
-        is_global_blackout = False
-        if blackout_window:
-            b_start, b_end = blackout_window
-            if b_start <= curr_time < b_end:
-                is_global_blackout = True
-
-        if not is_global_blackout:
-            curr_utc = curr_et.astimezone(UTC)
-            ts_str = curr_utc.strftime("%Y-%m-%d %H:%M:%S")
-
-            for sym in symbols:
-                # Check per-symbol blackout
-                if symbol_blackouts and sym in symbol_blackouts:
-                    s_start, s_end = symbol_blackouts[sym]
-                    if s_start <= curr_time < s_end:
-                        continue  # Skip tick for this symbol
-
-                rows.append((ts_str, sym, base_price, 10.0, base_price - 0.05, base_price + 0.05, "TEST", "REG"))
-
-        curr_et += timedelta(minutes=interval_minutes)
-
-    if rows:
-        client.executemany("INSERT INTO tick_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
 
 
 @pytest.fixture(scope="module")
@@ -199,7 +142,7 @@ def js_sources():
 class TestBackendContinuityAnalyticsEngine:
     """Validates get_streaming_continuity_analysis backend query and analytics logic."""
 
-    def test_continuity_analysis_schema(self):
+    def test_continuity_analysis_schema(self, tmp_path, monkeypatch):
         """
         get_streaming_continuity_analysis returns a dictionary matching the required contract:
         - database: 'streaming'
@@ -212,52 +155,53 @@ class TestBackendContinuityAnalyticsEngine:
             "get_streaming_continuity_analysis must be implemented in src.dashboard.analytics"
         )
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            # Seed 1 full healthy day (e.g. Wednesday 2026-09-23)
-            populate_trading_session_ticks(mem_client, session_date=date(2026, 9, 23))
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
 
-            res = get_streaming_continuity_analysis(days=5, symbol="all", client=mem_client)
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
 
-            assert isinstance(res, dict), "Result must be a dictionary"
-            assert res.get("database") == "streaming", f"Database must be 'streaming', got {res.get('database')}"
-            assert "days" in res, "Result must contain 'days' key"
-            assert isinstance(res["days"], list), "'days' must be a list"
-            assert len(res["days"]) > 0, "'days' list must not be empty"
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        # Seed a full healthy trading week (Mon 2026-09-21 - Fri 2026-09-25)
+        populate_week(lake, week_start=date(2026, 9, 23), symbols=MONITORED_19_SYMBOLS)
 
-            # Check summary schema
-            assert "summary" in res, "Result must contain 'summary' key"
-            summary = res["summary"]
-            assert isinstance(summary, dict), "'summary' must be a dictionary"
-            assert "total_gaps" in summary, "summary must contain 'total_gaps'"
-            assert "total_outage_minutes" in summary, "summary must contain 'total_outage_minutes'"
-            assert "average_coverage" in summary, "summary must contain 'average_coverage'"
-            assert isinstance(summary["total_gaps"], int), "total_gaps must be an int"
-            assert isinstance(summary["total_outage_minutes"], (int, float)), "total_outage_minutes must be numeric"
-            assert isinstance(summary["average_coverage"], (int, float)), "average_coverage must be numeric"
+        res = get_streaming_continuity_analysis(days=5, symbol="all")
 
-            # Check monitored symbols count and view mode
-            assert res.get("monitored_symbols_count") == 19, (
-                f"Expected 19 monitored symbols for 'all', got {res.get('monitored_symbols_count')}"
+        assert isinstance(res, dict), "Result must be a dictionary"
+        assert res.get("database") == "streaming", f"Database must be 'streaming', got {res.get('database')}"
+        assert "days" in res, "Result must contain 'days' key"
+        assert isinstance(res["days"], list), "'days' must be a list"
+        assert len(res["days"]) > 0, "'days' list must not be empty"
+
+        # Check summary schema
+        assert "summary" in res, "Result must contain 'summary' key"
+        summary = res["summary"]
+        assert isinstance(summary, dict), "'summary' must be a dictionary"
+        assert "total_gaps" in summary, "summary must contain 'total_gaps'"
+        assert "total_outage_minutes" in summary, "summary must contain 'total_outage_minutes'"
+        assert "average_coverage" in summary, "summary must contain 'average_coverage'"
+        assert isinstance(summary["total_gaps"], int), "total_gaps must be an int"
+        assert isinstance(summary["total_outage_minutes"], (int, float)), "total_outage_minutes must be numeric"
+        assert isinstance(summary["average_coverage"], (int, float)), "average_coverage must be numeric"
+
+        # Check monitored symbols count and view mode
+        assert res.get("monitored_symbols_count") == 19, (
+            f"Expected 19 monitored symbols for 'all', got {res.get('monitored_symbols_count')}"
+        )
+        assert res.get("view_mode") in ["all", "master", "spectrogram"], (
+            f"Expected view_mode in ['all', 'master', 'spectrogram'], got {res.get('view_mode')}"
+        )
+
+        # Check schema of day objects
+        for d in res["days"]:
+            assert "date" in d, "Day object must contain 'date'"
+            assert "status" in d, "Day object must contain 'status'"
+            assert d["status"] in ["healthy", "partial", "outage", "green", "amber", "red"], (
+                f"Unexpected day status '{d.get('status')}'"
             )
-            assert res.get("view_mode") in ["all", "master", "spectrogram"], (
-                f"Expected view_mode in ['all', 'master', 'spectrogram'], got {res.get('view_mode')}"
-            )
+            coverage = d.get("coverage_pct", d.get("coverage_percent", d.get("coverage")))
+            assert coverage is not None, "Day object must contain coverage percentage"
+            assert 0.0 <= coverage <= 100.0, f"Coverage must be between 0 and 100, got {coverage}"
 
-            # Check schema of day objects
-            for d in res["days"]:
-                assert "date" in d, "Day object must contain 'date'"
-                assert "status" in d, "Day object must contain 'status'"
-                assert d["status"] in ["healthy", "partial", "outage", "green", "amber", "red"], (
-                    f"Unexpected day status '{d.get('status')}'"
-                )
-                coverage = d.get("coverage_pct", d.get("coverage_percent", d.get("coverage")))
-                assert coverage is not None, "Day object must contain coverage percentage"
-                assert 0.0 <= coverage <= 100.0, f"Coverage must be between 0 and 100, got {coverage}"
-        finally:
-            mem_client.close()
-
-    def test_continuity_detects_global_blackout(self):
+    def test_continuity_detects_global_blackout(self, tmp_path, monkeypatch):
         """
         Setup test ticks with a 15-minute gap across ALL symbols during trading hours (10:00 to 10:15 ET).
         Asserts gap is classified as global blackout / outage:
@@ -269,54 +213,53 @@ class TestBackendContinuityAnalyticsEngine:
             "get_streaming_continuity_analysis must be implemented in src.dashboard.analytics"
         )
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            # Populate trading day with 15-minute simultaneous blackout across all symbols (10:00 - 10:15 ET)
-            trading_day = date(2026, 9, 23)
-            populate_trading_session_ticks(
-                mem_client,
-                session_date=trading_day,
-                blackout_window=(dtime(10, 0), dtime(10, 15))
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        # Populate trading day with 15-minute simultaneous blackout across all symbols (10:00 - 10:15 ET)
+        trading_day = date(2026, 9, 23)
+        populate_week(lake, week_start=trading_day, gap_date=trading_day, symbols=MONITORED_19_SYMBOLS,
+            blackout_window=(dtime(10, 0), dtime(10, 15))
+        )
+
+        res = get_streaming_continuity_analysis(days=5, symbol="all")
+
+        summary = res.get("summary", {})
+        assert summary.get("total_gaps", 0) >= 1, (
+            f"Expected at least 1 gap detected for 15m blackout, got {summary.get('total_gaps')}"
+        )
+        assert summary.get("total_outage_minutes", 0) >= 15, (
+            f"Expected at least 15 outage minutes, got {summary.get('total_outage_minutes')}"
+        )
+
+        # Verify that an outage-level gap is reported
+        all_gaps = summary.get("gaps", [])
+        for d in res.get("days", []):
+            all_gaps.extend(d.get("gaps", []))
+
+        # Find the blackout gap
+        blackout_found = False
+        for g in all_gaps:
+            dur = g.get("duration", g.get("duration_minutes", g.get("missing_minutes", 0)))
+            status = g.get("status", g.get("type", g.get("severity", "")))
+            if dur >= 15 and status in ["outage", "blackout", "critical", "red"]:
+                blackout_found = True
+                break
+
+        # If gaps are recorded per-day status
+        day_obj = next((d for d in res.get("days", []) if d.get("date") == trading_day.strftime("%Y-%m-%d")), None)
+        if day_obj:
+            assert day_obj.get("status") in ["outage", "red", "degraded"], (
+                f"Day status for global blackout should be 'outage', got {day_obj.get('status')}"
             )
 
-            res = get_streaming_continuity_analysis(days=5, symbol="all", client=mem_client)
+        assert blackout_found or (day_obj and day_obj.get("status") in ["outage", "red"]), (
+            f"15m blackout was not classified as outage status. Gaps: {all_gaps}"
+        )
 
-            summary = res.get("summary", {})
-            assert summary.get("total_gaps", 0) >= 1, (
-                f"Expected at least 1 gap detected for 15m blackout, got {summary.get('total_gaps')}"
-            )
-            assert summary.get("total_outage_minutes", 0) >= 15, (
-                f"Expected at least 15 outage minutes, got {summary.get('total_outage_minutes')}"
-            )
-
-            # Verify that an outage-level gap is reported
-            all_gaps = summary.get("gaps", [])
-            for d in res.get("days", []):
-                all_gaps.extend(d.get("gaps", []))
-
-            # Find the blackout gap
-            blackout_found = False
-            for g in all_gaps:
-                dur = g.get("duration", g.get("duration_minutes", g.get("missing_minutes", 0)))
-                status = g.get("status", g.get("type", g.get("severity", "")))
-                if dur >= 15 and status in ["outage", "blackout", "critical", "red"]:
-                    blackout_found = True
-                    break
-
-            # If gaps are recorded per-day status
-            day_obj = next((d for d in res.get("days", []) if d.get("date") == trading_day.strftime("%Y-%m-%d")), None)
-            if day_obj:
-                assert day_obj.get("status") in ["outage", "red", "degraded"], (
-                    f"Day status for global blackout should be 'outage', got {day_obj.get('status')}"
-                )
-
-            assert blackout_found or (day_obj and day_obj.get("status") in ["outage", "red"]), (
-                f"15m blackout was not classified as outage status. Gaps: {all_gaps}"
-            )
-        finally:
-            mem_client.close()
-
-    def test_continuity_detects_single_symbol_partial_gap(self):
+    def test_continuity_detects_single_symbol_partial_gap(self, tmp_path, monkeypatch):
         """
         Setup test ticks where 18 symbols stream continuously but 1 symbol (NVDA) has a 10-minute gap.
         Asserts partial degradation is captured:
@@ -328,47 +271,46 @@ class TestBackendContinuityAnalyticsEngine:
             "get_streaming_continuity_analysis must be implemented in src.dashboard.analytics"
         )
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            trading_day = date(2026, 9, 23)
-            # NVDA has a gap from 11:00 to 11:10 ET (10 minutes), while remaining 18 symbols stream normally
-            populate_trading_session_ticks(
-                mem_client,
-                session_date=trading_day,
-                symbol_blackouts={"NVDA": (dtime(11, 0), dtime(11, 10))}
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        trading_day = date(2026, 9, 23)
+        # NVDA has a gap from 11:00 to 11:10 ET (10 minutes), while remaining 18 symbols stream normally
+        populate_week(lake, week_start=trading_day, gap_date=trading_day, symbols=MONITORED_19_SYMBOLS,
+            symbol_blackouts={"NVDA": (dtime(11, 0), dtime(11, 10))}
+        )
+
+        res = get_streaming_continuity_analysis(days=5, symbol="all")
+
+        summary = res.get("summary", {})
+        # Verify that partial gap is captured
+        all_gaps = summary.get("gaps", [])
+        for d in res.get("days", []):
+            all_gaps.extend(d.get("gaps", []))
+
+        # Should NOT be classified as total outage across system
+        day_obj = next((d for d in res.get("days", []) if d.get("date") == trading_day.strftime("%Y-%m-%d")), None)
+        if day_obj:
+            assert day_obj.get("status") in ["partial", "amber", "degraded"], (
+                f"Day status with single symbol gap should be 'partial' or 'amber', got {day_obj.get('status')}"
             )
 
-            res = get_streaming_continuity_analysis(days=5, symbol="all", client=mem_client)
+        # Check that NVDA gap of 10m is captured
+        nvda_gap = next((g for g in all_gaps if g.get("symbol") == "NVDA" or "NVDA" in g.get("impacted_symbols", [])), None)
+        if nvda_gap:
+            dur = nvda_gap.get("duration", nvda_gap.get("duration_minutes", nvda_gap.get("missing_minutes", 0)))
+            assert dur == 10, f"Expected 10m duration for NVDA gap, got {dur}"
+            assert nvda_gap.get("status", nvda_gap.get("type", "partial")) in ["partial", "amber", "symbol_gap"]
+        else:
+            # If gaps are recorded inside spectrogram breakdown
+            spectrogram = res.get("spectrogram", res.get("symbols", {}))
+            assert "NVDA" in spectrogram or any("NVDA" in str(x) for x in res.values()), (
+                "Single symbol NVDA degradation must be captured in continuity analysis."
+            )
 
-            summary = res.get("summary", {})
-            # Verify that partial gap is captured
-            all_gaps = summary.get("gaps", [])
-            for d in res.get("days", []):
-                all_gaps.extend(d.get("gaps", []))
-
-            # Should NOT be classified as total outage across system
-            day_obj = next((d for d in res.get("days", []) if d.get("date") == trading_day.strftime("%Y-%m-%d")), None)
-            if day_obj:
-                assert day_obj.get("status") in ["partial", "amber", "degraded"], (
-                    f"Day status with single symbol gap should be 'partial' or 'amber', got {day_obj.get('status')}"
-                )
-
-            # Check that NVDA gap of 10m is captured
-            nvda_gap = next((g for g in all_gaps if g.get("symbol") == "NVDA" or "NVDA" in g.get("impacted_symbols", [])), None)
-            if nvda_gap:
-                dur = nvda_gap.get("duration", nvda_gap.get("duration_minutes", nvda_gap.get("missing_minutes", 0)))
-                assert dur == 10, f"Expected 10m duration for NVDA gap, got {dur}"
-                assert nvda_gap.get("status", nvda_gap.get("type", "partial")) in ["partial", "amber", "symbol_gap"]
-            else:
-                # If gaps are recorded inside spectrogram breakdown
-                spectrogram = res.get("spectrogram", res.get("symbols", {}))
-                assert "NVDA" in spectrogram or any("NVDA" in str(x) for x in res.values()), (
-                    "Single symbol NVDA degradation must be captured in continuity analysis."
-                )
-        finally:
-            mem_client.close()
-
-    def test_continuity_per_symbol_filtering(self):
+    def test_continuity_per_symbol_filtering(self, tmp_path, monkeypatch):
         """
         Calling with symbol='NVDA' calculates continuity specific to NVDA:
         - monitored_symbols_count = 1
@@ -380,47 +322,46 @@ class TestBackendContinuityAnalyticsEngine:
             "get_streaming_continuity_analysis must be implemented in src.dashboard.analytics"
         )
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            trading_day = date(2026, 9, 23)
-            # AAPL has a 20-minute gap (13:00-13:20 ET); NVDA has 0 gaps (streams continuously)
-            populate_trading_session_ticks(
-                mem_client,
-                session_date=trading_day,
-                symbol_blackouts={"AAPL": (dtime(13, 0), dtime(13, 20))}
-            )
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
 
-            # 1. Query strictly for NVDA
-            res_nvda = get_streaming_continuity_analysis(days=5, symbol="NVDA", client=mem_client)
-            assert res_nvda.get("monitored_symbols_count") == 1, (
-                f"Expected monitored_symbols_count=1 for symbol='NVDA', got {res_nvda.get('monitored_symbols_count')}"
-            )
-            assert res_nvda.get("view_mode") in ["NVDA", "symbol", "single"], (
-                f"Expected view_mode to reflect single symbol, got {res_nvda.get('view_mode')}"
-            )
-            summary_nvda = res_nvda.get("summary", {})
-            assert summary_nvda.get("total_gaps") == 0, (
-                f"NVDA streamed continuously, expected 0 gaps but got {summary_nvda.get('total_gaps')}"
-            )
-            assert summary_nvda.get("total_outage_minutes") == 0
-            assert summary_nvda.get("average_coverage") == 100.0
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
 
-            # 2. Query strictly for AAPL
-            res_aapl = get_streaming_continuity_analysis(days=5, symbol="AAPL", client=mem_client)
-            summary_aapl = res_aapl.get("summary", {})
-            assert summary_aapl.get("total_gaps", 0) >= 1, (
-                f"AAPL had a 20m gap, expected at least 1 gap but got {summary_aapl.get('total_gaps')}"
-            )
-            assert summary_aapl.get("total_outage_minutes", 0) >= 20, (
-                f"Expected >= 20 outage minutes for AAPL, got {summary_aapl.get('total_outage_minutes')}"
-            )
-            assert summary_aapl.get("average_coverage", 100.0) < 100.0, (
-                f"AAPL coverage should be < 100%, got {summary_aapl.get('average_coverage')}"
-            )
-        finally:
-            mem_client.close()
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        trading_day = date(2026, 9, 23)
+        # AAPL has a 20-minute gap (13:00-13:20 ET); NVDA has 0 gaps (streams continuously)
+        populate_week(lake, week_start=trading_day, gap_date=trading_day, symbols=MONITORED_19_SYMBOLS,
+            symbol_blackouts={"AAPL": (dtime(13, 0), dtime(13, 20))}
+        )
 
-    def test_continuity_excludes_market_closed_hours(self):
+        # 1. Query strictly for NVDA
+        res_nvda = get_streaming_continuity_analysis(days=5, symbol="NVDA")
+        assert res_nvda.get("monitored_symbols_count") == 1, (
+            f"Expected monitored_symbols_count=1 for symbol='NVDA', got {res_nvda.get('monitored_symbols_count')}"
+        )
+        assert res_nvda.get("view_mode") in ["NVDA", "symbol", "single"], (
+            f"Expected view_mode to reflect single symbol, got {res_nvda.get('view_mode')}"
+        )
+        summary_nvda = res_nvda.get("summary", {})
+        assert summary_nvda.get("total_gaps") == 0, (
+            f"NVDA streamed continuously, expected 0 gaps but got {summary_nvda.get('total_gaps')}"
+        )
+        assert summary_nvda.get("total_outage_minutes") == 0
+        assert summary_nvda.get("average_coverage") == 100.0
+
+        # 2. Query strictly for AAPL
+        res_aapl = get_streaming_continuity_analysis(days=5, symbol="AAPL")
+        summary_aapl = res_aapl.get("summary", {})
+        assert summary_aapl.get("total_gaps", 0) >= 1, (
+            f"AAPL had a 20m gap, expected at least 1 gap but got {summary_aapl.get('total_gaps')}"
+        )
+        assert summary_aapl.get("total_outage_minutes", 0) >= 20, (
+            f"Expected >= 20 outage minutes for AAPL, got {summary_aapl.get('total_outage_minutes')}"
+        )
+        assert summary_aapl.get("average_coverage", 100.0) < 100.0, (
+            f"AAPL coverage should be < 100%, got {summary_aapl.get('average_coverage')}"
+        )
+
+    def test_continuity_excludes_market_closed_hours(self, tmp_path, monkeypatch):
         """
         Ticks outside 09:30-16:00 ET (overnight between trading days and weekends)
         must NOT produce false gap alerts.
@@ -429,55 +370,56 @@ class TestBackendContinuityAnalyticsEngine:
             "get_streaming_continuity_analysis must be implemented in src.dashboard.analytics"
         )
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            # Populate Tuesday 2026-09-22 and Wednesday 2026-09-23 during regular hours only (09:30-16:00 ET)
-            day1 = date(2026, 9, 22)
-            day2 = date(2026, 9, 23)
-            populate_trading_session_ticks(mem_client, session_date=day1)
-            populate_trading_session_ticks(mem_client, session_date=day2)
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
 
-            # Insert pre-market ticks at 08:00 ET, after-hours at 17:30 ET, and weekend Saturday at 12:00 ET
-            extra_ticks = [
-                # Pre-market Tuesday 08:00 ET (12:00 UTC)
-                ("2026-09-22 12:00:00", "NVDA", 100.0, 1.0, 99.9, 100.1, "TEST", "PRE"),
-                # After-hours Tuesday 17:30 ET (21:30 UTC)
-                ("2026-09-22 21:30:00", "NVDA", 100.0, 1.0, 99.9, 100.1, "TEST", "POST"),
-                # Weekend Saturday 2026-09-26 12:00 ET (16:00 UTC)
-                ("2026-09-26 16:00:00", "NVDA", 100.0, 1.0, 99.9, 100.1, "TEST", "CLOSED"),
-            ]
-            mem_client.executemany("INSERT INTO tick_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)", extra_ticks)
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
 
-            res = get_streaming_continuity_analysis(days=5, symbol="all", client=mem_client)
-            summary = res.get("summary", {})
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        # Populate Tuesday 2026-09-22 and Wednesday 2026-09-23 during regular hours only (09:30-16:00 ET)
+        day1 = date(2026, 9, 22)
+        day2 = date(2026, 9, 23)
+        populate_week(lake, week_start=day1, symbols=MONITORED_19_SYMBOLS)
 
-            # The 17.5-hour overnight gap (16:00 to 09:30 ET) and weekend must NOT be flagged as gaps
-            assert summary.get("total_gaps") == 0, (
-                f"Overnight/weekend non-market hours produced false gaps: {summary.get('total_gaps')} gaps found"
-            )
-            assert summary.get("total_outage_minutes") == 0, (
-                f"Overnight/weekend non-market hours produced false outage minutes: {summary.get('total_outage_minutes')}"
-            )
-        finally:
-            mem_client.close()
+        # Insert pre-market ticks at 08:00 ET, after-hours at 17:30 ET, and weekend Saturday at 12:00 ET
+        extra_ticks = [
+            # Pre-market Tuesday 08:00 ET (12:00 UTC)
+            ("2026-09-22 12:00:00", "NVDA", 100.0, 1.0, 99.9, 100.1, "TEST", "PRE"),
+            # After-hours Tuesday 17:30 ET (21:30 UTC)
+            ("2026-09-22 21:30:00", "NVDA", 100.0, 1.0, 99.9, 100.1, "TEST", "POST"),
+            # Weekend Saturday 2026-09-26 12:00 ET (16:00 UTC)
+            ("2026-09-26 16:00:00", "NVDA", 100.0, 1.0, 99.9, 100.1, "TEST", "CLOSED"),
+        ]
+        publish_rows(lake, extra_ticks)
 
-    def test_continuity_empty_database_graceful_handling(self):
+        res = get_streaming_continuity_analysis(days=5, symbol="all")
+        summary = res.get("summary", {})
+
+        # The 17.5-hour overnight gap (16:00 to 09:30 ET) and weekend must NOT be flagged as gaps
+        assert summary.get("total_gaps") == 0, (
+            f"Overnight/weekend non-market hours produced false gaps: {summary.get('total_gaps')} gaps found"
+        )
+        assert summary.get("total_outage_minutes") == 0, (
+            f"Overnight/weekend non-market hours produced false outage minutes: {summary.get('total_outage_minutes')}"
+        )
+
+    def test_continuity_empty_database_graceful_handling(self, tmp_path, monkeypatch):
         """Empty tick_data table handles cleanly without exceptions or crashes."""
         assert callable(get_streaming_continuity_analysis), (
             "get_streaming_continuity_analysis must be implemented in src.dashboard.analytics"
         )
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            res = get_streaming_continuity_analysis(days=5, symbol="all", client=mem_client)
-            assert isinstance(res, dict)
-            assert res.get("database") == "streaming"
-            assert "days" in res
-            assert "summary" in res
-        finally:
-            mem_client.close()
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
 
-    def test_continuity_spectrogram_symbols_data(self):
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        res = get_streaming_continuity_analysis(days=5, symbol="all")
+        assert isinstance(res, dict)
+        assert res.get("database") == "streaming"
+        assert "days" in res
+        assert "summary" in res
+
+    def test_continuity_spectrogram_symbols_data(self, tmp_path, monkeypatch):
         """
         When symbol='all', the result includes breakdown data for the 19 monitored symbols (AAPL to TSM)
         to power the Expandable 19-Symbol Spectrogram.
@@ -486,29 +428,28 @@ class TestBackendContinuityAnalyticsEngine:
             "get_streaming_continuity_analysis must be implemented in src.dashboard.analytics"
         )
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            populate_trading_session_ticks(mem_client, session_date=date(2026, 9, 23))
-            res = get_streaming_continuity_analysis(days=5, symbol="all", client=mem_client)
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
 
-            # Check for per-symbol breakdown in top-level 'spectrogram', 'symbols', or within day objects
-            spectrogram = res.get("spectrogram", res.get("symbols"))
-            if not spectrogram and res.get("days"):
-                # Check within first day object
-                spectrogram = res["days"][0].get("symbols", res["days"][0].get("spectrogram"))
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
 
-            assert spectrogram is not None, (
-                "Continuity analysis must provide per-symbol spectrogram data for the 19 monitored symbols"
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        populate_week(lake, week_start=date(2026, 9, 23), symbols=MONITORED_19_SYMBOLS)
+        res = get_streaming_continuity_analysis(days=5, symbol="all")
+
+        # Check for per-symbol breakdown in top-level 'spectrogram', 'symbols', or within day objects
+        spectrogram = res.get("spectrogram", res.get("symbols"))
+        if not spectrogram and res.get("days"):
+            # Check within first day object
+            spectrogram = res["days"][0].get("symbols", res["days"][0].get("spectrogram"))
+
+        assert spectrogram is not None, (
+            "Continuity analysis must provide per-symbol spectrogram data for the 19 monitored symbols"
+        )
+        # Should contain monitored symbols such as AAPL and TSM
+        for test_sym in ["AAPL", "NVDA", "TSM"]:
+            assert test_sym in spectrogram or any(s.get("symbol") == test_sym for s in spectrogram if isinstance(s, dict)), (
+                f"Symbol '{test_sym}' missing from spectrogram breakdown"
             )
-            # Should contain monitored symbols such as AAPL and TSM
-            for test_sym in ["AAPL", "NVDA", "TSM"]:
-                assert test_sym in spectrogram or any(s.get("symbol") == test_sym for s in spectrogram if isinstance(s, dict)), (
-                    f"Symbol '{test_sym}' missing from spectrogram breakdown"
-                )
-        finally:
-            mem_client.close()
-
-
 # ============================================================================
 # 2. REST API Endpoints (src/dashboard/server.py)
 # ============================================================================

@@ -9,35 +9,18 @@ clean it up. and delete everything related to it in the database. the symbols I 
 There should be data only for those symbols in the database."
 
 Test Coverage:
-1. Backend Database Operation Purity:
-   - remove_streaming_symbol_from_db(display_name):
-     - Must delete symbol from streaming_database_symbols
-     - MUST delete all records for that symbol from tick_data (and ticks / streaming_ticks views)
-     - Must leave NO leftovers in tick_data for that symbol
-     - Must NOT delete tick records for other symbols
-     - Handles symbols with 0 ticks cleanly
-     - Handles non-existent symbols gracefully
-   - add_streaming_symbol_to_db(display_name, capital_ticker=..., databento_ticker=...):
-     - Adds or updates the symbol in streaming_database_symbols
-2. Database Invariant Purity:
-   - Invariant assertion:
-     SELECT COUNT(*) FROM tick_data WHERE symbol NOT IN (SELECT display_name FROM streaming_database_symbols) == 0
-   - Holds after symbol additions, tick ingestions, and symbol removals
-   - Successfully flags any orphan or untracked ticks
-   - Live streaming database must adhere to strict invariant
-3. REST API Endpoints:
+1. REST API Endpoints:
    - POST /api/streaming/symbols and POST /api/symbols?source=streaming
-     - Adds symbol to streaming_database_symbols
+     - Registers the symbol in the lake registry
      - Triggers streamer reload signal file (.stream_reload.signal)
      - Returns {"success": True}
    - DELETE /api/streaming/symbols/<symbol> and DELETE /api/symbols/<symbol>?source=streaming
-     - Deletes symbol from streaming_database_symbols
-     - Completely purges all tick data for that symbol from tick_data
+     - Fences the subscription (status PENDING_PURGE, active false) in the lake registry
      - Triggers streamer reload signal file (.stream_reload.signal)
-     - Returns {"success": True}
+     - Returns {"success": True}; tick partitions are dropped by the compaction purge
    - GET /api/streaming/symbols and GET /api/symbols?source=streaming
      - Returns list of streaming symbols
-4. Dashboard HTML Structure (src/dashboard/static/index.html):
+2. Dashboard HTML Structure (src/dashboard/static/index.html):
    - #view-streaming contains sub-tab button for Monitored Symbols (#streaming-tab-btn-symbols)
    - #view-streaming contains corresponding tab panel (#streaming-tab-symbols or #stream-tab-symbols)
    - Panel contains Add Symbol interface:
@@ -47,7 +30,7 @@ Test Coverage:
    - Panel contains Monitored Symbols table:
      - Table element (#streaming-symbols-table)
      - Table body (#streaming-symbols-table-body)
-5. Frontend JS Logic (src/dashboard/static/js/):
+3. Frontend JS Logic (src/dashboard/static/js/):
    - Check app.js or tables.js defines functions to:
      - Render/load streaming symbols table (loadStreamingSymbolsTable or renderStreamingSymbolsTable)
      - Add streaming symbol (addStreamingSymbol or handleAddStreamingSymbol)
@@ -60,24 +43,11 @@ import re
 import socket
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import date
 import pytest
 import requests
 from bs4 import BeautifulSoup
 
-from src.database.connection import (
-    DuckDBClient,
-    get_streaming_db_connection,
-    DEFAULT_DATA_DIR,
-    DEFAULT_STREAMING_DB_PATH,
-)
-from src.database.schema import init_streaming_db
-from src.database.operations import (
-    add_streaming_symbol_to_db,
-    remove_streaming_symbol_from_db,
-    get_streaming_database_symbols_from_db,
-    get_streaming_symbol_inventory_list,
-)
 def _reload_signal_path():
     """Path of the lake's streamer reload signal (the disk-database fallback is gone)."""
     from src.storage.config import resolve_tick_lake_root
@@ -87,6 +57,7 @@ def _reload_signal_path():
 
 
 from src.dashboard.server import create_dashboard_server
+from tests.support.lake_population import create_lake, publish_minutes
 
 
 # ============================================================================
@@ -133,307 +104,6 @@ def js_sources():
         with open(p, "r", encoding="utf-8") as f:
             sources[fname] = f.read()
     return sources
-
-
-@pytest.fixture
-def mem_streaming_db():
-    """Provides an isolated in-memory DuckDB database with streaming schema initialized."""
-    client = DuckDBClient(":memory:", read_only=False)
-    init_streaming_db(client)
-    yield client
-    if client.conn:
-        try:
-            client.conn.close()
-        except Exception:
-            pass
-
-
-# ============================================================================
-# 1. Backend Database Operation Purity
-# ============================================================================
-
-class TestBackendDatabaseOperationPurity:
-    """
-    Tests backend database operations for managing streaming symbols:
-    - add_streaming_symbol_to_db
-    - remove_streaming_symbol_from_db
-    Enforces that symbol removal completely purges all corresponding tick records
-    from tick_data and views without leaving any leftovers or affecting other symbols.
-    """
-
-    def test_add_streaming_symbol_inserts_and_updates(self, mem_streaming_db):
-        """add_streaming_symbol_to_db adds or updates symbol in streaming_database_symbols."""
-        ok = add_streaming_symbol_to_db(
-            display_name="TEST_ADD_01",
-            capital_ticker="TEST_CAP_01",
-            databento_ticker="TEST_DBN_01",
-            binance_ticker="TEST_BIN_01",
-            client=mem_streaming_db,
-        )
-        assert ok is True
-
-        res = mem_streaming_db.execute(
-            "SELECT display_name, capital_ticker, databento_ticker, binance_ticker FROM streaming_database_symbols WHERE display_name = 'TEST_ADD_01'"
-        ).fetchall()
-        assert len(res) == 1
-        assert res[0] == ("TEST_ADD_01", "TEST_CAP_01", "TEST_DBN_01", "TEST_BIN_01")
-
-        # Test updating the existing symbol
-        ok_upd = add_streaming_symbol_to_db(
-            display_name="TEST_ADD_01",
-            capital_ticker="UPDATED_CAP",
-            databento_ticker="UPDATED_DBN",
-            client=mem_streaming_db,
-        )
-        assert ok_upd is True
-
-        res_upd = mem_streaming_db.execute(
-            "SELECT display_name, capital_ticker, databento_ticker FROM streaming_database_symbols WHERE display_name = 'TEST_ADD_01'"
-        ).fetchall()
-        assert len(res_upd) == 1
-        assert res_upd[0] == ("TEST_ADD_01", "UPDATED_CAP", "UPDATED_DBN")
-
-    def test_remove_streaming_symbol_deletes_from_symbols_table(self, mem_streaming_db):
-        """remove_streaming_symbol_from_db removes the symbol from streaming_database_symbols."""
-        add_streaming_symbol_to_db("SYM_TO_REMOVE", capital_ticker="SYM_TO_REMOVE", client=mem_streaming_db)
-        exists_before = mem_streaming_db.execute(
-            "SELECT count(*) FROM streaming_database_symbols WHERE display_name = 'SYM_TO_REMOVE'"
-        ).fetchone()[0]
-        assert exists_before == 1
-
-        removed = remove_streaming_symbol_from_db("SYM_TO_REMOVE", client=mem_streaming_db)
-        assert removed is True
-
-        exists_after = mem_streaming_db.execute(
-            "SELECT count(*) FROM streaming_database_symbols WHERE display_name = 'SYM_TO_REMOVE'"
-        ).fetchone()[0]
-        assert exists_after == 0
-
-    def test_remove_streaming_symbol_purges_all_ticks_from_tick_data(self, mem_streaming_db):
-        """
-        CRITICAL PURITY REQUIREMENT:
-        remove_streaming_symbol_from_db must purge all tick data for that symbol from tick_data.
-        Must leave NO leftovers in tick_data (SELECT COUNT(*) WHERE symbol = ? must be 0).
-        """
-        sym = "PURGE_TICKS_SYM"
-        add_streaming_symbol_to_db(sym, capital_ticker=sym, client=mem_streaming_db)
-
-        # Seed tick records for this symbol
-        mem_streaming_db.execute("""
-            INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES
-            ('2026-10-01 10:00:00', 'PURGE_TICKS_SYM', 100.5, 10.0, 100.4, 100.6, 'CAPITAL', 'REG'),
-            ('2026-10-01 10:00:01', 'PURGE_TICKS_SYM', 100.6, 20.0, 100.5, 100.7, 'CAPITAL', 'REG'),
-            ('2026-10-01 10:00:02', 'PURGE_TICKS_SYM', 100.7, 30.0, 100.6, 100.8, 'CAPITAL', 'REG'),
-            ('2026-10-01 10:00:03', 'PURGE_TICKS_SYM', 100.8, 15.0, 100.7, 100.9, 'CAPITAL', 'REG'),
-            ('2026-10-01 10:00:04', 'PURGE_TICKS_SYM', 100.9, 25.0, 100.8, 101.0, 'CAPITAL', 'REG')
-        """)
-
-        count_before = mem_streaming_db.execute(
-            "SELECT COUNT(*) FROM tick_data WHERE symbol = ?", [sym]
-        ).fetchone()[0]
-        assert count_before == 5, f"Expected 5 ticks before removal, got {count_before}"
-
-        # Remove the symbol
-        removed = remove_streaming_symbol_from_db(sym, client=mem_streaming_db)
-        assert removed is True
-
-        # Verify symbol is deleted from symbol registry
-        sym_count = mem_streaming_db.execute(
-            "SELECT COUNT(*) FROM streaming_database_symbols WHERE display_name = ?", [sym]
-        ).fetchone()[0]
-        assert sym_count == 0, "Symbol registry must not contain deleted symbol"
-
-        # Verify tick_data has NO leftovers for this symbol
-        count_after = mem_streaming_db.execute(
-            "SELECT COUNT(*) FROM tick_data WHERE symbol = ?", [sym]
-        ).fetchone()[0]
-        assert count_after == 0, (
-            f"LEFTOVER DATA VIOLATION: Expected 0 ticks in tick_data for {sym} after removal, but found {count_after}. "
-            "remove_streaming_symbol_from_db MUST delete all tick_data records for the removed symbol."
-        )
-
-    def test_remove_streaming_symbol_purges_ticks_views(self, mem_streaming_db):
-        """
-        Purging tick_data must also reflect in views (ticks and streaming_ticks).
-        """
-        sym = "VIEW_PURGE_SYM"
-        add_streaming_symbol_to_db(sym, capital_ticker=sym, client=mem_streaming_db)
-
-        mem_streaming_db.execute("""
-            INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES
-            ('2026-10-01 10:01:00', 'VIEW_PURGE_SYM', 50.0, 1.0, 49.9, 50.1, 'CAPITAL', 'REG'),
-            ('2026-10-01 10:01:05', 'VIEW_PURGE_SYM', 50.2, 2.0, 50.1, 50.3, 'CAPITAL', 'REG')
-        """)
-
-        # Remove symbol
-        remove_streaming_symbol_from_db(sym, client=mem_streaming_db)
-
-        # Check views
-        ticks_view_count = mem_streaming_db.execute(
-            "SELECT COUNT(*) FROM ticks WHERE symbol = ?", [sym]
-        ).fetchone()[0]
-        assert ticks_view_count == 0, "ticks view must contain 0 rows for removed symbol"
-
-        streaming_ticks_view_count = mem_streaming_db.execute(
-            "SELECT COUNT(*) FROM streaming_ticks WHERE symbol = ?", [sym]
-        ).fetchone()[0]
-        assert streaming_ticks_view_count == 0, "streaming_ticks view must contain 0 rows for removed symbol"
-
-    def test_remove_streaming_symbol_preserves_other_symbols_ticks(self, mem_streaming_db):
-        """
-        Deleting one symbol must NEVER delete or corrupt tick data for other monitored symbols.
-        """
-        sym_keep = "KEEP_SYM"
-        sym_drop = "DROP_SYM"
-        add_streaming_symbol_to_db(sym_keep, capital_ticker=sym_keep, client=mem_streaming_db)
-        add_streaming_symbol_to_db(sym_drop, capital_ticker=sym_drop, client=mem_streaming_db)
-
-        # Insert ticks for both
-        mem_streaming_db.execute("""
-            INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES
-            ('2026-10-01 10:02:00', 'KEEP_SYM', 200.0, 10.0, 199.9, 200.1, 'CAPITAL', 'REG'),
-            ('2026-10-01 10:02:01', 'KEEP_SYM', 200.5, 15.0, 200.4, 200.6, 'CAPITAL', 'REG'),
-            ('2026-10-01 10:02:02', 'KEEP_SYM', 201.0, 20.0, 200.9, 201.1, 'CAPITAL', 'REG'),
-            ('2026-10-01 10:02:00', 'DROP_SYM', 300.0, 5.0, 299.8, 300.2, 'CAPITAL', 'REG'),
-            ('2026-10-01 10:02:05', 'DROP_SYM', 301.0, 8.0, 300.8, 301.2, 'CAPITAL', 'REG')
-        """)
-
-        # Remove DROP_SYM
-        remove_streaming_symbol_from_db(sym_drop, client=mem_streaming_db)
-
-        # DROP_SYM must be purged
-        drop_ticks = mem_streaming_db.execute(
-            "SELECT COUNT(*) FROM tick_data WHERE symbol = ?", [sym_drop]
-        ).fetchone()[0]
-        assert drop_ticks == 0, "DROP_SYM ticks must be purged"
-
-        # KEEP_SYM must remain completely intact
-        keep_ticks = mem_streaming_db.execute(
-            "SELECT COUNT(*) FROM tick_data WHERE symbol = ?", [sym_keep]
-        ).fetchone()[0]
-        assert keep_ticks == 3, f"Expected 3 ticks preserved for KEEP_SYM, got {keep_ticks}"
-
-        keep_sym_registered = mem_streaming_db.execute(
-            "SELECT COUNT(*) FROM streaming_database_symbols WHERE display_name = ?", [sym_keep]
-        ).fetchone()[0]
-        assert keep_sym_registered == 1, "KEEP_SYM must remain registered in streaming_database_symbols"
-
-    def test_remove_streaming_symbol_with_zero_ticks_succeeds(self, mem_streaming_db):
-        """Removing a registered symbol that has no tick data succeeds without error."""
-        sym = "NO_TICKS_SYM"
-        add_streaming_symbol_to_db(sym, client=mem_streaming_db)
-        ok = remove_streaming_symbol_from_db(sym, client=mem_streaming_db)
-        assert ok is True
-
-        count = mem_streaming_db.execute(
-            "SELECT COUNT(*) FROM streaming_database_symbols WHERE display_name = ?", [sym]
-        ).fetchone()[0]
-        assert count == 0
-
-    def test_remove_nonexistent_symbol_handles_gracefully(self, mem_streaming_db):
-        """Removing a symbol that does not exist handles gracefully and does not raise exceptions."""
-        result = remove_streaming_symbol_from_db("TOTALLY_NONEXISTENT_XYZ", client=mem_streaming_db)
-        # Should complete without crashing (returns True or False)
-        assert isinstance(result, bool)
-
-
-# ============================================================================
-# 2. Database Invariant Purity
-# ============================================================================
-
-class TestDatabaseInvariantPurity:
-    """
-    Enforces the core user requirement:
-    "the symbols I see in that table. There should be data only for those symbols in the database."
-
-    Invariant:
-    SELECT COUNT(*) FROM tick_data WHERE symbol NOT IN (SELECT display_name FROM streaming_database_symbols) == 0
-    """
-
-    def test_database_invariant_holds_on_monitored_ticks(self, mem_streaming_db):
-        """When ticks are recorded only for registered symbols, invariant count is 0."""
-        add_streaming_symbol_to_db("ALPHA", client=mem_streaming_db)
-        add_streaming_symbol_to_db("BETA", client=mem_streaming_db)
-
-        mem_streaming_db.execute("""
-            INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES
-            ('2026-10-01 10:03:00', 'ALPHA', 10.0, 1.0, 9.9, 10.1, 'CAPITAL', 'REG'),
-            ('2026-10-01 10:03:01', 'BETA', 20.0, 2.0, 19.9, 20.1, 'CAPITAL', 'REG')
-        """)
-
-        untracked_count = mem_streaming_db.execute("""
-            SELECT COUNT(*) FROM tick_data
-            WHERE symbol NOT IN (SELECT display_name FROM streaming_database_symbols)
-        """).fetchone()[0]
-        assert untracked_count == 0, f"Expected 0 untracked ticks, got {untracked_count}"
-
-    def test_database_invariant_holds_after_symbol_removal(self, mem_streaming_db):
-        """
-        After removing a symbol, invariant MUST strictly hold (count == 0).
-        If any leftover ticks remain for the deleted symbol, invariant is violated.
-        """
-        add_streaming_symbol_to_db("DELTA", client=mem_streaming_db)
-        add_streaming_symbol_to_db("GAMMA", client=mem_streaming_db)
-
-        mem_streaming_db.execute("""
-            INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES
-            ('2026-10-01 10:04:00', 'DELTA', 100.0, 10.0, 99.9, 100.1, 'CAPITAL', 'REG'),
-            ('2026-10-01 10:04:01', 'GAMMA', 200.0, 20.0, 199.9, 200.1, 'CAPITAL', 'REG')
-        """)
-
-        # Remove DELTA
-        remove_streaming_symbol_from_db("DELTA", client=mem_streaming_db)
-
-        # Invariant check: MUST BE ZERO
-        untracked = mem_streaming_db.execute("""
-            SELECT COUNT(*) FROM tick_data
-            WHERE symbol NOT IN (SELECT display_name FROM streaming_database_symbols)
-        """).fetchone()[0]
-
-        assert untracked == 0, (
-            f"INVARIANT VIOLATION: Found {untracked} tick records in tick_data whose symbol is NOT in "
-            "streaming_database_symbols. When DELTA was removed, all its tick_data rows should have been purged."
-        )
-
-    def test_database_invariant_detects_untracked_leftover_ticks(self, mem_streaming_db):
-        """Demonstrates that the invariant query accurately detects untracked leftover ticks."""
-        mem_streaming_db.execute("""
-            INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES
-            ('2026-10-01 10:05:00', 'GHOST_SYMBOL', 999.0, 1.0, 998.0, 1000.0, 'CAPITAL', 'REG')
-        """)
-
-        untracked = mem_streaming_db.execute("""
-            SELECT COUNT(*) FROM tick_data
-            WHERE symbol NOT IN (SELECT display_name FROM streaming_database_symbols)
-        """).fetchone()[0]
-
-        assert untracked > 0, "Invariant query must detect untracked symbol in tick_data"
-
-    def test_live_streaming_database_has_no_orphan_ticks(self):
-        """
-        INVARIANT TEST ON LIVE STREAMING DATABASE:
-        The active data/streaming.duckdb must contain data ONLY for symbols present in streaming_database_symbols.
-        Any untracked ticks (such as leftover test records) must be completely cleaned up.
-        """
-        client = get_streaming_db_connection(read_only=True)
-        try:
-            res = client.execute("""
-                SELECT COUNT(*) FROM tick_data
-                WHERE symbol NOT IN (SELECT display_name FROM streaming_database_symbols)
-            """).fetchone()
-            orphan_count = res[0] if res else 0
-
-            if orphan_count > 0:
-                orphans = [row[0] for row in client.execute("""
-                    SELECT DISTINCT symbol FROM tick_data
-                    WHERE symbol NOT IN (SELECT display_name FROM streaming_database_symbols)
-                """).fetchall()]
-                assert orphan_count == 0, (
-                    f"INVARIANT VIOLATION: Active streaming.duckdb contains {orphan_count} tick records "
-                    f"for unmonitored symbol(s): {orphans}. Database must contain data ONLY for monitored symbols."
-                )
-        finally:
-            client.close()
 
 
 # ============================================================================
@@ -601,39 +271,33 @@ class TestRESTAPIStreamingSymbols:
             requests.delete(f"{api_test_server}/api/symbols/{test_sym}?source=streaming")
 
 
-    def test_api_delete_symbol_preserves_other_symbols_ticks(self, api_test_server):
-        """Deleting a symbol via API does not remove tick records of other symbols."""
-        sym_keep = "TEST_API_KEEP"
-        sym_drop = "TEST_API_DROP"
-        db_client = get_streaming_db_connection(read_only=False)
-        try:
-            add_streaming_symbol_to_db(sym_keep, capital_ticker=sym_keep, client=db_client)
-            add_streaming_symbol_to_db(sym_drop, capital_ticker=sym_drop, client=db_client)
+    def test_api_delete_symbol_keeps_other_symbols_data(self, api_test_server, tmp_path, monkeypatch):
+        """Fencing one symbol never touches another symbol's ticks in the lake."""
+        lake = create_lake(
+            tmp_path / "lake",
+            symbols=["TEST_API_KEEP", "TEST_API_DROP"],
+        )
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        publish_minutes(lake, date(2026, 10, 1), "TEST_API_KEEP", minutes_list=[(11, 2)])
+        publish_minutes(lake, date(2026, 10, 1), "TEST_API_DROP", minutes_list=[(11, 2)])
 
-            db_client.execute(f"""
-                INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES
-                ('2026-10-01 11:02:00', '{sym_keep}', 100.0, 10.0, 99.9, 100.1, 'CAPITAL', 'REG'),
-                ('2026-10-01 11:02:01', '{sym_drop}', 200.0, 20.0, 199.9, 200.1, 'CAPITAL', 'REG')
-            """)
+        del_resp = requests.delete(f"{api_test_server}/api/streaming/symbols/TEST_API_DROP")
+        assert del_resp.status_code == 200, del_resp.text
+        assert del_resp.json().get("status") == "PENDING_PURGE"
 
-            requests.delete(f"{api_test_server}/api/streaming/symbols/{sym_drop}")
+        from src.storage.registry import SymbolRegistry
+        from src.storage.reader import TickLakeReader
 
-            keep_count = db_client.execute(
-                "SELECT COUNT(*) FROM tick_data WHERE symbol = ?", [sym_keep]
-            ).fetchone()[0]
-            assert keep_count == 1, "Other symbol tick data must be preserved"
-        finally:
-            try:
-                db_client.execute("DELETE FROM streaming_database_symbols WHERE display_name IN (?, ?)", [sym_keep, sym_drop])
-                db_client.execute("DELETE FROM tick_data WHERE symbol IN (?, ?)", [sym_keep, sym_drop])
-            except Exception:
-                pass
-            db_client.close()
+        registry = SymbolRegistry(root=lake)
+        assert registry.get_symbol("TEST_API_DROP").status == "PENDING_PURGE"
 
+        # The kept symbol's data is untouched by the fence
+        reader = TickLakeReader(root=lake)
+        ticks = reader.query_ticks(symbol="TEST_API_KEEP")
+        assert len(ticks) == 1, "Other symbol tick data must be preserved"
+        assert ticks[0]["symbol"] == "TEST_API_KEEP"
 
-# ============================================================================
-# 4. Dashboard HTML Structure: Streaming Section Monitored Symbols Tab
-# ============================================================================
 
 class TestDashboardHTMLStreamingSymbolsStructure:
     """
@@ -721,7 +385,7 @@ class TestDashboardHTMLStreamingSymbolsStructure:
 
 
 # ============================================================================
-# 5. Frontend JS Logic: Streaming Symbols Management
+# 3. Frontend JS Logic: Streaming Symbols Management
 # ============================================================================
 
 class TestFrontendJSStreamingSymbolsLogic:

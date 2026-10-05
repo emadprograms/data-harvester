@@ -17,7 +17,6 @@ Requirements Covered:
      ({ time: epoch } without OHLC) so physical empty spaces are naturally visible on the x-axis where data
      is missing, rather than collapsing the gap.
 """
-import contextlib
 import json
 import os
 import re
@@ -28,16 +27,15 @@ import threading
 import time
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
 import requests
 from bs4 import BeautifulSoup
 
-from src.database.connection import DuckDBClient
-from src.database.schema import init_streaming_db
 from src.dashboard.server import create_dashboard_server
+from tests.support.lake_population import create_lake, publish_minutes
 
 try:
     from src.dashboard.analytics import (
@@ -68,62 +66,6 @@ MONITORED_19_SYMBOLS = [
 # ============================================================================
 # Helpers & Fixtures
 # ============================================================================
-
-def create_in_memory_streaming_db() -> DuckDBClient:
-    """Creates an in-memory DuckDB client initialized with streaming schema & 19 symbols."""
-    client = DuckDBClient(":memory:", read_only=False)
-    init_streaming_db(client)
-    return client
-
-
-def populate_ticks_for_day(
-    client: DuckDBClient,
-    session_date: date,
-    symbol: str = "NVDA",
-    minutes_list: list = None,
-    base_price: float = 120.0,
-):
-    """
-    Populates ticks for session_date at specified (hour, minute) ET times.
-    If minutes_list is None, populates regular market hours (09:30-16:00 ET).
-    Timestamps are converted from America/New_York to UTC for storage.
-    """
-    rows = []
-    if minutes_list is None:
-        # Default: 1 tick per minute from 09:30 to 16:00 ET
-        curr = datetime(session_date.year, session_date.month, session_date.day, 9, 30, tzinfo=ET)
-        end = datetime(session_date.year, session_date.month, session_date.day, 16, 0, tzinfo=ET)
-        while curr <= end:
-            dt_utc = curr.astimezone(UTC)
-            rows.append((
-                dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
-                symbol,
-                base_price,
-                10.0,
-                base_price - 0.05,
-                base_price + 0.05,
-                "TEST",
-                "REG"
-            ))
-            curr += timedelta(minutes=1)
-    else:
-        for hh, mm in minutes_list:
-            dt_et = datetime(session_date.year, session_date.month, session_date.day, hh, mm, tzinfo=ET)
-            dt_utc = dt_et.astimezone(UTC)
-            session = "REG" if (9 <= hh < 16 or (hh == 9 and mm >= 30)) else ("PRE" if hh < 9 else "POST")
-            rows.append((
-                dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
-                symbol,
-                base_price,
-                10.0,
-                base_price - 0.05,
-                base_price + 0.05,
-                "TEST",
-                session
-            ))
-
-    if rows:
-        client.executemany("INSERT INTO tick_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
 
 
 @pytest.fixture(scope="module")
@@ -368,7 +310,7 @@ global.fetch = async (url) => {{
 class TestBackendWeekAndDayAnalytics:
     """Validates week grouping, week filtering, and single-day extended session analytics."""
 
-    def test_discover_available_weeks(self):
+    def test_discover_available_weeks(self, tmp_path, monkeypatch):
         """
         Verifies discover_available_weeks groups trading dates by Monday-to-Friday weeks,
         attaches human-readable labels, tags the latest/current week with is_current=True,
@@ -376,45 +318,45 @@ class TestBackendWeekAndDayAnalytics:
         """
         assert callable(discover_available_weeks), "discover_available_weeks function must be defined in src/dashboard/analytics.py"
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            # 1. Empty database returns empty list
-            empty_weeks = discover_available_weeks(client=mem_client)
-            assert empty_weeks == [], f"Expected empty list for empty database, got {empty_weeks}"
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
 
-            # 2. Populate Week 1: 2026-09-21 (Mon), 2026-09-23 (Wed), 2026-09-25 (Fri)
-            populate_ticks_for_day(mem_client, date(2026, 9, 21), "NVDA")
-            populate_ticks_for_day(mem_client, date(2026, 9, 23), "NVDA")
-            populate_ticks_for_day(mem_client, date(2026, 9, 25), "NVDA")
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
 
-            # 3. Populate Week 2: 2026-09-28 (Mon), 2026-09-29 (Tue), 2026-09-30 (Wed)
-            populate_ticks_for_day(mem_client, date(2026, 9, 28), "NVDA")
-            populate_ticks_for_day(mem_client, date(2026, 9, 29), "NVDA")
-            populate_ticks_for_day(mem_client, date(2026, 9, 30), "NVDA")
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        # 1. Empty database returns empty list
+        empty_weeks = discover_available_weeks()
+        assert empty_weeks == [], f"Expected empty list for empty database, got {empty_weeks}"
 
-            weeks = discover_available_weeks(client=mem_client)
-            assert isinstance(weeks, list), f"Expected list of weeks, got {type(weeks)}"
-            assert len(weeks) >= 2, f"Expected at least 2 discovered weeks, got {len(weeks)}"
+        # 2. Populate Week 1: 2026-09-21 (Mon), 2026-09-23 (Wed), 2026-09-25 (Fri)
+        publish_minutes(lake, date(2026, 9, 21), "NVDA")
+        publish_minutes(lake, date(2026, 9, 23), "NVDA")
+        publish_minutes(lake, date(2026, 9, 25), "NVDA")
 
-            # Sorted descending: Week 2 (2026-09-28) before Week 1 (2026-09-21)
-            w0 = weeks[0]
-            w1 = weeks[1]
-            assert w0["week_start"] > w1["week_start"], "Weeks must be sorted descending by week_start"
-            assert w0["week_start"] == "2026-09-28"
-            assert w0["week_end"] == "2026-10-02"
-            assert w0["is_current"] is True, "Most recent week must have is_current=True"
-            assert "Sep 28" in w0["label"] and "Oct 02" in w0["label"], f"Expected label formatted with month & day, got: {w0['label']}"
-            assert w0.get("trading_days_count") == 3, f"Expected 3 trading days in Week 2, got {w0.get('trading_days_count')}"
+        # 3. Populate Week 2: 2026-09-28 (Mon), 2026-09-29 (Tue), 2026-09-30 (Wed)
+        publish_minutes(lake, date(2026, 9, 28), "NVDA")
+        publish_minutes(lake, date(2026, 9, 29), "NVDA")
+        publish_minutes(lake, date(2026, 9, 30), "NVDA")
 
-            assert w1["week_start"] == "2026-09-21"
-            assert w1["week_end"] == "2026-09-25"
-            assert w1["is_current"] is False, "Previous week must have is_current=False"
-            assert "Sep 21" in w1["label"] and "Sep 25" in w1["label"], f"Expected label formatted with month & day, got: {w1['label']}"
-            assert w1.get("trading_days_count") == 3, f"Expected 3 trading days in Week 1, got {w1.get('trading_days_count')}"
-        finally:
-            mem_client.close()
+        weeks = discover_available_weeks()
+        assert isinstance(weeks, list), f"Expected list of weeks, got {type(weeks)}"
+        assert len(weeks) >= 2, f"Expected at least 2 discovered weeks, got {len(weeks)}"
 
-    def test_get_streaming_continuity_week_start_filtering(self):
+        # Sorted descending: Week 2 (2026-09-28) before Week 1 (2026-09-21)
+        w0 = weeks[0]
+        w1 = weeks[1]
+        assert w0["week_start"] > w1["week_start"], "Weeks must be sorted descending by week_start"
+        assert w0["week_start"] == "2026-09-28"
+        assert w0["week_end"] == "2026-10-02"
+        assert w0["is_current"] is True, "Most recent week must have is_current=True"
+        assert "Sep 28" in w0["label"] and "Oct 02" in w0["label"], f"Expected label formatted with month & day, got: {w0['label']}"
+        assert w0.get("trading_days_count") == 3, f"Expected 3 trading days in Week 2, got {w0.get('trading_days_count')}"
+
+        assert w1["week_start"] == "2026-09-21"
+        assert w1["week_end"] == "2026-09-25"
+        assert w1["is_current"] is False, "Previous week must have is_current=False"
+        assert "Sep 21" in w1["label"] and "Sep 25" in w1["label"], f"Expected label formatted with month & day, got: {w1['label']}"
+        assert w1.get("trading_days_count") == 3, f"Expected 3 trading days in Week 1, got {w1.get('trading_days_count')}"
+    def test_get_streaming_continuity_week_start_filtering(self, tmp_path, monkeypatch):
         """
         Verifies querying get_streaming_continuity_analysis with week_start="2026-09-21"
         filters strictly to trading dates within that Monday-to-Friday window, ignoring dates
@@ -422,116 +364,111 @@ class TestBackendWeekAndDayAnalytics:
         """
         assert callable(get_streaming_continuity_analysis), "get_streaming_continuity_analysis must be defined"
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            # Populate Week 1 (2026-09-21 to 2026-09-25)
-            for d in [date(2026, 9, 21), date(2026, 9, 22), date(2026, 9, 23)]:
-                populate_ticks_for_day(mem_client, d, "NVDA")
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
 
-            # Populate Week 2 (2026-09-28 to 2026-10-02)
-            for d in [date(2026, 9, 28), date(2026, 9, 29), date(2026, 9, 30)]:
-                populate_ticks_for_day(mem_client, d, "NVDA")
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
 
-            # Query specifically for Week 1
-            res = get_streaming_continuity_analysis(client=mem_client, week_start="2026-09-21")
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        # Populate Week 1 (2026-09-21 to 2026-09-25)
+        for d in [date(2026, 9, 21), date(2026, 9, 22), date(2026, 9, 23)]:
+            publish_minutes(lake, d, "NVDA")
 
-            assert res.get("week_start") == "2026-09-21", f"Expected week_start '2026-09-21' in response, got: {res.get('week_start')}"
-            assert "available_weeks" in res, "Expected available_weeks list in response payload"
-            assert len(res["available_weeks"]) >= 2, f"Expected at least 2 available weeks in payload, got: {len(res['available_weeks'])}"
+        # Populate Week 2 (2026-09-28 to 2026-10-02)
+        for d in [date(2026, 9, 28), date(2026, 9, 29), date(2026, 9, 30)]:
+            publish_minutes(lake, d, "NVDA")
 
-            days = res.get("days", [])
-            assert len(days) > 0, "Expected non-empty days list for week_start='2026-09-21'"
-            for day in days:
-                d_str = day["date"]
-                assert "2026-09-21" <= d_str <= "2026-09-25", (
-                    f"Day date {d_str} is outside the selected week (2026-09-21 to 2026-09-25)"
-                )
-                assert not d_str.startswith("2026-09-28") and not d_str.startswith("2026-09-29"), (
-                    f"Week 2 date {d_str} leaked into Week 1 query!"
-                )
-        finally:
-            mem_client.close()
+        # Query specifically for Week 1
+        res = get_streaming_continuity_analysis(week_start="2026-09-21")
 
-    def test_get_streaming_continuity_single_date_filtering(self):
+        assert res.get("week_start") == "2026-09-21", f"Expected week_start '2026-09-21' in response, got: {res.get('week_start')}"
+        assert "available_weeks" in res, "Expected available_weeks list in response payload"
+        assert len(res["available_weeks"]) >= 2, f"Expected at least 2 available weeks in payload, got: {len(res['available_weeks'])}"
+
+        days = res.get("days", [])
+        assert len(days) > 0, "Expected non-empty days list for week_start='2026-09-21'"
+        for day in days:
+            d_str = day["date"]
+            assert "2026-09-21" <= d_str <= "2026-09-25", (
+                f"Day date {d_str} is outside the selected week (2026-09-21 to 2026-09-25)"
+            )
+            assert not d_str.startswith("2026-09-28") and not d_str.startswith("2026-09-29"), (
+                f"Week 2 date {d_str} leaked into Week 1 query!"
+            )
+    def test_get_streaming_continuity_single_date_filtering(self, tmp_path, monkeypatch):
         """
         Verifies querying get_streaming_continuity_analysis with target_date="2026-09-29"
         returns ONLY that single day's continuity object, with full extended session minutes (960 min)
         and minute-level buckets and gap objects.
         """
-        mem_client = create_in_memory_streaming_db()
-        try:
-            # Populate multiple days
-            populate_ticks_for_day(mem_client, date(2026, 9, 28), "NVDA")
-            # For 2026-09-29: populate pre-market (05:00) and regular (10:00), leaving gaps
-            populate_ticks_for_day(mem_client, date(2026, 9, 29), "NVDA", minutes_list=[(5, 0), (10, 0), (10, 1), (10, 2), (18, 0)])
-            populate_ticks_for_day(mem_client, date(2026, 9, 30), "NVDA")
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        # Populate multiple days
+        publish_minutes(lake, date(2026, 9, 28), "NVDA")
+        # For 2026-09-29: populate pre-market (05:00) and regular (10:00), leaving gaps
+        publish_minutes(lake, date(2026, 9, 29), "NVDA", minutes_list=[(5, 0), (10, 0), (10, 1), (10, 2), (18, 0)])
+        publish_minutes(lake, date(2026, 9, 30), "NVDA")
 
-            res = get_streaming_continuity_analysis(
-                client=mem_client,
-                symbol="NVDA",
-                target_date="2026-09-29",
-                include_extended=True
-            )
+        res = get_streaming_continuity_analysis(
+            symbol="NVDA",
+            target_date="2026-09-29",
+            include_extended=True
+        )
 
-            days = res.get("days", [])
-            assert len(days) == 1, f"Expected exactly 1 day for single-date filter, got {len(days)}"
-            day = days[0]
-            assert day["date"] == "2026-09-29"
-            buckets = day.get("buckets", [])
-            assert len(buckets) == 960, f"Expected 960 buckets for extended session (04:00 to 19:59 ET), got {len(buckets)}"
+        days = res.get("days", [])
+        assert len(days) == 1, f"Expected exactly 1 day for single-date filter, got {len(days)}"
+        day = days[0]
+        assert day["date"] == "2026-09-29"
+        buckets = day.get("buckets", [])
+        assert len(buckets) == 960, f"Expected 960 buckets for extended session (04:00 to 19:59 ET), got {len(buckets)}"
 
-            # Gaps must be detected on that single day
-            gaps = day.get("gaps", [])
-            assert len(gaps) > 0, "Expected gaps detected on single-day session with missing hours"
-            for g in gaps:
-                assert g["date"] == "2026-09-29"
-                assert "start_epoch" in g and "end_epoch" in g, "Gap object must contain start_epoch and end_epoch"
-                assert g["end_epoch"] > g["start_epoch"]
-        finally:
-            mem_client.close()
-
-    def test_get_streaming_candles_single_day_date_filter(self):
+        # Gaps must be detected on that single day
+        gaps = day.get("gaps", [])
+        assert len(gaps) > 0, "Expected gaps detected on single-day session with missing hours"
+        for g in gaps:
+            assert g["date"] == "2026-09-29"
+            assert "start_epoch" in g and "end_epoch" in g, "Gap object must contain start_epoch and end_epoch"
+            assert g["end_epoch"] > g["start_epoch"]
+    def test_get_streaming_candles_single_day_date_filter(self, tmp_path, monkeypatch):
         """
         Verifies get_streaming_candles(symbol="NVDA", date="2026-09-29", hours="extended")
         returns only candles for that date's session and returns session_start_epoch and session_end_epoch.
         """
         assert callable(get_streaming_candles), "get_streaming_candles must be defined"
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            # 2026-09-29 EDT (UTC-4):
-            # 04:00 EDT = 08:00 UTC = 1790668800 (session_start_epoch)
-            # 20:00 EDT = 00:00 UTC next day = 1790726400 (session_end_epoch)
-            populate_ticks_for_day(mem_client, date(2026, 9, 29), "NVDA", minutes_list=[(4, 30), (10, 0), (19, 30)])
-            # Another date's tick
-            populate_ticks_for_day(mem_client, date(2026, 9, 30), "NVDA", minutes_list=[(10, 0)])
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
 
-            mem_client.close = MagicMock()
-            res = get_streaming_candles(symbol="NVDA", date="2026-09-29", hours="extended", limit=2000, client=mem_client)
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
 
-            assert res.get("error") is None, f"get_streaming_candles error: {res.get('error')}"
-            assert "session_start_epoch" in res, "Response must include session_start_epoch"
-            assert "session_end_epoch" in res, "Response must include session_end_epoch"
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        # 2026-09-29 EDT (UTC-4):
+        # 04:00 EDT = 08:00 UTC = 1790668800 (session_start_epoch)
+        # 20:00 EDT = 00:00 UTC next day = 1790726400 (session_end_epoch)
+        publish_minutes(lake, date(2026, 9, 29), "NVDA", minutes_list=[(4, 30), (10, 0), (19, 30)])
+        # Another date's tick
+        publish_minutes(lake, date(2026, 9, 30), "NVDA", minutes_list=[(10, 0)])
 
-            start_epoch = res["session_start_epoch"]
-            end_epoch = res["session_end_epoch"]
+        res = get_streaming_candles(symbol="NVDA", date="2026-09-29", hours="extended", limit=2000)
 
-            # Expected duration of extended session: 16 hours = 16 * 3600 = 57,600 seconds
-            assert end_epoch - start_epoch == 57600, (
-                f"Expected 57,600 seconds between 04:00 ET and 20:00 ET, got {end_epoch - start_epoch}"
+        assert res.get("error") is None, f"get_streaming_candles error: {res.get('error')}"
+        assert "session_start_epoch" in res, "Response must include session_start_epoch"
+        assert "session_end_epoch" in res, "Response must include session_end_epoch"
+
+        start_epoch = res["session_start_epoch"]
+        end_epoch = res["session_end_epoch"]
+
+        # Expected duration of extended session: 16 hours = 16 * 3600 = 57,600 seconds
+        assert end_epoch - start_epoch == 57600, (
+            f"Expected 57,600 seconds between 04:00 ET and 20:00 ET, got {end_epoch - start_epoch}"
+        )
+
+        candles = res.get("candles", [])
+        assert len(candles) == 3, f"Expected exactly 3 candles for 2026-09-29, got {len(candles)}"
+        for c in candles:
+            assert start_epoch <= c["time"] < end_epoch, (
+                f"Candle time {c['time']} is outside session bounds [{start_epoch}, {end_epoch})"
             )
-
-            candles = res.get("candles", [])
-            assert len(candles) == 3, f"Expected exactly 3 candles for 2026-09-29, got {len(candles)}"
-            for c in candles:
-                assert start_epoch <= c["time"] < end_epoch, (
-                    f"Candle time {c['time']} is outside session bounds [{start_epoch}, {end_epoch})"
-                )
-        finally:
-            mem_client.close = DuckDBClient.close.__get__(mem_client, DuckDBClient)
-            mem_client.close()
-
-    def test_get_available_streaming_weeks_exported(self):
+    def test_get_available_streaming_weeks_exported(self, tmp_path, monkeypatch):
         """
         Verifies get_available_streaming_weeks can be imported from src.dashboard.analytics
         and returns discovered week dictionaries.
@@ -543,78 +480,70 @@ class TestBackendWeekAndDayAnalytics:
         fn = getattr(analytics, "get_available_streaming_weeks")
         assert callable(fn), "get_available_streaming_weeks must be callable"
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            populate_ticks_for_day(mem_client, date(2026, 9, 28), "NVDA")
-            populate_ticks_for_day(mem_client, date(2026, 9, 29), "NVDA")
-            weeks = fn(client=mem_client)
-            assert isinstance(weeks, list), f"Expected list of weeks, got {type(weeks)}"
-            assert len(weeks) >= 1, "Expected at least one discovered week"
-            w = weeks[0]
-            assert "week_start" in w and "week_end" in w, "Discovered week dict must contain 'week_start' and 'week_end'"
-            assert "label" in w, "Discovered week dict must contain 'label'"
-        finally:
-            mem_client.close()
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
 
-    def test_continuity_analysis_parameter_aliases(self):
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        publish_minutes(lake, date(2026, 9, 28), "NVDA")
+        publish_minutes(lake, date(2026, 9, 29), "NVDA")
+        weeks = fn()
+        assert isinstance(weeks, list), f"Expected list of weeks, got {type(weeks)}"
+        assert len(weeks) >= 1, "Expected at least one discovered week"
+        w = weeks[0]
+        assert "week_start" in w and "week_end" in w, "Discovered week dict must contain 'week_start' and 'week_end'"
+        assert "label" in w, "Discovered week dict must contain 'label'"
+    def test_continuity_analysis_parameter_aliases(self, tmp_path, monkeypatch):
         """
         Verifies get_streaming_continuity_analysis accepts parameter aliases
         week_offset, target_week, and end_date without raising TypeError.
         """
         assert callable(get_streaming_continuity_analysis), "get_streaming_continuity_analysis must be defined"
-        mem_client = create_in_memory_streaming_db()
-        try:
-            populate_ticks_for_day(mem_client, date(2026, 9, 28), "NVDA")
-            populate_ticks_for_day(mem_client, date(2026, 9, 29), "NVDA")
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        publish_minutes(lake, date(2026, 9, 28), "NVDA")
+        publish_minutes(lake, date(2026, 9, 29), "NVDA")
 
-            # 1. Test week_offset alias (should not raise TypeError)
-            res_offset = get_streaming_continuity_analysis(client=mem_client, week_offset=0)
-            assert isinstance(res_offset, dict), "Must return dict when called with week_offset"
+        # 1. Test week_offset alias (should not raise TypeError)
+        res_offset = get_streaming_continuity_analysis(week_offset=0)
+        assert isinstance(res_offset, dict), "Must return dict when called with week_offset"
 
-            # 2. Test target_week alias (should not raise TypeError)
-            res_tw = get_streaming_continuity_analysis(client=mem_client, target_week="2026-09-28")
-            assert isinstance(res_tw, dict), "Must return dict when called with target_week"
-            assert res_tw.get("week_start") == "2026-09-28"
+        # 2. Test target_week alias (should not raise TypeError)
+        res_tw = get_streaming_continuity_analysis(target_week="2026-09-28")
+        assert isinstance(res_tw, dict), "Must return dict when called with target_week"
+        assert res_tw.get("week_start") == "2026-09-28"
 
-            # 3. Test end_date alias (should not raise TypeError)
-            res_end = get_streaming_continuity_analysis(client=mem_client, end_date="2026-09-29")
-            assert isinstance(res_end, dict), "Must return dict when called with end_date"
-        finally:
-            mem_client.close()
-
-    def test_get_streaming_candles_single_date_gaps(self):
+        # 3. Test end_date alias (should not raise TypeError)
+        res_end = get_streaming_continuity_analysis(end_date="2026-09-29")
+        assert isinstance(res_end, dict), "Must return dict when called with end_date"
+    def test_get_streaming_candles_single_date_gaps(self, tmp_path, monkeypatch):
         """
         Verifies get_streaming_candles with single date parameter includes
         a 'gaps' list in the response for visual gap markers on the candlestick chart.
         """
         assert callable(get_streaming_candles), "get_streaming_candles must be defined"
-        mem_client = create_in_memory_streaming_db()
-        try:
-            # Populate sparse ticks with an intentional gap between 05:00 and 10:00 ET
-            populate_ticks_for_day(mem_client, date(2026, 9, 29), "NVDA", minutes_list=[(4, 30), (5, 0), (10, 0), (19, 30)])
-            mem_client.close = MagicMock()
-            # The disk-database fallback is gone; the client is injected directly.
-            with contextlib.nullcontext():
-                res = get_streaming_candles(
-                    symbol="NVDA", date="2026-09-29", hours="extended", limit=2000, client=mem_client
-                )
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        # Populate sparse ticks with an intentional gap between 05:00 and 10:00 ET
+        publish_minutes(lake, date(2026, 9, 29), "NVDA", minutes_list=[(4, 30), (5, 0), (10, 0), (19, 30)])
+        # The disk-database fallback is gone; the client is injected directly.
+        res = get_streaming_candles(
+            symbol="NVDA", date="2026-09-29", hours="extended", limit=2000
+        )
 
-                assert res.get("error") is None, f"get_streaming_candles error: {res.get('error')}"
-                assert "gaps" in res, (
-                    "Response from get_streaming_candles must include 'gaps' list when date parameter is provided"
-                )
-                assert isinstance(res["gaps"], list), f"Expected 'gaps' to be a list, got {type(res['gaps'])}"
-                assert len(res["gaps"]) > 0, "Expected at least one gap in 'gaps' list for sparse session"
-                gap = res["gaps"][0]
-                assert "start_epoch" in gap and "end_epoch" in gap, (
-                    f"Gap item must contain 'start_epoch' and 'end_epoch', got {gap}"
-                )
-                assert gap["end_epoch"] > gap["start_epoch"]
-        finally:
-            mem_client.close = DuckDBClient.close.__get__(mem_client, DuckDBClient)
-            mem_client.close()
-
-
+        assert res.get("error") is None, f"get_streaming_candles error: {res.get('error')}"
+        assert "gaps" in res, (
+            "Response from get_streaming_candles must include 'gaps' list when date parameter is provided"
+        )
+        assert isinstance(res["gaps"], list), f"Expected 'gaps' to be a list, got {type(res['gaps'])}"
+        assert len(res["gaps"]) > 0, "Expected at least one gap in 'gaps' list for sparse session"
+        gap = res["gaps"][0]
+        assert "start_epoch" in gap and "end_epoch" in gap, (
+            f"Gap item must contain 'start_epoch' and 'end_epoch', got {gap}"
+        )
+        assert gap["end_epoch"] > gap["start_epoch"]
 # ============================================================================
 # 2. REST API Tests (src/dashboard/server.py)
 # ============================================================================

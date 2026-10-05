@@ -36,59 +36,17 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from src.database.connection import DuckDBClient
-from src.database.schema import init_streaming_db
 from src.dashboard.analytics import (
     get_streaming_candles,
     get_streaming_continuity_analysis,
 )
+from tests.support.lake_population import create_lake, publish_minutes
 
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
 HTML_PATH = Path(__file__).resolve().parent.parent / "src" / "dashboard" / "static" / "index.html"
 JS_DIR = Path(__file__).resolve().parent.parent / "src" / "dashboard" / "static" / "js"
-
-
-def create_in_memory_streaming_db() -> DuckDBClient:
-    """Creates an in-memory DuckDB client initialized with the streaming schema."""
-    client = DuckDBClient(":memory:", read_only=False)
-    init_streaming_db(client)
-    return client
-
-
-def populate_ticks_for_minutes(
-    client: DuckDBClient,
-    session_date: date,
-    symbol: str,
-    minutes_list: list[tuple[int, int]],
-    base_price: float = 100.0,
-):
-    """
-    Populates ticks for specific (hour, minute) ET times.
-    """
-    rows = []
-    for hh, mm in minutes_list:
-        dt_et = datetime(session_date.year, session_date.month, session_date.day, hh, mm, 0, tzinfo=ET)
-        dt_utc = dt_et.astimezone(UTC)
-        is_reg = (hh > 9 or (hh == 9 and mm >= 30)) and (hh < 16)
-        is_pre = (hh < 9) or (hh == 9 and mm < 30)
-        session = "REG" if is_reg else ("PRE" if is_pre else "POST")
-        rows.append((
-            dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
-            symbol,
-            base_price,
-            10.0,
-            base_price - 0.05,
-            base_price + 0.05,
-            "TEST_SOURCE",
-            session,
-        ))
-    if rows:
-        client.executemany(
-            "INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
 
 
 def run_js_simulation(test_body_js: str, extra_setup_js: str = "") -> dict:
@@ -273,12 +231,14 @@ class TestDifferentialGapThresholdsBackend:
     - No First Trade Assumption: leading gap from 04:00 to 09:30 is flagged as 330m gap.
     """
 
-    def test_rth_all_one_minute_gaps_flagged(self):
+    def test_rth_all_one_minute_gaps_flagged(self, tmp_path, monkeypatch):
         """
         In regular trading hours (09:30-16:00 ET), all gaps >= 1 minute MUST be flagged
         in both get_streaming_continuity_analysis and get_streaming_candles.
         """
-        client = create_in_memory_streaming_db()
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+        monkeypatch.setenv("DATA_DIR", str(lake))
         test_date = date(2026, 9, 15)
         sym = "NVDA"
 
@@ -292,11 +252,11 @@ class TestDifferentialGapThresholdsBackend:
                 minutes.append((hh, mm))
             cur += timedelta(minutes=1)
 
-        populate_ticks_for_minutes(client, test_date, sym, minutes)
+        publish_minutes(lake, test_date, sym, minutes)
 
         # 1. Check get_streaming_continuity_analysis (regular hours mode)
         cont_regular = get_streaming_continuity_analysis(
-            client=client, target_date="2026-09-15", include_extended=False, symbol=sym
+            target_date="2026-09-15", include_extended=False, symbol=sym
         )
         reg_gaps = cont_regular.get("summary", {}).get("gaps", [])
         gap_1m = [g for g in reg_gaps if g.get("duration") == 1 or g.get("duration_minutes") == 1]
@@ -307,7 +267,7 @@ class TestDifferentialGapThresholdsBackend:
 
         # 2. Check get_streaming_candles (regular hours mode)
         candles_regular = get_streaming_candles(
-            symbol=sym, date="2026-09-15", hours="regular", client=client
+            symbol=sym, date="2026-09-15", hours="regular"
         )
         c_gaps = candles_regular.get("gaps", [])
         c_gap_1m = [g for g in c_gaps if g.get("duration") == 1]
@@ -319,7 +279,7 @@ class TestDifferentialGapThresholdsBackend:
         # 3. Check get_streaming_continuity_analysis (extended hours mode)
         # Even with extended=True, RTH 1-minute gap MUST be flagged
         cont_ext = get_streaming_continuity_analysis(
-            client=client, target_date="2026-09-15", include_extended=True, symbol=sym
+            target_date="2026-09-15", include_extended=True, symbol=sym
         )
         ext_gaps = cont_ext.get("summary", {}).get("gaps", [])
         ext_rth_1m = [g for g in ext_gaps if g.get("duration") == 1 or g.get("duration_minutes") == 1]
@@ -329,7 +289,7 @@ class TestDifferentialGapThresholdsBackend:
 
         # 4. Check get_streaming_candles (extended hours mode)
         candles_ext = get_streaming_candles(
-            symbol=sym, date="2026-09-15", hours="extended", client=client
+            symbol=sym, date="2026-09-15", hours="extended"
         )
         ce_gaps = candles_ext.get("gaps", [])
         ce_rth_1m = [g for g in ce_gaps if g.get("duration") == 1]
@@ -337,13 +297,15 @@ class TestDifferentialGapThresholdsBackend:
             f"Expected 1-minute RTH gap flagged in candles (extended mode), got gaps: {ce_gaps}"
         )
 
-    def test_extended_pre_market_gaps_differential_threshold(self):
+    def test_extended_pre_market_gaps_differential_threshold(self, tmp_path, monkeypatch):
         """
         In pre-market (04:00-09:30 ET), gaps < 5 minutes MUST BE IGNORED.
         Only gaps >= 5 minutes are flagged.
         Tests: 3m gap is ignored, 6m gap is flagged.
         """
-        client = create_in_memory_streaming_db()
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+        monkeypatch.setenv("DATA_DIR", str(lake))
         test_date = date(2026, 9, 15)
         sym = "NVDA"
 
@@ -362,11 +324,11 @@ class TestDifferentialGapThresholdsBackend:
                 minutes.append((hh, mm))
             cur += timedelta(minutes=1)
 
-        populate_ticks_for_minutes(client, test_date, sym, minutes)
+        publish_minutes(lake, test_date, sym, minutes)
 
         # 1. get_streaming_continuity_analysis (extended=True)
         cont_res = get_streaming_continuity_analysis(
-            client=client, target_date="2026-09-15", include_extended=True, symbol=sym
+            target_date="2026-09-15", include_extended=True, symbol=sym
         )
         cont_gaps = cont_res.get("summary", {}).get("gaps", [])
         gap_3m = [g for g in cont_gaps if g.get("duration") == 3 or g.get("duration_minutes") == 3]
@@ -382,7 +344,7 @@ class TestDifferentialGapThresholdsBackend:
 
         # 2. get_streaming_candles (hours=extended)
         candles_res = get_streaming_candles(
-            symbol=sym, date="2026-09-15", hours="extended", client=client
+            symbol=sym, date="2026-09-15", hours="extended"
         )
         candle_gaps = candles_res.get("gaps", [])
         c_gap_3m = [g for g in candle_gaps if g.get("duration") == 3]
@@ -396,13 +358,15 @@ class TestDifferentialGapThresholdsBackend:
         )
         assert c_gap_6m[0].get("start_str") == "06:01"
 
-    def test_extended_after_hours_gaps_differential_threshold(self):
+    def test_extended_after_hours_gaps_differential_threshold(self, tmp_path, monkeypatch):
         """
         In after-hours (16:00-20:00 ET), gaps < 5 minutes MUST BE IGNORED.
         Only gaps >= 5 minutes are flagged.
         Tests: 4m gap is ignored, 7m gap is flagged.
         """
-        client = create_in_memory_streaming_db()
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+        monkeypatch.setenv("DATA_DIR", str(lake))
         test_date = date(2026, 9, 15)
         sym = "NVDA"
 
@@ -422,11 +386,11 @@ class TestDifferentialGapThresholdsBackend:
                 minutes.append((hh, mm))
             cur += timedelta(minutes=1)
 
-        populate_ticks_for_minutes(client, test_date, sym, minutes)
+        publish_minutes(lake, test_date, sym, minutes)
 
         # 1. get_streaming_continuity_analysis (extended=True)
         cont_res = get_streaming_continuity_analysis(
-            client=client, target_date="2026-09-15", include_extended=True, symbol=sym
+            target_date="2026-09-15", include_extended=True, symbol=sym
         )
         cont_gaps = cont_res.get("summary", {}).get("gaps", [])
         gap_4m = [g for g in cont_gaps if g.get("duration") == 4 or g.get("duration_minutes") == 4]
@@ -442,7 +406,7 @@ class TestDifferentialGapThresholdsBackend:
 
         # 2. get_streaming_candles (hours=extended)
         candles_res = get_streaming_candles(
-            symbol=sym, date="2026-09-15", hours="extended", client=client
+            symbol=sym, date="2026-09-15", hours="extended"
         )
         candle_gaps = candles_res.get("gaps", [])
         c_gap_4m = [g for g in candle_gaps if g.get("duration") == 4]
@@ -456,13 +420,15 @@ class TestDifferentialGapThresholdsBackend:
         )
         assert c_gap_7m[0].get("start_str") == "17:31"
 
-    def test_crossing_gaps_touching_rth_flagged(self):
+    def test_crossing_gaps_touching_rth_flagged(self, tmp_path, monkeypatch):
         """
         Crossing Gaps (touching 09:30-16:00 ET): Flagged if any regular trading minute is missing.
         Tests: a 4m gap starting at 09:28 and ending at 09:32 (missing 09:28, 09:29, 09:30, 09:31)
         touches RTH at 09:30, so despite duration (4m) < 5m, it MUST BE FLAGGED.
         """
-        client = create_in_memory_streaming_db()
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+        monkeypatch.setenv("DATA_DIR", str(lake))
         test_date = date(2026, 9, 15)
         sym = "NVDA"
 
@@ -477,11 +443,11 @@ class TestDifferentialGapThresholdsBackend:
                 minutes.append((hh, mm))
             cur += timedelta(minutes=1)
 
-        populate_ticks_for_minutes(client, test_date, sym, minutes)
+        publish_minutes(lake, test_date, sym, minutes)
 
         # 1. get_streaming_continuity_analysis (extended=True)
         cont_res = get_streaming_continuity_analysis(
-            client=client, target_date="2026-09-15", include_extended=True, symbol=sym
+            target_date="2026-09-15", include_extended=True, symbol=sym
         )
         cont_gaps = cont_res.get("summary", {}).get("gaps", [])
         crossing_cont = [g for g in cont_gaps if g.get("start_str") == "09:28" and (g.get("duration") == 4 or g.get("duration_minutes") == 4)]
@@ -491,7 +457,7 @@ class TestDifferentialGapThresholdsBackend:
 
         # 2. get_streaming_candles (hours=extended)
         candles_res = get_streaming_candles(
-            symbol=sym, date="2026-09-15", hours="extended", client=client
+            symbol=sym, date="2026-09-15", hours="extended"
         )
         candle_gaps = candles_res.get("gaps", [])
         crossing_candles = [g for g in candle_gaps if g.get("start_str") == "09:28" and g.get("duration") == 4]
@@ -499,13 +465,15 @@ class TestDifferentialGapThresholdsBackend:
             f"Crossing gap touching RTH (09:28-09:32, 4m) MUST BE FLAGGED in candles, got: {candle_gaps}"
         )
 
-    def test_no_first_trade_assumption_leading_gap(self):
+    def test_no_first_trade_assumption_leading_gap(self, tmp_path, monkeypatch):
         """
         NO first trade assumptions: timer starts at 04:00 AM sharp.
         If ticks start at 09:30 ET, the 04:00-09:30 interval (330 min) is flagged as a 330m gap
         and returns 330 whitespace items to the chart.
         """
-        client = create_in_memory_streaming_db()
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+        monkeypatch.setenv("DATA_DIR", str(lake))
         test_date = date(2026, 9, 15)
         sym = "NVDA"
 
@@ -517,11 +485,11 @@ class TestDifferentialGapThresholdsBackend:
             minutes.append((cur.hour, cur.minute))
             cur += timedelta(minutes=1)
 
-        populate_ticks_for_minutes(client, test_date, sym, minutes)
+        publish_minutes(lake, test_date, sym, minutes)
 
         # 1. Backend continuity: leading 04:00 to 09:30 gap is 330 minutes
         cont_res = get_streaming_continuity_analysis(
-            client=client, target_date="2026-09-15", include_extended=True, symbol=sym
+            target_date="2026-09-15", include_extended=True, symbol=sym
         )
         cont_gaps = cont_res.get("summary", {}).get("gaps", [])
         leading_cont_gaps = [g for g in cont_gaps if g.get("start_str") == "04:00" and (g.get("duration") == 330 or g.get("duration_minutes") == 330)]
@@ -531,7 +499,7 @@ class TestDifferentialGapThresholdsBackend:
 
         # 2. Backend candles: leading 04:00 to 09:30 gap is 330 minutes
         candles_res = get_streaming_candles(
-            symbol=sym, date="2026-09-15", hours="extended", client=client
+            symbol=sym, date="2026-09-15", hours="extended"
         )
         candle_gaps = candles_res.get("gaps", [])
         leading_candle_gaps = [g for g in candle_gaps if g.get("start_str") == "04:00" and g.get("duration") == 330]

@@ -23,57 +23,21 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from src.database.connection import DuckDBClient, DEFAULT_STREAMING_DB_PATH
-from src.database.schema import init_streaming_db
 from src.dashboard.analytics import (
     get_streaming_candles,
     get_streaming_continuity_analysis,
 )
+from tests.support.lake_population import create_lake, publish_minutes
 
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
-STREAMING_DB_PATH = Path(DEFAULT_STREAMING_DB_PATH)
-HAS_REAL_STREAMING_DB = STREAMING_DB_PATH.exists() and STREAMING_DB_PATH.stat().st_size > 1000000
-
-
-def create_in_memory_streaming_db() -> DuckDBClient:
-    """Creates an in-memory DuckDB client initialized with the streaming schema."""
-    client = DuckDBClient(":memory:", read_only=False)
-    init_streaming_db(client)
-    return client
-
-
-def populate_ticks_for_minutes(
-    client: DuckDBClient,
-    session_date: date,
-    symbol: str,
-    minutes_list: list[tuple[int, int]],
-    base_price: float = 100.0,
-):
-    """
-    Populates ticks for specific (hour, minute) ET times.
-    """
-    rows = []
-    for hh, mm in minutes_list:
-        dt_et = datetime(session_date.year, session_date.month, session_date.day, hh, mm, 0, tzinfo=ET)
-        dt_utc = dt_et.astimezone(UTC)
-        session = "REG" if (9 <= hh < 16 or (hh == 9 and mm >= 30)) else ("PRE" if hh < 9 else "POST")
-        rows.append((
-            dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
-            symbol,
-            base_price,
-            10.0,
-            base_price - 0.05,
-            base_price + 0.05,
-            "TEST_SOURCE",
-            session,
-        ))
-    if rows:
-        client.executemany(
-            "INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
+def _lake_session(tmp_path, monkeypatch, symbols):
+    """A lake holding the test symbols, selected for the analytics functions."""
+    lake = create_lake(tmp_path / "lake", symbols=symbols)
+    monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+    monkeypatch.setenv("DATA_DIR", str(lake))
+    return lake
 
 
 def run_js_simulation(test_body_js: str, extra_setup_js: str = "") -> dict:
@@ -239,14 +203,13 @@ global.fetch = async (url) => {{
 # 1. test_streaming_candles_detects_one_minute_gaps
 # ============================================================================
 
-def test_streaming_candles_detects_one_minute_gaps():
+def test_streaming_candles_detects_one_minute_gaps(tmp_path, monkeypatch):
     """
     Verifies that get_streaming_candles detects 1-minute missing intervals in `gaps`.
     Currently fails because analytics.py:391 has `if missing_min >= 2:`,
     which filters out single-minute gaps (missing_min == 1).
     """
-    # 1. Synthetic test with isolated in-memory DB
-    client = create_in_memory_streaming_db()
+    lake = _lake_session(tmp_path, monkeypatch, ["TEST_SYM"])
     test_date = date(2026, 9, 15)
 
     # Regular hours 09:30 to 16:00:
@@ -262,14 +225,13 @@ def test_streaming_candles_detects_one_minute_gaps():
             minutes.append((hh, mm))
         cur += timedelta(minutes=1)
 
-    populate_ticks_for_minutes(client, test_date, "TEST_SYM", minutes)
+    publish_minutes(lake, test_date, "TEST_SYM", minutes)
 
     candles_res = get_streaming_candles(
         "TEST_SYM",
         timeframe="1m",
         date="2026-09-15",
         hours="regular",
-        client=client,
     )
 
     gaps = candles_res.get("gaps", [])
@@ -287,35 +249,17 @@ def test_streaming_candles_detects_one_minute_gaps():
         f"Missing 1-minute gap at 11:15 not found in gaps: {gaps}"
     )
 
-    # 2. Real DB test for ADBE on 2026-09-15 if streaming.duckdb is present
-    if HAS_REAL_STREAMING_DB:
-        adbe_res = get_streaming_candles(
-            "ADBE",
-            timeframe="1m",
-            date="2026-09-15",
-            hours="regular",
-        )
-        adbe_gaps = adbe_res.get("gaps", [])
-        assert len(adbe_gaps) == 9, (
-            f"Expected exactly 9 1-minute gaps for ADBE on 2026-09-15, but got {len(adbe_gaps)}. "
-            f"Gaps returned: {adbe_gaps}"
-        )
-        for g in adbe_gaps:
-            assert g["duration"] == 1, f"Expected 1m gap duration, got {g}"
-
 
 # ============================================================================
 # 2. test_streaming_candles_detects_session_boundary_gaps
 # ============================================================================
 
-def test_streaming_candles_detects_session_boundary_gaps():
+def test_streaming_candles_detects_session_boundary_gaps(tmp_path, monkeypatch):
     """
     Verifies that get_streaming_candles detects leading gaps (session_start to candles[0])
     and trailing gaps (candles[-1] to session_end).
-    Currently fails because analytics.py:386 only loops adjacent candles `range(len(candles) - 1)`
-    and does not evaluate session boundary intervals.
     """
-    client = create_in_memory_streaming_db()
+    lake = _lake_session(tmp_path, monkeypatch, ["BOUNDARY_SYM"])
     test_date = date(2026, 9, 15)
 
     # Session is regular hours: 09:30:00 to 16:00:00 ET.
@@ -328,14 +272,13 @@ def test_streaming_candles_detects_session_boundary_gaps():
         minutes.append((cur.hour, cur.minute))
         cur += timedelta(minutes=1)
 
-    populate_ticks_for_minutes(client, test_date, "BOUNDARY_SYM", minutes)
+    publish_minutes(lake, test_date, "BOUNDARY_SYM", minutes)
 
     candles_res = get_streaming_candles(
         "BOUNDARY_SYM",
         timeframe="1m",
         date="2026-09-15",
         hours="regular",
-        client=client,
     )
 
     gaps = candles_res.get("gaps", [])
@@ -499,17 +442,13 @@ def test_single_day_drilldown_hours_synchronized_to_regular():
 # 5. test_continuity_and_candles_gap_consistency
 # ============================================================================
 
-def test_continuity_and_candles_gap_consistency():
+def test_continuity_and_candles_gap_consistency(tmp_path, monkeypatch):
     """
     Verifies that the gaps detected by get_streaming_continuity_analysis and
     get_streaming_candles match in count, duration, and timestamps for regular market hours.
-    Tested on:
-    - Synthetic in-memory session.
-    - Real streaming dataset for ADBE, AMD, and APP on 2026-09-15 (if streaming.duckdb present).
-    Currently fails because get_streaming_candles drops 1-minute gaps and ignores boundaries.
+    Tested on a synthetic session with a known gap pattern.
     """
-    # 1. Synthetic test: create known gap pattern in memory
-    client = create_in_memory_streaming_db()
+    lake = _lake_session(tmp_path, monkeypatch, ["CONSISTENCY_SYM"])
     test_date = date(2026, 9, 15)
 
     # Build ticks with:
@@ -528,21 +467,19 @@ def test_continuity_and_candles_gap_consistency():
         minutes.append((hh, mm))
         cur += timedelta(minutes=1)
 
-    populate_ticks_for_minutes(client, test_date, "CONSISTENCY_SYM", minutes)
+    publish_minutes(lake, test_date, "CONSISTENCY_SYM", minutes)
 
     cont_res = get_streaming_continuity_analysis(
         days=1,
         symbol="CONSISTENCY_SYM",
         target_date="2026-09-15",
         include_extended=False,
-        client=client,
     )
     cand_res = get_streaming_candles(
         "CONSISTENCY_SYM",
         timeframe="1m",
         date="2026-09-15",
         hours="regular",
-        client=client,
     )
 
     cont_gaps = cont_res.get("days", [{}])[0].get("gaps", []) if cont_res.get("days") else []
@@ -562,33 +499,3 @@ def test_continuity_and_candles_gap_consistency():
         assert cg["start_str"] == kg["start_str"], (
             f"Gap start mismatch at index {i}: continuity={cg['start_str']}, candle={kg['start_str']}"
         )
-
-    # 2. Real DB test for ADBE, AMD, APP on 2026-09-15
-    if HAS_REAL_STREAMING_DB:
-        for sym in ["ADBE", "AMD", "APP"]:
-            cont = get_streaming_continuity_analysis(
-                days=1,
-                symbol=sym,
-                target_date="2026-09-15",
-                include_extended=False,
-            )
-            cand = get_streaming_candles(
-                sym,
-                timeframe="1m",
-                date="2026-09-15",
-                hours="regular",
-            )
-            c_gaps = cont.get("days", [{}])[0].get("gaps", []) if cont.get("days") else []
-            k_gaps = cand.get("gaps", [])
-
-            assert len(c_gaps) == len(k_gaps), (
-                f"Mismatch for {sym} on 2026-09-15 regular hours: "
-                f"Continuity reports {len(c_gaps)} gaps, but Candles reports {len(k_gaps)} gaps!"
-            )
-            for cg, kg in zip(c_gaps, k_gaps):
-                assert cg["duration"] == kg["duration"], (
-                    f"Duration mismatch for {sym}: continuity={cg}, candle={kg}"
-                )
-                assert cg["start_str"] == kg["start_str"], (
-                    f"Start time mismatch for {sym}: continuity={cg}, candle={kg}"
-                )
