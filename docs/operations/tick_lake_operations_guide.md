@@ -407,6 +407,10 @@ rm -f data/streaming.duckdb data/historical.duckdb
 Do **not** export, convert or archive the historical 1-minute bars: that store is
 deliberately dropped so the project has one model (ticks) and one format (Parquet).
 
+`tools/mac/run_phase49_migration.sh` wraps the whole sequence (including the duplicate-safety
+re-run and the report table) in one command and refuses to run while the streamer is alive;
+the steps below remain the by-hand equivalent.
+
 The gate is the full sequence, not verification alone: `--mode all` must finish with a
 `PASSED` verification, then `--mode verify-published` and `--mode audit-lake` must both
 exit `0`. Only then are the files deleted, and immediately — there is no retention

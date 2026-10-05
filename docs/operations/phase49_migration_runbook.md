@@ -53,6 +53,23 @@ Parquet. Nothing in the toolkit reads that file.
 
 ## 1. MIG-01 — the migration gate
 
+### Shortcut: one command
+
+`tools/mac/run_phase49_migration.sh` runs the whole gate — dry-run check, the four
+migration stages, `verify-published`, `audit-lake`, a duplicate-safety re-run — then prints
+the CO-03 table from §5. It refuses to run while the streamer is alive (exit `3`), refuses
+a missing source (exit `2`), and **never deletes anything**.
+
+```bash
+./tools/mac/run_phase49_migration.sh                 # migrate data/streaming.duckdb
+./tools/mac/run_phase49_migration.sh --dry-run       # plan only, writes nothing
+PYTHON_BIN=/path/to/python3 ./tools/mac/run_phase49_migration.sh   # if python3 is not the streamer's
+```
+
+On success it prints `GATE PASSED` and the exact deletion command. Skip to §3, then §5.
+
+### Or run the stages by hand
+
 Run the stages one at a time the first time. Each command is read-only against the
 source database; the source snapshot's SHA-256 is captured at plan time so that a
 changed source can never be silently migrated twice.
@@ -202,8 +219,9 @@ gone, so an interrupted purge can simply be re-run.
 
 ## 5. CO-03 — close the milestone
 
-Copy this table into the completion report, fill in what actually happened, and stop —
-no new phases, no follow-up programme.
+`tools/mac/run_phase49_migration.sh` prints this table already filled in with the values it
+observed (§1). Copy it into the completion report, and stop — no new phases, no follow-up
+programme.
 
 | Item | Recorded value |
 |---|---|
