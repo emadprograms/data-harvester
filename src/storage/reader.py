@@ -1562,6 +1562,12 @@ class TickLakeReader:
             "healthy": True,
         }
 
+    def get_capacity_report(self, force: bool = False) -> Dict[str, Any]:
+        """Returns partition capacity, small-file metrics, and threshold status (CAPA-01)."""
+        self._check_maintenance()
+        from src.storage.capacity import CapacityMonitor
+        return CapacityMonitor(lake_root=self.root).get_report(force_save=True, force_scan=force)
+
 
 _READER_CACHE: Dict[str, TickLakeReader] = {}
 

@@ -93,6 +93,26 @@ from src.storage.reader import (
     get_tick_lake_reader,
 )
 
+from src.storage.capacity import (
+    CapacityMonitor,
+    CapacityAlert,
+    PartitionMetrics,
+)
+
+from src.storage.compaction import (
+    CompactionError,
+    MaintenanceJournalError,
+    ConsumerDrainError,
+    ConsumerDrainRefusedError,
+    EquivalenceVerificationError,
+    PurgeError,
+    MaintenanceJournal,
+    LineageManager,
+    LakeCompactor,
+    recover_maintenance,
+    purge_symbol_physical,
+)
+
 __all__ = [
     # Config & Hierarchy
     "StorageConfigError",
@@ -170,5 +190,20 @@ __all__ = [
     # Lake Reader (Phase 19)
     "TickLakeReader",
     "get_tick_lake_reader",
+    # Capacity & Compaction (Phase 41)
+    "CapacityMonitor",
+    "CapacityAlert",
+    "PartitionMetrics",
+    "CompactionError",
+    "MaintenanceJournalError",
+    "ConsumerDrainError",
+    "ConsumerDrainRefusedError",
+    "EquivalenceVerificationError",
+    "PurgeError",
+    "MaintenanceJournal",
+    "LineageManager",
+    "LakeCompactor",
+    "recover_maintenance",
+    "purge_symbol_physical",
 ]
 

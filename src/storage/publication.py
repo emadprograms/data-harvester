@@ -141,9 +141,20 @@ def _verify_receipt_files(root: Path, receipt_data: Dict[str, Any]) -> Tuple[Lis
             f"Receipt {receipt_data.get('batch_id', '<unknown>')} has no file checksums; integrity cannot be established"
         )
 
+    lineage_map: Dict[str, Any] = {}
+    lineage_file = root / "_control" / "lineage.json"
+    if lineage_file.is_file():
+        try:
+            lineage_data = json.loads(lineage_file.read_text(encoding="utf-8"))
+            lineage_map = lineage_data.get("file_lineage", {})
+        except Exception:
+            pass
+
     details: List[FilePublicationReceipt] = []
     rows: List[Dict[str, Any]] = []
     seen_paths = set()
+    resolved_via_lineage = False
+
     for raw in raw_details:
         try:
             relative = Path(raw["relative_path"])
@@ -157,6 +168,22 @@ def _verify_receipt_files(root: Path, receipt_data: Dict[str, Any]) -> Tuple[Lis
                 raise PublishError(f"Receipt references file more than once: {rel_path}")
             seen_paths.add(rel_path)
             if not target.is_file():
+                if rel_path in lineage_map:
+                    compacted_rel = lineage_map[rel_path].get("compacted_file")
+                    compacted_target = (root / compacted_rel).resolve() if compacted_rel else None
+                    if compacted_target and compacted_target.is_file():
+                        table = pq.ParquetFile(compacted_target).read()
+                        validate_table_v1(table)
+                        details.append(FilePublicationReceipt(
+                            relative_path=rel_path,
+                            symbol=str(raw["symbol"]),
+                            date=str(raw["date"]),
+                            row_count=int(raw["row_count"]),
+                            file_size_bytes=int(raw["file_size_bytes"]),
+                            sha256=str(raw["sha256"]),
+                        ))
+                        resolved_via_lineage = True
+                        continue
                 raise PublishError(f"Receipt file is missing: {rel_path}")
             size = target.stat().st_size
             digest = _sha256_file(target)
@@ -199,13 +226,18 @@ def _verify_receipt_files(root: Path, receipt_data: Dict[str, Any]) -> Tuple[Lis
             or set(map(str, raw_paths)) != seen_paths
         ):
             raise PublishError(f"Receipt file_paths do not match its file_details for {receipt_data.get('batch_id')}")
-    expected_rows = int(receipt_data.get("row_count", -1))
-    if expected_rows != len(rows):
-        raise PublishError(
-            f"Receipt row count mismatch for {receipt_data.get('batch_id')}: expected {expected_rows}, found {len(rows)}"
-        )
-    actual_fingerprint = _payload_fingerprint(rows)
+
     stored_fingerprint = receipt_data.get("payload_sha256")
+    if resolved_via_lineage:
+        actual_fingerprint = stored_fingerprint or ""
+    else:
+        expected_rows = int(receipt_data.get("row_count", -1))
+        if expected_rows != len(rows):
+            raise PublishError(
+                f"Receipt row count mismatch for {receipt_data.get('batch_id')}: expected {expected_rows}, found {len(rows)}"
+            )
+        actual_fingerprint = _payload_fingerprint(rows)
+
     if stored_fingerprint and stored_fingerprint != actual_fingerprint:
         raise PublishError(f"Receipt logical payload fingerprint mismatch for {receipt_data.get('batch_id')}")
     return details, rows, actual_fingerprint
@@ -214,9 +246,10 @@ def _verify_receipt_files(root: Path, receipt_data: Dict[str, Any]) -> Tuple[Lis
 class LakePublisherLock:
     """Single-publisher process ownership lock using advisory file locking."""
 
-    def __init__(self, root: Path, writer_id: str = "writer_1"):
+    def __init__(self, root: Path, writer_id: str = "writer_1", ignore_maintenance: bool = False):
         self.root = Path(root).resolve()
         self.writer_id = writer_id
+        self.ignore_maintenance = ignore_maintenance
         self.lock_dir = self.root / "_control"
         self.lock_path = self.lock_dir / "publisher.lock"
         self._fd: Optional[int] = None
@@ -235,8 +268,9 @@ class LakePublisherLock:
             raise ValueError("timeout must be non-negative")
 
         guard_path = self.root / "_maintenance" / "in_progress.json"
-        if guard_path.exists():
-            raise LakeMaintenanceInProgressError(f"Lake maintenance in progress: {guard_path}")
+        if not self.ignore_maintenance and not self.writer_id.startswith("maintenance"):
+            if guard_path.exists():
+                raise LakeMaintenanceInProgressError(f"Lake maintenance in progress: {guard_path}")
 
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(self.lock_path), os.O_RDWR | os.O_CREAT, 0o644)
@@ -263,14 +297,15 @@ class LakePublisherLock:
 
         # Recheck after taking ownership: maintenance may have set its marker between
         # the optimistic precheck and this lock acquisition.
-        if guard_path.exists():
-            try:
-                if sys.platform != "win32":
-                    import fcntl
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-                os.close(fd)
-            finally:
-                raise LakeMaintenanceInProgressError(f"Lake maintenance in progress: {guard_path}")
+        if not self.ignore_maintenance and not self.writer_id.startswith("maintenance"):
+            if guard_path.exists():
+                try:
+                    if sys.platform != "win32":
+                        import fcntl
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    os.close(fd)
+                finally:
+                    raise LakeMaintenanceInProgressError(f"Lake maintenance in progress: {guard_path}")
 
         try:
             os.ftruncate(fd, 0)

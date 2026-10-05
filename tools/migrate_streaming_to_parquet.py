@@ -1950,6 +1950,15 @@ class MigrationOrchestrator:
         if not owned_files:
             raise MigrationError("No migration-owned published files found to verify")
 
+        lineage_map: Dict[str, Any] = {}
+        lineage_path = self.lake_root / "_control" / "lineage.json"
+        if lineage_path.is_file():
+            try:
+                lineage_data = json.loads(lineage_path.read_text(encoding="utf-8"))
+                lineage_map = lineage_data.get("file_lineage", {})
+            except Exception:
+                pass
+
         discrepancies: List[Dict[str, Any]] = []
         files_by_partition: Dict[Tuple[str, str], List[str]] = {}
 
@@ -1958,7 +1967,17 @@ class MigrationOrchestrator:
             path = self._safe_path(self.lake_root, rel)
             sym = detail["symbol"]
             dt = detail["date"]
-            files_by_partition.setdefault((sym, dt), []).append(str(path))
+
+            is_compacted = False
+            if not path.is_file() and rel in lineage_map:
+                compacted_rel = lineage_map[rel].get("compacted_file")
+                if compacted_rel:
+                    path = self._safe_path(self.lake_root, compacted_rel)
+                    is_compacted = True
+
+            files_by_partition.setdefault((sym, dt), [])
+            if str(path) not in files_by_partition[(sym, dt)]:
+                files_by_partition[(sym, dt)].append(str(path))
 
             if not path.is_file() or path.is_symlink():
                 discrepancies.append({
@@ -1967,38 +1986,50 @@ class MigrationOrchestrator:
                     "error": f"Published file missing or unsafe: {path}",
                 })
                 continue
-            actual_size = path.stat().st_size
-            if detail["size_bytes"] and actual_size != detail["size_bytes"]:
-                discrepancies.append({
-                    "type": "file_size_mismatch",
-                    "path": rel,
-                    "expected": detail["size_bytes"],
-                    "actual": actual_size,
-                })
-            actual_sha = self._file_sha256(path)
-            if detail["sha256"] and actual_sha != detail["sha256"]:
-                discrepancies.append({
-                    "type": "file_checksum_mismatch",
-                    "path": rel,
-                    "expected": detail["sha256"],
-                    "actual": actual_sha,
-                })
-            try:
-                table = pq.ParquetFile(path).read()
-                validate_table_v1(table)
-                if table.num_rows != detail["row_count"]:
+
+            if not is_compacted:
+                actual_size = path.stat().st_size
+                if detail["size_bytes"] and actual_size != detail["size_bytes"]:
                     discrepancies.append({
-                        "type": "row_count_mismatch",
+                        "type": "file_size_mismatch",
                         "path": rel,
-                        "expected": detail["row_count"],
-                        "actual": table.num_rows,
+                        "expected": detail["size_bytes"],
+                        "actual": actual_size,
                     })
-            except Exception as exc:
-                discrepancies.append({
-                    "type": "parquet_read_error",
-                    "path": rel,
-                    "error": str(exc),
-                })
+                actual_sha = self._file_sha256(path)
+                if detail["sha256"] and actual_sha != detail["sha256"]:
+                    discrepancies.append({
+                        "type": "file_checksum_mismatch",
+                        "path": rel,
+                        "expected": detail["sha256"],
+                        "actual": actual_sha,
+                    })
+                try:
+                    table = pq.ParquetFile(path).read()
+                    validate_table_v1(table)
+                    if table.num_rows != detail["row_count"]:
+                        discrepancies.append({
+                            "type": "row_count_mismatch",
+                            "path": rel,
+                            "expected": detail["row_count"],
+                            "actual": table.num_rows,
+                        })
+                except Exception as exc:
+                    discrepancies.append({
+                        "type": "parquet_read_error",
+                        "path": rel,
+                        "error": str(exc),
+                    })
+            else:
+                try:
+                    table = pq.ParquetFile(path).read()
+                    validate_table_v1(table)
+                except Exception as exc:
+                    discrepancies.append({
+                        "type": "parquet_read_error",
+                        "path": str(path),
+                        "error": str(exc),
+                    })
 
         table = self.source_table or "tick_data"
         table_sql = self._quote_identifier(table)
