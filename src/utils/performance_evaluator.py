@@ -7,6 +7,7 @@ Enforces mandatory performance qualification upper limits:
 - Writer CPU: >=50.0% reduction in CPU seconds/M valid published ticks vs legacy baseline
 - Event-loop lag: p99 < 20.0ms
 - Visibility freshness: healthy-load p99 <= configured flush interval + 1.0s
+- Replay first batch: warm < 250.0ms for declared session workload
 
 Fails closed on non-finite (NaN, inf), zero, negative, or missing metrics.
 """
@@ -82,6 +83,7 @@ def evaluate_performance_gates(
     event_loop_lag_p99_ms: Optional[float] = None,
     freshness_p99_ms: Optional[float] = None,
     flush_interval_seconds: float = 1.0,
+    replay_first_batch_p95_ms: Optional[float] = None,
 ) -> PerformanceQualificationSummary:
     """Evaluate mandatory performance upper limits strictly and fail-closed."""
     gates: List[GateResult] = []
@@ -245,6 +247,33 @@ def evaluate_performance_gates(
                     name="Receive-to-visible freshness (p99)",
                     target=f"<= {(float(flush_interval_seconds) + 1.0) * 1000.0:.0f} ms",
                     actual=str(freshness_p99_ms),
+                    passed=False,
+                    details=str(exc),
+                )
+            )
+            failures.append(str(exc))
+
+    # 7. Replay first-batch latency: warm < 250.0ms (if present/evaluated)
+    if replay_first_batch_p95_ms is not None:
+        try:
+            val_replay = _validate_finite_positive(replay_first_batch_p95_ms, "replay_first_batch_p95_ms")
+            p_replay = val_replay < 250.0
+            gates.append(
+                GateResult(
+                    name="Warm replay first-batch latency (p95)",
+                    target="< 250.00 ms",
+                    actual=f"{val_replay:.2f} ms",
+                    passed=p_replay,
+                )
+            )
+            if not p_replay:
+                failures.append(f"Warm replay first-batch p95 {val_replay:.2f}ms >= 250.0ms")
+        except ValueError as exc:
+            gates.append(
+                GateResult(
+                    name="Warm replay first-batch latency (p95)",
+                    target="< 250.00 ms",
+                    actual=str(replay_first_batch_p95_ms),
                     passed=False,
                     details=str(exc),
                 )

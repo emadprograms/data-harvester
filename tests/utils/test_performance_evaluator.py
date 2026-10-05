@@ -30,6 +30,7 @@ def test_evaluator_passes_valid_metrics():
         event_loop_lag_p99_ms=8.5,
         freshness_p99_ms=950.0,
         flush_interval_seconds=1.0,  # threshold = 2000ms
+        replay_first_batch_p95_ms=115.0,
     )
 
     assert summary.overall_passed is True
@@ -111,6 +112,21 @@ def test_evaluator_rejects_over_limit_freshness():
 
     assert summary.overall_passed is False
     assert any("Freshness p99" in r for r in summary.failure_reasons)
+
+
+def test_evaluator_rejects_over_limit_replay_first_batch():
+    """Warm replay first-batch p95 >= 250ms fails."""
+    summary = evaluate_performance_gates(
+        session_1m_p95_ms=40.0,
+        session_5m_p95_ms=50.0,
+        month_1d_p95_ms=150.0,
+        writer_cpu_sec_per_1m=1.0,
+        legacy_writer_cpu_sec_per_1m=3.0,
+        replay_first_batch_p95_ms=255.0,  # Over 250ms limit
+    )
+
+    assert summary.overall_passed is False
+    assert any("Warm replay first-batch p95" in r for r in summary.failure_reasons)
 
 
 @pytest.mark.parametrize("bad_val", [float("nan"), float("inf"), float("-inf"), 0.0, -5.0])

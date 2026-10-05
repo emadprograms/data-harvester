@@ -794,6 +794,21 @@ class LakeCompactor:
         finally:
             publisher_lock.release()
 
+    def compact_partition(
+        self,
+        symbol: str,
+        date_str: Union[str, Any],
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Compacts a single partition identified by (symbol, date_str).
+        """
+        if hasattr(date_str, "strftime"):
+            d_str = date_str.strftime("%Y-%m-%d")
+        else:
+            d_str = str(date_str).strip()
+        return self.compact(symbol=symbol, date_str=d_str, force=force)
+
 
 def recover_maintenance(
     lake_root: Union[str, Path],
