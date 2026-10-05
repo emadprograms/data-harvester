@@ -218,6 +218,8 @@ python3 tools/preflight.py
 The one-time legacy migration, the deletion of the two `.duckdb` files and the milestone
 close-out are owner actions, step by step in
 [`docs/operations/phase49_migration_runbook.md`](docs/operations/phase49_migration_runbook.md).
+One command runs the whole migration gate (and never deletes anything):
+`./tools/mac/run_phase49_migration.sh`.
 
 ### 🧗 Hardening & Chaos Suites
 ```bash
