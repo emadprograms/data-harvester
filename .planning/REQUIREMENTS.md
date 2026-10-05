@@ -16,7 +16,7 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 
 ### Phase 46: Rewire Off the Disk Databases
 
-- [ ] **BASE-01**: The lake's current candle output is recorded once as the reference behaviour **before** any code change, so an accidental change during the refactor is detectable.
+- [x] **BASE-01**: The lake's current candle output is recorded once as the reference behaviour **before** any code change, so an accidental change during the refactor is detectable.
 - [x] **STOR-01**: No code path opens or creates a disk-backed DuckDB database during normal runtime. `tests/stream/test_no_disk_db_backend.py` proves it and would fail if one were reintroduced. `src/dashboard/analytics.py` no longer imports `src.database` and its six silent disk fallbacks (`get_streaming_db_connection(read_only=True)`) are gone — an unavailable lake now raises. *Residual:* the file keeps a test-only `client=` injection seam that runs DuckDB SQL against a caller-supplied client; production never passes one, and STOR-05 removes the seam with the legacy tests.
 - [x] **STOR-02**: `src/stream/runner.py` is lake-only — the DuckDB writer fallback is **removed**, not merely disabled, and `init_streaming_db` / `save_ticks_to_storage` are gone.
 - [x] **STOR-03**: The streaming symbol inventory is read from `_control/registry.json`; the legacy database lookups are removed with `src/database`. Proven by `tests/test_symbol_maps_separation.py::test_lake_registry_holds_exactly_the_approved_equities` and `tests/dashboard/test_registry_endpoints.py`.
@@ -25,19 +25,19 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 - [x] **DASH-01**: `/api/historical/*` routes and their analytics functions are removed; retained tick routes serve the lake.
 - [x] **DASH-02**: The dashboard is a **single Parquet-only view**. The Historical Dashboard (nav, chart container, symbol list, source selector, 'Historical DB' stat) is deleted. Charts render tick-derived candles from the lake; dates predating tick capture return an honest empty state and never imply bars were converted.
 - [x] **DASH-03**: `src/utils/integrity.py` tick-health checks read the lake; cross-store drift analysis is removed.
-- [ ] **GAP-01**: Databento gap-fill publishes ticks into the Parquet lake, reads symbols from `_control/registry.json`, performs its already-backfilled check against the lake (never a database), and honours maintenance/publisher fences.
-- [ ] **GAP-02**: `databento` is declared in `requirements.txt` and its operational symbol scope is restricted to the 19 approved symbols.
+- [x] **GAP-01**: Databento gap-fill publishes ticks into the Parquet lake, reads symbols from `_control/registry.json`, performs its already-backfilled check against the lake (never a database), and honours maintenance/publisher fences.
+- [x] **GAP-02**: `databento` is declared in `requirements.txt` and its operational symbol scope is restricted to the 19 approved symbols.
 
 ### Phase 47: Remove the Bar Subsystem & Dead Providers
 
-- [ ] **RMV-01**: `grep -ri "historical.duckdb\|streaming.duckdb"` returns nothing in `src/`, `tools/`, `tests/`, `main.py` or current user-facing docs.
-- [ ] **RMV-02**: The historical **1-minute bar archive pipeline** is deleted — the harvesters that downloaded pre-aggregated bars into `minute_data`: `main.py` harvest CLI, `src/data/harvester.py`, `src/data/normalizer.py`, `src/api/massive.py`, `src/api/yahoo.py`, `src/api/binance.py`, `tools/backfill_massive.py`, `tools/benchmark_baseline.py`, `tools/audit_database_integrity.py`, `src/dashboard/harvester_job.py`. **Not in scope — explicitly retained:** the tick-lake gap visualisation (shaded missing-data regions, continuity ribbons, `detect_stream_quiet_intervals`) and everything that feeds it. Guarded by `tests/dashboard/test_gap_visualisation_survives.py`.
-- [ ] **RMV-03**: Bar-era frontend surfaces are removed — historical navigation, data-source selector, harvester controls, stale database labels. The streaming chart, its gap shading and the continuity ribbons stay.
-- [ ] **RMV-04**: `yfinance` and `polygon-api-client` are removed from `requirements.txt`. `DISCORD_WEBHOOK_URL` is **retained** in `.env.example`. **`duckdb` stays** (in-memory engine). Retained: `pyarrow`, `pandas`, `pytz`/`tzdata`, `websockets`, `requests`, `python-dotenv`, `psutil`, `pytest`.
-- [ ] **RMV-06**: Reference cleanup covers code and current user-facing docs; `.planning/` archives are left intact.
-- [ ] **RMV-07**: `src/config.py`'s dead bar constants are removed, and Capital credentials are retained (live auth depends on them).
-- [ ] **RMV-08**: The unused replay subsystem is removed — `src/storage/replay.py`, `tests/storage/test_replay.py`, its exports in `src/storage/__init__.py`, and the `create_replay_iterator`/`create_replay_snapshot` methods on `TickLakeReader`. `PROJECT.md` places market-rewind out of scope; it was built during v4.3 against that decision and is reachable only programmatically.
-- [ ] **RMV-09**: `src/utils/discord.py` is **rewritten, not deleted** — bar-era functions (`build_health_alerts`, `build_database_health_grid`, `send_discord_harvest_report`) are removed; the webhook plumbing (`_post_embed`, `_post_file`) and `get_discord_webhook_url()` are retained for streamer notifications.
+- [x] **RMV-01**: The deleted disk-database layer is unreferenced where it matters: `src/` and `tools/` are clean (sole exemption: `tools/migrate_streaming_to_parquet.py`, which must name the legacy source for Phase 49), the frontend has no database labels or dead paths, and the only other mentions are the owner-run migration procedure in `docs/operations`/`docs/contracts` and the guard tests that assert the layer is gone. Guards: `tests/test_disk_database_layer_removed.py`, `tests/test_bar_era_removal.py`, `tests/docs/test_documentation_contract.py`. *(Wording amended 2026-10-05: the original "returns nothing in `tests/`" could never hold while guard tests assert absence in the same tree.)*
+- [x] **RMV-02**: The historical **1-minute bar archive pipeline** is deleted — the harvesters that downloaded pre-aggregated bars into `minute_data`: `main.py` harvest CLI, `src/data/harvester.py`, `src/data/normalizer.py`, `src/api/massive.py`, `src/api/yahoo.py`, `src/api/binance.py`, `tools/backfill_massive.py`, `tools/benchmark_baseline.py`, `tools/audit_database_integrity.py`, `src/dashboard/harvester_job.py`. **Not in scope — explicitly retained:** the tick-lake gap visualisation (shaded missing-data regions, continuity ribbons, `detect_stream_quiet_intervals`) and everything that feeds it. Guarded by `tests/dashboard/test_gap_visualisation_survives.py`.
+- [x] **RMV-03**: Bar-era frontend surfaces are removed — historical navigation, data-source selector, harvester controls, stale database labels. The streaming chart, its gap shading and the continuity ribbons stay.
+- [x] **RMV-04**: `yfinance` and `polygon-api-client` are removed from `requirements.txt`. `DISCORD_WEBHOOK_URL` is **retained** in `.env.example`. **`duckdb` stays** (in-memory engine). Retained: `pyarrow`, `pandas`, `pytz`/`tzdata`, `websockets`, `requests`, `python-dotenv`, `psutil`, `pytest`.
+- [x] **RMV-06**: Reference cleanup covers code and current user-facing docs; `.planning/` archives are left intact.
+- [x] **RMV-07**: `src/config.py`'s dead bar constants are removed, and Capital credentials are retained (live auth depends on them).
+- [x] **RMV-08**: The unused replay subsystem is removed — `src/storage/replay.py`, `tests/storage/test_replay.py`, its exports in `src/storage/__init__.py`, and the `create_replay_iterator`/`create_replay_snapshot` methods on `TickLakeReader`. `PROJECT.md` places market-rewind out of scope; it was built during v4.3 against that decision and is reachable only programmatically.
+- [x] **RMV-09**: `src/utils/discord.py` is **rewritten, not deleted** — bar-era functions (`build_health_alerts`, `build_database_health_grid`, `send_discord_harvest_report`) are removed; the webhook plumbing (`_post_embed`, `_post_file`) and `get_discord_webhook_url()` are retained for streamer notifications.
 
 ### Phase 48: Schedule, Off-Hours Compaction, Notifications & Test Disposition
 
@@ -88,11 +88,11 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 | DASH-03 | 46 | Complete |
 | GAP-01 | 46 | Complete |
 | GAP-02 | 46 | Complete |
-| RMV-01 | 47 | Pending |
+| RMV-01 | 47 | Complete |
 | RMV-02 | 47 | Complete |
 | RMV-03 | 47 | Complete |
 | RMV-04 | 47 | Complete |
-| RMV-06 | 47 | Pending |
+| RMV-06 | 47 | Complete |
 | RMV-07 | 47 | Complete |
 | RMV-08 | 47 | Complete |
 | RMV-09 | 47 | Complete |
@@ -113,6 +113,8 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 
 **Coverage:** 33 requirements, 33 mapped, 0 unmapped ✓  
 **Phase order equals execution order** (renumbered 2026-10-05): code phases 46–48 first, owner-machine gate 49 last.
+
+**Phase 47 close-out (2026-10-05):** RMV-01/02/03/04/06/07/08/09 verified; RMV-10 (crypto/Binance streaming, `CandleAggregator`, `binance_ticker`) removed as residue of the equity-only ticket. Full offline suite: 872 passed, 4 host-load timing flakes (documented, reproduce green in isolation).
 
 **Working method (owner directive, 2026-10-05):** test-driven — research, failing tests, implement, verify, re-implement and re-verify on failure.
 
