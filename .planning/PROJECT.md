@@ -8,19 +8,22 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 
 ## Current Milestone (v5.0) — In Progress
 
-**v5.0: DuckDB-Free Tick-Only Parquet** — Phases 46–51 (started 2026-10-05)
+**v5.0: Parquet-Only Storage (DuckDB retained as query engine)** — Phases 46–49 (started 2026-10-05)
 
-**Goal:** Reduce the system to one storage format, one query engine, and one data type — ticks in Parquet, read with PyArrow. DuckDB is removed entirely: not only as a store, but as the analytical engine. The streamer ingests the 19 approved equity symbols during 04:00–20:00 ET only, and compaction runs unattended in the closed window.
+**Goal:** Remove DuckDB as **storage**. No `.duckdb` files exist; every persisted market datum is a Parquet tick. DuckDB remains as the in-memory query engine reading those files.
+
+**Scope decision (owner, 2026-10-05):** the larger alternative — deleting the DuckDB library and reimplementing resampling in PyArrow — was considered and **rejected**. `src/storage/reader.py`, `compaction.py` and `replay.py` are therefore **not modified** by this milestone.
 
 **End state:**
-- `historical.duckdb`, `streaming.duckdb`, and the entire 1-minute bar pipeline are deleted by the owner; no code can open or recreate a disk-backed DuckDB database.
-- Every query previously served by DuckDB SQL (`time_bucket`, `arg_min`/`arg_max`, `read_parquet`, `EXCEPT ALL`) is served by PyArrow against the Parquet tick lake.
+- `historical.duckdb` and `streaming.duckdb` deleted by the owner; no code path can open or create a disk-backed DuckDB database.
+- Ticks only — the 1-minute bar pipeline is removed entirely.
 - Capital.com is the sole live source; Databento is the sole gap-repair source, writing into the same lake.
 - Symbols are exactly: AAPL, ADBE, AMD, AMZN, APP, AVGO, BABA, GOOGL, META, MSFT, MU, NDAQ, NVDA, ORCL, PANW, QCOM, SHOP, TSLA, TSM.
+- Ingestion restricted to 04:00–20:00 ET; compaction unattended in the closed window.
 
-**Hard sequencing constraint:** the legacy tick migration must complete and verify **before** DuckDB is removed — the migration tool uses DuckDB to read the legacy `.duckdb` source.
+**Hard sequencing constraint:** the legacy tick migration must complete and verify **before** any `.duckdb` file is deleted — the migration tool uses DuckDB to read the legacy source.
 
-**Artifacts:** [REQUIREMENTS.md](REQUIREMENTS.md) (v5.0 requirements) · [ROADMAP.md](ROADMAP.md) (Phases 46–51) · [STATE.md](STATE.md) · [PLAN-MILESTONE-5.0.md](../PLAN-MILESTONE-5.0.md)
+**Artifacts:** [REQUIREMENTS.md](REQUIREMENTS.md) (30 requirements) · [ROADMAP.md](ROADMAP.md) (Phases 46–49) · [STATE.md](STATE.md) · [PLAN-MILESTONE-5.0.md](../PLAN-MILESTONE-5.0.md)
 
 ## Current State (Shipped v4.1)
 - **Partitioned Parquet Tick Lake (`data/tick_lake/ticks`)**: Fully decoupled append-only storage organized by Hive two-level partitioning (`symbol=<ENCODED_SYMBOL>/date=<YYYY-MM-DD>/*.parquet`). Live ticks never touch a disk-backed DuckDB database, completely eliminating write locks between ingestion and analytical readers.

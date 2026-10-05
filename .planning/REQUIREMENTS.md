@@ -2,59 +2,49 @@
 
 **Defined:** 2026-10-05
 **Core Value:** Zero-cloud, zero-quota persistent market data ingestion and storage — capture ticks reliably and serve them concurrently, with no locks and no quotas.
-**Milestone:** v5.0 DuckDB-Free Tick-Only Parquet
+**Milestone:** v5.0 Parquet-Only Storage (DuckDB retained as query engine)
 
-**Source of truth for scope:** [`PLAN-MILESTONE-5.0.md`](../PLAN-MILESTONE-5.0.md) — workstreams W0–W10, gates G1–G4.
+**Source of truth for scope:** [`PLAN-MILESTONE-5.0.md`](../PLAN-MILESTONE-5.0.md) — four phases (46–49).
 
-> Every requirement below is a checkable statement about the shipped system. A requirement is **Complete** only when its stated evidence exists. Partial results, measured shortfalls and known limitations are recorded honestly — never rounded up.
+> **Scope decision (owner, 2026-10-05):** remove DuckDB as **storage** only. No `.duckdb` files may exist; all persisted data is Parquet. DuckDB remains as the **in-memory query engine** reading Parquet. The larger alternative — removing the DuckDB library and reimplementing resampling in PyArrow — was considered and **rejected**. `src/storage/reader.py`, `compaction.py` and `replay.py` are therefore **out of scope for modification**.
+
+A requirement is **Complete** only when its stated evidence exists. Shortfalls are recorded honestly, never rounded up.
 
 ---
 
 ## v5.0 Requirements by Phase
 
-### Phase 46: Baseline Capture & Legacy Tick Migration Verification
+### Phase 46: Baseline & Legacy Tick Migration Verification
 
-- [ ] **BASE-01**: Current oracle-verified behaviour is captured **once** on a fixed synthetic dataset — candle outputs for the DST / timestamp-tie / duplicate / null-volume edge-case matrix, plus query and tape latency. This is the reference the PyArrow implementation must match. It is a single recorded baseline, **not** a re-qualification campaign.
+- [ ] **BASE-01**: The lake's current candle output is recorded once as the reference behaviour, so any accidental change during the refactor is detectable.
 - [ ] **MIG-01**: The legacy tick source (`data/streaming.duckdb`) is migrated into the Parquet lake with `plan → export → verify → verify-published → audit-lake` all completing, and row counts reconciled per symbol and per date.
-- [ ] **MIG-02**: Migration completes and is confirmed **before** any DuckDB removal begins. The agent never copies, exports, archives or deletes the owner's `.duckdb` files.
+- [ ] **MIG-02**: Migration is confirmed **before** any `.duckdb` file is deleted. The agent never copies, exports, archives or deletes the owner's database files — deletion is an owner action.
 - [ ] **MIG-03**: Re-running the migration over an overlapping or broader scope publishes no duplicate rows (source-coverage ledger).
 
-### Phase 47: PyArrow Reader Core
+### Phase 47: Rewire Off the Disk Databases
 
-- [ ] **READ-01**: `TickLakeReader` serves all existing public methods under identical names and return shapes, implemented with PyArrow. The module contains no DuckDB import.
-- [ ] **READ-02**: Partition resolution and pruning behave as before — symbol/date predicates applied at path level, and no recursive scan of `_staging/`, `_maintenance/` or `_migration/`.
-- [ ] **READ-03**: Structured lake errors are preserved exactly (`LakeUnavailableError`, `LakeCorruptedMetadataError`, `LakeIncompatibleSchemaError`), with no silent fallback and no legacy backend.
-- [ ] **READ-04**: Tick reads (`query_ticks`, `get_tape`, `get_latest_tick`) preserve duplicate multiplicity, null volume, and deterministic ordering on `(timestamp, ingest_id)`.
-- [ ] **READ-05**: Work is bounded per symbol/day partition, so memory does not scale with total lake size.
-
-### Phase 48: Arrow Resampling & Multiset Verification
-
-- [ ] **CAND-01**: OHLCV resampling output is identical to the recorded baseline oracle for `1m`, `5m`, `15m`, `1h`, `1D` across DST transitions, leap years, UTC/exchange date boundaries, timestamp ties, exact duplicates, late arrivals, and null/zero volume.
-- [ ] **CAND-02**: Open/close selection uses the documented deterministic tie-break — sort by `(timestamp, ingest_id)`, then first/last — and high/low use max/min. Tie-breaking is proven by test, not asserted.
-- [ ] **VER-01**: Compaction and migration verification no longer use `EXCEPT ALL`. Equivalence is proven by multiset (Counter) comparison that preserves multiplicity, float precision and nulls.
-- [ ] **VER-02**: The independent oracle (`tests/support/lake_assertions.py`) remains free of application-reader imports and is the pass/fail authority for CAND-01 and VER-01.
-- [ ] **VER-03**: Compaction replacement is gated on multiset equivalence and preserves lineage; any mismatch blocks replacement and is reported.
-
-### Phase 49: Dashboard, Analytics & Reader Contract
-
-- [ ] **DASH-01**: `/api/historical/*` endpoints and their frontend callers are removed. Retained tick routes (`/api/stream/*`, symbols, coverage, continuity, integrity) are served by the PyArrow reader.
-- [ ] **DASH-02**: The chart renders tick-derived candles from the lake only. Dates predating tick capture return an honest empty state and never imply that bars were converted.
-- [ ] **DASH-03**: Tick-health integrity checks are preserved; bar-era and cross-store drift checks are removed.
-- [ ] **DASH-04**: The frontend removes historical navigation, the data-source selector, harvester controls, and stale database labels.
-- [ ] **CONT-01**: The Repo B contract is rewritten for pyarrow-only consumption with no DuckDB in any example, and its published examples execute in an isolated subprocess with zero `src` imports.
-- [ ] **CONT-02**: The owner confirms whether Repo B currently reads these files through DuckDB SQL; if so, the breaking change is coordinated before release (gate G1).
-
-### Phase 50: Removal
-
-- [ ] **RMV-01**: `grep -r duckdb` returns no hits in `src/`, `tools/`, `main.py`, `tests/` or `requirements.txt`.
-- [ ] **RMV-02**: The bar subsystem is deleted — `main.py` harvest CLI, `src/data/harvester.py`, `src/data/normalizer.py`, `src/api/massive.py`, `src/api/yahoo.py`, `src/api/binance.py`, `tools/backfill_massive.py`, `tools/benchmark_baseline.py`, `tools/audit_database_integrity.py`, `src/dashboard/harvester_job.py`, `src/utils/discord.py`.
-- [ ] **RMV-03**: No code path can open or create a disk-backed DuckDB database; a startup regression proves it and would fail if one were reintroduced.
-- [ ] **RMV-04**: Removed dependencies (`duckdb`, `yfinance`, `polygon-api-client`) are gone; retained ones (`pyarrow`, `pandas`, `pytz`/`tzdata`, `websockets`, `requests`, `python-dotenv`, `psutil`, `pytest`) remain.
-- [ ] **RMV-05**: The owner deletes `data/historical.duckdb` and `data/streaming.duckdb` after Phase 46 confirmation.
+- [ ] **STOR-01**: No code path opens or creates a disk-backed DuckDB database during normal runtime. A startup regression proves it and would fail if one were reintroduced.
+- [ ] **STOR-02**: `src/stream/runner.py` is lake-only — the DuckDB writer fallback is **removed**, not merely disabled, and `init_streaming_db` / `save_ticks_to_storage` are gone.
+- [ ] **STOR-03**: The streaming symbol inventory is read from `_control/registry.json`; the legacy database lookups are removed.
+- [ ] **STOR-04**: The in-memory connection helper required by `src/utils/integrity.py` survives the `src/database` deletion, relocated to the storage layer.
+- [ ] **STOR-05**: `src/database/{connection,schema,operations}.py` are deleted with every importer resolved.
+- [ ] **DASH-01**: `/api/historical/*` routes and their analytics functions are removed; retained tick routes serve the lake.
+- [ ] **DASH-02**: Charts render tick-derived candles from the lake. Dates predating tick capture return an honest empty state and never imply bars were converted.
+- [ ] **DASH-03**: `src/utils/integrity.py` tick-health checks read the lake; cross-store drift analysis is removed.
 - [ ] **GAP-01**: Databento gap-fill publishes ticks into the Parquet lake, reads symbols from `_control/registry.json`, performs its already-backfilled check against the lake (never a database), and honours maintenance/publisher fences.
-- [ ] **GAP-02**: `databento` is declared in `requirements.txt`, and its operational symbol scope is restricted to the 19 approved symbols.
+- [ ] **GAP-02**: `databento` is declared in `requirements.txt` and its operational symbol scope is restricted to the 19 approved symbols.
 
-### Phase 51: Schedule, Maintenance & Closure
+### Phase 48: Remove the Bar Subsystem & Dead Providers
+
+- [ ] **RMV-01**: `grep -ri "historical.duckdb\|streaming.duckdb"` returns nothing in `src/`, `tools/`, `tests/`, `main.py` or current user-facing docs.
+- [ ] **RMV-02**: The bar subsystem is deleted — `main.py` harvest CLI, `src/data/harvester.py`, `src/data/normalizer.py`, `src/api/massive.py`, `src/api/yahoo.py`, `src/api/binance.py`, `tools/backfill_massive.py`, `tools/benchmark_baseline.py`, `tools/audit_database_integrity.py`, `src/dashboard/harvester_job.py`, `src/utils/discord.py`.
+- [ ] **RMV-03**: Bar-era frontend surfaces are removed — historical navigation, data-source selector, harvester controls, stale database labels.
+- [ ] **RMV-04**: `yfinance` and `polygon-api-client` are removed from `requirements.txt`. **`duckdb` stays** (in-memory engine). Retained: `pyarrow`, `pandas`, `pytz`/`tzdata`, `websockets`, `requests`, `python-dotenv`, `psutil`, `pytest`.
+- [ ] **RMV-05**: The owner deletes `data/historical.duckdb` and `data/streaming.duckdb` after Phase 46 confirmation.
+- [ ] **RMV-06**: Reference cleanup covers code and current user-facing docs; `.planning/` archives are left intact.
+- [ ] **RMV-07**: `src/config.py`'s dead bar constants are removed, and Capital credentials are retained (live auth depends on them).
+
+### Phase 49: Schedule, Off-Hours Compaction & Closure
 
 - [ ] **SCHED-01**: A single timezone policy module computes ingestion eligibility in `ZoneInfo("America/New_York")` over `[04:00, 20:00)`, using an injectable clock. Behaviour is identical under DST transitions and when the host is not in ET.
 - [ ] **SCHED-02**: The supervisor owns lifecycle states (`WAITING_FOR_WINDOW`, `STARTING`, `INGESTING`, `DRAINING`, `MAINTENANCE`, `ERROR`). No provider authentication or subscription occurs outside the window, and an intentional off-hours stop is never treated as a crash.
@@ -62,10 +52,9 @@
 - [ ] **SCHED-04**: At 20:00 admission stops, accepted ticks drain exactly once, and a failed drain blocks compaction and is reported honestly.
 - [ ] **SCHED-05**: Compaction runs unattended once per eligible closed interval, idempotently, after confirmed drain. A no-op interval counts as success, and a single maintenance lease prevents duplicate launchers.
 - [ ] **SYMB-01**: `_control/registry.json` is the single symbol authority containing exactly the 19 approved equities. Unsolicited and out-of-scope symbols are rejected at the callback boundary and cannot be added through the UI.
-- [ ] **CO-01**: Tests are dispositioned retain / retarget / delete with a one-line reason each, and the retained offline suite passes with no required xfails.
-- [ ] **CO-02**: Reference cleanup covers code and current user-facing docs; `.planning/` archives are left intact.
-- [ ] **CO-03**: One performance measurement is recorded on the reference workload and compared honestly against the Phase 46 baseline. No threshold re-tuning to force a pass.
-- [ ] **CO-04**: The milestone closes with one completion report and **stops** — no new phases, audits, or follow-up programme.
+- [ ] **CO-01**: Tests are dispositioned retain / retarget / delete with a one-line reason each; the retained offline suite passes with no required xfails.
+- [ ] **CO-02**: Candle behaviour is verified unchanged against the Phase 46 baseline — the query engine was not modified.
+- [ ] **CO-03**: The milestone closes with one completion report and **stops** — no new phases, audits, or follow-up programme.
 
 ---
 
@@ -73,12 +62,11 @@
 
 | Item | Reason |
 |---|---|
-| 24-hour endurance run | Waived in v4.3 by owner decision; not revived here. |
-| Hosted CI log verification | Requires external credentials; not a product requirement. |
-| Replay feature work, durable spool, benchmark campaigns | Not required by this refactor. |
+| Removing the DuckDB **library** / reimplementing resampling in PyArrow | Considered and rejected by owner 2026-10-05. `reader.py`, `compaction.py`, `replay.py` unmodified. |
+| 24-hour endurance run, hosted CI log verification | Waived in v4.3; not revived. |
 | Postgres / SQLite migration | Rejected — Parquet stays. |
 | Editing `.planning/` historical archives | Falsifying past audit records is not permitted. |
-| Agent deletion or archival of the owner's `.duckdb` files | Owner action only, after Phase 46 confirmation. |
+| Agent deletion or archival of the owner's `.duckdb` files | Owner action only, after Phase 46. |
 
 ---
 
@@ -86,61 +74,40 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BASE-01 | Phase 46 | Pending |
-| MIG-01 | Phase 46 | Pending |
-| MIG-02 | Phase 46 | Pending |
-| MIG-03 | Phase 46 | Pending |
-| READ-01 | Phase 47 | Pending |
-| READ-02 | Phase 47 | Pending |
-| READ-03 | Phase 47 | Pending |
-| READ-04 | Phase 47 | Pending |
-| READ-05 | Phase 47 | Pending |
-| CAND-01 | Phase 48 | Pending |
-| CAND-02 | Phase 48 | Pending |
-| VER-01 | Phase 48 | Pending |
-| VER-02 | Phase 48 | Pending |
-| VER-03 | Phase 48 | Pending |
-| DASH-01 | Phase 49 | Pending |
-| DASH-02 | Phase 49 | Pending |
-| DASH-03 | Phase 49 | Pending |
-| DASH-04 | Phase 49 | Pending |
-| CONT-01 | Phase 49 | Pending |
-| CONT-02 | Phase 49 | Pending |
-| RMV-01 | Phase 50 | Pending |
-| RMV-02 | Phase 50 | Pending |
-| RMV-03 | Phase 50 | Pending |
-| RMV-04 | Phase 50 | Pending |
-| RMV-05 | Phase 50 | Pending |
-| GAP-01 | Phase 50 | Pending |
-| GAP-02 | Phase 50 | Pending |
-| SCHED-01 | Phase 51 | Pending |
-| SCHED-02 | Phase 51 | Pending |
-| SCHED-03 | Phase 51 | Pending |
-| SCHED-04 | Phase 51 | Pending |
-| SCHED-05 | Phase 51 | Pending |
-| SYMB-01 | Phase 51 | Pending |
-| CO-01 | Phase 51 | Pending |
-| CO-02 | Phase 51 | Pending |
-| CO-03 | Phase 51 | Pending |
-| CO-04 | Phase 51 | Pending |
+| BASE-01 | 46 | Pending |
+| MIG-01 | 46 | Pending |
+| MIG-02 | 46 | Pending |
+| MIG-03 | 46 | Pending |
+| STOR-01 | 47 | Pending |
+| STOR-02 | 47 | Pending |
+| STOR-03 | 47 | Pending |
+| STOR-04 | 47 | Pending |
+| STOR-05 | 47 | Pending |
+| DASH-01 | 47 | Pending |
+| DASH-02 | 47 | Pending |
+| DASH-03 | 47 | Pending |
+| GAP-01 | 47 | Pending |
+| GAP-02 | 47 | Pending |
+| RMV-01 | 48 | Pending |
+| RMV-02 | 48 | Pending |
+| RMV-03 | 48 | Pending |
+| RMV-04 | 48 | Pending |
+| RMV-05 | 48 | Pending |
+| RMV-06 | 48 | Pending |
+| RMV-07 | 48 | Pending |
+| SCHED-01 | 49 | Pending |
+| SCHED-02 | 49 | Pending |
+| SCHED-03 | 49 | Pending |
+| SCHED-04 | 49 | Pending |
+| SCHED-05 | 49 | Pending |
+| SYMB-01 | 49 | Pending |
+| CO-01 | 49 | Pending |
+| CO-02 | 49 | Pending |
+| CO-03 | 49 | Pending |
 
-**Coverage:**
-- Total v5.0 requirements: 37
-- Mapped to phases: 37
-- Unmapped: 0 ✓
-
----
-
-## Open Gates (owner decisions carried from the plan)
-
-| Gate | Question | Status |
-|---|---|---|
-| G1 | Does Repo B read these files through DuckDB today? | **Open** — confirm before Phase 49 |
-| G2 | Accept that candle computation moves out of DuckDB, with any latency change reported honestly? | **Open** |
-| G3 | Accept that legacy `.duckdb` files become unreadable by this application after Phase 50? | **Open** |
-| G4 | Confirm deletion of `historical.duckdb` **and** `streaming.duckdb` by the owner after Phase 46? | **Open** |
+**Coverage:** 30 requirements, 30 mapped, 0 unmapped ✓
 
 ---
 
 *Requirements defined: 2026-10-05*
-*Derived from: `PLAN-MILESTONE-5.0.md` (workstreams W0–W10)*
+*Derived from: `PLAN-MILESTONE-5.0.md` (Option A — Parquet-only storage, DuckDB retained as query engine)*

@@ -9,7 +9,7 @@
 - ✅ **v4.1 Partitioned Parquet Lake Deep Testing & Hardening** — Phases 22–27 (shipped 2026-10-03)
 - ✅ **v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (closed 2026-10-04)
 - ✅ **v4.3 Final Tick-Lake Implementation and Verification** — Phases 37–43 (44–45 waived; closed 2026-10-05)
-- 🟡 **v5.0 DuckDB-Free Tick-Only Parquet** — Phases 46–51 (in progress)
+- 🟡 **v5.0 Parquet-Only Storage (DuckDB retained as query engine)** — Phases 46–49 (in progress)
 
 ## Phases
 
@@ -115,91 +115,73 @@ Archive: [milestones/v4.3-ROADMAP.md](milestones/v4.3-ROADMAP.md) · [milestones
 
 ---
 
-### 🟡 v5.0 DuckDB-Free Tick-Only Parquet (In Progress)
+### 🟡 v5.0 Parquet-Only Storage (DuckDB retained as query engine) (In Progress)
 
-**Milestone Goal:** Reduce the system to one storage format, one query engine, and one data type — ticks in Parquet, read with PyArrow. DuckDB is removed entirely, including as the analytical engine. Ingestion is restricted to 04:00–20:00 ET for the 19 approved equity symbols, with compaction running unattended in the closed window.
+**Milestone Goal:** Remove DuckDB as **storage**. No `.duckdb` files exist; all persisted market data is Parquet ticks. DuckDB remains as the in-memory query engine reading those files.
+
+**Scope decision (owner, 2026-10-05):** the larger alternative — removing the DuckDB library and reimplementing resampling in PyArrow — was considered and **rejected**. Accordingly `src/storage/reader.py`, `compaction.py` and `replay.py` are **not modified** by this milestone.
 
 **Source plan:** [`PLAN-MILESTONE-5.0.md`](../PLAN-MILESTONE-5.0.md)
 
-**⚠ Hard sequencing constraint:** the legacy tick migration must complete and verify (Phase 46) **before** any DuckDB removal (Phase 50). The migration tool uses DuckDB to read the legacy source file.
+**⚠ Hard sequencing constraint:** the legacy tick migration must be verified (Phase 46) **before** any `.duckdb` file is deleted. The migration tool uses DuckDB to read the legacy source. The agent never copies, exports, archives or deletes the owner's database files.
 
 #### Execution Flowchart
 
 ```mermaid
 flowchart TD
-    P46["Phase 46: Baseline + Legacy Migration Verify (HARD GATE)"] --> P47["Phase 47: PyArrow Reader Core"]
-    P47 --> P48["Phase 48: Arrow Resampling + Multiset Verification"]
-    P48 --> P49["Phase 49: Dashboard, Analytics + Reader Contract"]
-    P49 --> P50["Phase 50: Removal + Databento Rewire"]
-    P50 --> P51["Phase 51: Schedule, Unattended Compaction, Closure"]
+    P46["Phase 46: Baseline + Legacy Migration Verify (HARD GATE, owner machine)"] --> P47["Phase 47: Rewire Off the Disk Databases"]
+    P47 --> P48["Phase 48: Remove Bar Subsystem + Dead Providers"]
+    P48 --> P49["Phase 49: Schedule, Off-Hours Compaction, Closure"]
 ```
 
-#### Phase 46: Baseline Capture & Legacy Tick Migration Verification
+#### Phase 46: Baseline & Legacy Tick Migration Verification
 
-**Goal:** Record the reference behaviour the PyArrow implementation must match, and complete + verify the legacy tick migration while DuckDB is still present.
-**Depends on:** Nothing (entry phase)
+**Goal:** Record the reference candle behaviour, and complete + verify the legacy tick migration while the legacy file still exists.
+**Depends on:** Nothing (entry phase). **Runs on the owner's machine** — this checkout has no `data/` directory.
 **Requirements:** [BASE-01, MIG-01, MIG-02, MIG-03]
 **Success criteria:**
-1. A single recorded baseline exists — candle edge-case matrix (DST, ties, duplicates, nulls) plus query/tape latency.
-2. Migration completes with `verify-published` and `audit-lake` clean, reconciled per symbol and per date.
-3. Re-running over an overlapping scope publishes no duplicate rows.
-4. Owner confirmation is recorded before any DuckDB removal.
+1. Lake candle output recorded once as the reference.
+2. Migration completes with `verify-published` and `audit-lake` clean, reconciled per symbol and date.
+3. Re-running over an overlapping scope publishes no duplicates.
+4. Owner confirms, then deletes both `.duckdb` files.
 
-#### Phase 47: PyArrow Reader Core
+#### Phase 47: Rewire Off the Disk Databases
 
-**Goal:** Reimplement `TickLakeReader` on PyArrow with an identical public API and identical error semantics.
+**Goal:** Make normal runtime unable to open a disk-backed DuckDB database, with the lake as the only source for ticks, symbols and dashboard reads.
 **Depends on:** Phase 46
-**Requirements:** [READ-01, READ-02, READ-03, READ-04, READ-05]
+**Requirements:** [STOR-01, STOR-02, STOR-03, STOR-04, STOR-05, DASH-01, DASH-02, DASH-03, GAP-01, GAP-02]
 **Success criteria:**
-1. No DuckDB import in the reader module; all public method names and return shapes preserved.
-2. Partition pruning and structured lake errors unchanged; no silent fallback.
-3. Duplicate multiplicity, null volume and `(timestamp, ingest_id)` ordering preserved.
-4. Memory bounded per symbol/day partition.
+1. No runtime path opens or creates a disk-backed DuckDB database; a startup regression proves it.
+2. `runner.py` is lake-only — the DuckDB writer fallback is removed, not disabled.
+3. Symbols come from `_control/registry.json`.
+4. Dashboard, analytics and integrity read the lake; the in-memory helper survives relocation.
+5. Databento gap-fill publishes to the lake and respects maintenance fences.
 
-#### Phase 48: Arrow Resampling & Multiset Verification
+#### Phase 48: Remove the Bar Subsystem & Dead Providers
 
-**Goal:** Replace `time_bucket` / `arg_min` / `arg_max` resampling and `EXCEPT ALL` reconciliation with Arrow and Counter equivalents that match the oracle exactly.
+**Goal:** Delete everything whose only purpose was 1-minute bars, and clean the surviving surface.
 **Depends on:** Phase 47
-**Requirements:** [CAND-01, CAND-02, VER-01, VER-02, VER-03]
+**Requirements:** [RMV-01, RMV-02, RMV-03, RMV-04, RMV-05, RMV-06, RMV-07]
 **Success criteria:**
-1. Candle output identical to the Phase 46 baseline across the full edge-case matrix.
-2. Deterministic open/close tie-break proven by test.
-3. Multiset equivalence preserves multiplicity, float precision and nulls; a mismatch blocks compaction replacement.
+1. No reference to either `.duckdb` file remains in code or current docs.
+2. Bar pipeline, providers, Discord, harvester job and dead tools removed.
+3. `yfinance` and `polygon-api-client` gone; **`duckdb` stays**.
+4. Owner deletes both `.duckdb` files.
+5. `.planning/` archives untouched.
 
-#### Phase 49: Dashboard, Analytics & Reader Contract
+#### Phase 49: Schedule, Off-Hours Compaction & Closure
 
-**Goal:** Serve retained dashboard routes from the PyArrow reader, remove bar-era surfaces, and publish a pyarrow-only reader contract.
+**Goal:** Enforce 04:00–20:00 ET ingestion, run compaction unattended in the closed interval, restrict the registry to 19 symbols, and close.
 **Depends on:** Phase 48
-**Requirements:** [DASH-01, DASH-02, DASH-03, DASH-04, CONT-01, CONT-02]
+**Requirements:** [SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SYMB-01, CO-01, CO-02, CO-03]
 **Success criteria:**
-1. `/api/historical/*` and frontend callers removed; retained tick routes served from the lake.
-2. Charts render tick-derived candles, with an honest empty state before capture history.
-3. Contract examples execute in an isolated subprocess with zero `src` imports.
-4. Repo B's consumption path is confirmed (gate G1).
-
-#### Phase 50: Removal
-
-**Goal:** Delete DuckDB, the bar subsystem and dead providers; rewire Databento gap-fill into the lake.
-**Depends on:** Phases 46–49
-**Requirements:** [RMV-01, RMV-02, RMV-03, RMV-04, RMV-05, GAP-01, GAP-02]
-**Success criteria:**
-1. `grep -r duckdb` returns nothing across code and requirements.
-2. No code path can open or create a disk-backed DuckDB database.
-3. Databento publishes to the lake, reads `_control/registry.json`, and respects maintenance fences.
-4. Owner deletes both `.duckdb` files; the agent never copies, exports or deletes them.
-
-#### Phase 51: Schedule, Maintenance & Closure
-
-**Goal:** Enforce the 04:00–20:00 ET window, run compaction unattended in the closed interval, and close the milestone.
-**Depends on:** Phase 50
-**Requirements:** [SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SYMB-01, CO-01, CO-02, CO-03, CO-04]
-**Success criteria:**
-1. Eligibility computed in `America/New_York` with DST correctness and an injectable clock.
-2. Supervisor lifecycle states; no provider activity outside the window; intentional stop is not a crash.
+1. Eligibility computed in `America/New_York` with an injectable clock; DST-correct.
+2. Supervisor lifecycle states; no provider activity outside the window; an intentional stop is not a crash.
 3. Admission stops at 20:00, accepted ticks drain exactly once, a failed drain blocks compaction and is reported.
 4. Compaction is idempotent per closed interval under a single maintenance lease.
-5. Registry holds exactly the 19 approved symbols; out-of-scope symbols are rejected.
-6. One completion report; the milestone stops.
+5. Registry holds exactly the 19 approved symbols; out-of-scope symbols rejected.
+6. Candle behaviour verified unchanged against the Phase 46 baseline.
+7. One completion report; the milestone stops.
 
 ---
 
@@ -210,11 +192,9 @@ flowchart TD
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 46. Baseline & Legacy Migration Verification | v5.0 | 0/TBD | Not started | - |
-| 47. PyArrow Reader Core | v5.0 | 0/TBD | Not started | - |
-| 48. Arrow Resampling & Multiset Verification | v5.0 | 0/TBD | Not started | - |
-| 49. Dashboard, Analytics & Reader Contract | v5.0 | 0/TBD | Not started | - |
-| 50. Removal + Databento Rewire | v5.0 | 0/TBD | Not started | - |
-| 51. Schedule, Maintenance & Closure | v5.0 | 0/TBD | Not started | - |
+| 47. Rewire Off the Disk Databases | v5.0 | 0/TBD | Not started | - |
+| 48. Remove Bar Subsystem & Dead Providers | v5.0 | 0/TBD | Not started | - |
+| 49. Schedule, Off-Hours Compaction & Closure | v5.0 | 0/TBD | Not started | - |
 
 ---
 
@@ -224,13 +204,13 @@ v4.3 backlog items are archived with that milestone. Active backlog for v5.0:
 
 | Candidate | Disposition | Phase |
 |-----------|-------------|-------|
-| Verify legacy tick migration before any DuckDB removal | **Required (gate)** | 46 |
-| PyArrow reader + candle resampling parity with baseline | **Required** | 47–48 |
-| Multiset verification replacing `EXCEPT ALL` | **Required** | 48 |
-| Dashboard/analytics migration off DuckDB | **Required** | 49 |
-| Repo B consumption-path confirmation | **Decision (G1)** | 49 |
-| Databento gap-fill rewired to the Parquet lake | **Required** | 50 |
-| Owner deletion of `historical.duckdb` + `streaming.duckdb` | **Owner action** | 50 |
-| 04:00–20:00 ET schedule + unattended off-hours compaction | **Required** | 51 |
+| Verify legacy tick migration before any `.duckdb` deletion | **Required (gate)** | 46 |
+| Runner lake-only; remove DuckDB writer fallback | **Required** | 47 |
+| Dashboard, analytics, integrity off the disk databases | **Required** | 47 |
+| Databento gap-fill rewired to the Parquet lake | **Required** | 47 |
+| Bar subsystem, dead providers, Discord removal | **Required** | 48 |
+| Owner deletion of `historical.duckdb` + `streaming.duckdb` | **Owner action** | 48 |
+| 04:00–20:00 ET schedule + unattended off-hours compaction | **Required** | 49 |
+| Removing the DuckDB library / PyArrow resampling | **Out of scope** (owner-rejected) | — |
 | 24-hour endurance run, hosted CI log verification | **Out of scope** (waived in v4.3) | — |
 | Postgres / SQLite migration | **Out of scope** (rejected) | — |

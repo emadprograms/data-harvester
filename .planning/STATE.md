@@ -35,22 +35,21 @@ Progress: [░░░░░░░░░░] 0%
 
 ### Decisions
 
-**Milestone v5.0 (active):**
-- **DuckDB is removed entirely** — not only as a store, but as the analytical engine (owner instruction, 2026-10-05). Query paths move to PyArrow.
-- **Phases 46–51** define the work; phase numbering continues from v4.3 (no reset).
-- **Hard sequencing constraint:** the legacy tick migration must complete and verify (Phase 46) before any DuckDB removal (Phase 50). The migration tool uses DuckDB to read the legacy source file.
-- **Data sources:** Capital.com for live ticks; Databento for occasional gap repair, writing into the same Parquet lake. All other providers (Massive/Polygon, Yahoo, Binance) and Discord notifications are removed with the bar subsystem.
+**Milestone v5.0 (active) — Parquet-only storage:**
+- **DuckDB is removed as storage, not as an engine** (owner decision, 2026-10-05). No `.duckdb` files may exist; DuckDB stays in `requirements.txt` and continues to read Parquet in memory.
+- **Rejected alternative:** deleting the DuckDB library and reimplementing resampling in PyArrow. Owner chose the smaller option. `reader.py`, `compaction.py`, `replay.py` are **out of scope for modification**.
+- **Phases 46–49.** Numbering continues from v4.3 (no reset).
+- **Hard sequencing constraint:** legacy tick migration must complete and verify (Phase 46) before any `.duckdb` deletion (Phase 48). Phase 46 runs on the owner's machine — this checkout has no `data/` directory.
+- **Owner actions only:** the agent never copies, exports, archives or deletes the owner's `.duckdb` files.
+- **Data sources:** Capital.com for live ticks; Databento for gap repair, writing into the lake. Massive/Polygon, Yahoo, Binance and Discord are removed with the bar subsystem.
 - **Symbols:** exactly 19 approved equities — AAPL, ADBE, AMD, AMZN, APP, AVGO, BABA, GOOGL, META, MSFT, MU, NDAQ, NVDA, ORCL, PANW, QCOM, SHOP, TSLA, TSM. `_control/registry.json` is the single authority.
-- **Schedule:** ingestion 04:00–20:00 ET (Mon–Fri, no exchange calendar); compaction unattended in the closed interval.
-- **Baseline rule:** one recorded measurement, compared honestly. No threshold re-tuning to force a pass.
-- **Stop rule:** one completion report, then the milestone stops. No new phases, audits, or follow-up programme.
-- **Open gates:** G1 (Repo B consumption path), G2 (accept candle computation leaving DuckDB), G3 (legacy files become unreadable by this application), G4 (owner deletes both `.duckdb` files after Phase 46).
+- **Schedule:** ingestion 04:00–20:00 ET (Mon–Fri); compaction unattended in the closed interval.
+- **Stop rule:** one completion report, then the milestone stops. No new phases or follow-up programme.
 
 **v4.3 outcomes (closed 2026-10-05, archived):**
-- Phases 37–43 delivered: fail-closed release validator; migration coverage ledger (idempotent re-runs); provenance-scoped verification plus whole-lake audit; reader fail-fast with no legacy fallback; durability barrier crash matrix; capacity monitoring and offline compaction with journal/drain/lineage; bounded replay iterator with cursor resumption; corrected benchmark harness.
+- Phases 37–43 delivered: fail-closed release validator; migration coverage ledger; provenance-scoped verification plus whole-lake audit; reader fail-fast with no legacy fallback; durability barrier crash matrix; capacity monitoring and offline compaction; bounded replay iterator; corrected benchmark harness.
 - Phases 44–45 **waived by owner** — no capability added; both require external infrastructure.
-- **Honest limitation:** the Phase 43 writer-CPU gate (`>= 50%` vs legacy) was **not met** (measured `−14.4%`); `reports/benchmarks/pass2_qualification_report.json` records `"overall_passed": false`. It is recorded as a measured characterization, not a pass. The 1M/10M scale claim was not re-run after remediation.
-- Durability boundary: the RAM-only window is lossy on a kill; documented, not hidden.
+- **Honest limitation:** the Phase 43 writer-CPU gate (`>= 50%` vs legacy) was **not met** (measured `−14.4%`); `reports/benchmarks/pass2_qualification_report.json` records `"overall_passed": false`. Recorded as a measured characterization, not a pass. The 1M/10M scale claim was not re-run.
 
 ### Pending Todos
 
