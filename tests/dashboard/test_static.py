@@ -67,7 +67,7 @@ def test_serve_static_css(static_server):
     ("chart.js", "initStreamingChart"),
     ("tables.js", "renderStreamingSymbolsTable"),
     ("telemetry.js", "fetchStreamTape"),
-    ("harvester.js", "triggerHarvestRun"),
+    ("symbols.js", "handleAddSymbol"),
     ("app.js", "DOMContentLoaded"),
 ])
 def test_serve_static_js_modules(static_server, js_module, expected_symbol):

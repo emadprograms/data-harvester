@@ -130,7 +130,6 @@ global.showToast = () => {{}};
 global.fetchStreamingSymbols = () => {{}};
 global.fetchStreamStatus = () => {{}};
 global.fetchStreamTape = () => {{}};
-global.pollHarvesterLogs = () => {{}};
 global.fetchMarketSession = () => {{}};
 global.fetchSystemHealth = () => {{}};
 global.fetchSymbolsCoverage = () => {{}};

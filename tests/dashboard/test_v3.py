@@ -6,7 +6,6 @@ Covers:
 - GET /api/symbols/coverage metadata, bar counts, and sources
 - GET /api/stream/tape and GET /api/stream/status
 - GET /api/market/session US Eastern market clock and session boundaries
-- POST /api/harvester/run, GET /api/harvester/status, and GET /api/harvester/logs
 - Context-aware integrity audits with dynamic date range discovery
 - Static HTML serving for index.html
 """
@@ -25,7 +24,6 @@ from src.dashboard.analytics import (
     get_stream_status,
     get_market_session_info,
 )
-from src.dashboard.harvester_job import HarvesterJobManager
 
 
 @pytest.fixture(scope="module")
@@ -151,17 +149,6 @@ class TestDashboardRestEndpoints:
         assert status == 200
         assert "phase_label" in data
 
-    def test_endpoint_harvester_status(self, dashboard_server):
-        status, data = http_get(f"{dashboard_server}/api/harvester/status")
-        assert status == 200
-        assert data["status"] in ["IDLE", "RUNNING", "COMPLETED", "FAILED"]
-
-    def test_endpoint_harvester_logs(self, dashboard_server):
-        status, data = http_get(f"{dashboard_server}/api/harvester/logs")
-        assert status == 200
-        assert "logs" in data
-        assert isinstance(data["logs"], list)
-
     def test_endpoint_integrity_with_symbol(self, dashboard_server):
         status, data = http_get(f"{dashboard_server}/api/integrity?symbol=SPY")
         assert status == 200
@@ -170,12 +157,3 @@ class TestDashboardRestEndpoints:
         assert "overall_passed" in data
 
 
-class TestHarvesterJobManager:
-    def test_job_manager_status(self):
-        mgr = HarvesterJobManager()
-        st = mgr.get_status()
-        assert st["status"] == "IDLE"
-        assert st["job_id"] is None
-        assert st["log_count"] == 0
-        logs = mgr.get_all_logs()
-        assert isinstance(logs, list)

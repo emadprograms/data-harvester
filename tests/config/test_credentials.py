@@ -3,7 +3,7 @@ Tests for src/credentials.py — Verify local .env credential loading and parsin
 """
 import os
 from unittest.mock import patch
-from src.credentials import get_capital_credentials, get_massive_keys, get_discord_webhook_url
+from src.credentials import get_capital_credentials, get_discord_webhook_url
 
 
 class TestCredentials:
@@ -36,25 +36,6 @@ class TestCredentials:
             assert creds["api_key"] is None
             assert creds["identifier"] is None
             assert creds["password"] is None
-
-    def test_get_massive_keys_multiple(self):
-        with patch.dict(os.environ, {
-            "MASSIVE_API_KEYS": "key1, key2 , key3"
-        }, clear=True):
-            keys = get_massive_keys()
-            assert keys == ["key1", "key2", "key3"]
-
-    def test_get_massive_keys_single(self):
-        with patch.dict(os.environ, {
-            "MASSIVE_API_KEY": "single_key"
-        }, clear=True):
-            keys = get_massive_keys()
-            assert keys == ["single_key"]
-
-    def test_get_massive_keys_empty(self):
-        with patch.dict(os.environ, {}, clear=True):
-            keys = get_massive_keys()
-            assert keys == []
 
     def test_get_discord_webhook_url(self):
         with patch.dict(os.environ, {
@@ -97,39 +78,4 @@ class TestCredentials:
             assert session is None
 
         capital_mod._CAPITAL_SESSION = None
-
-    @patch("src.api.massive.RESTClient")
-    def test_massive_provider_initialization_with_keys(self, mock_rest_client):
-        """MassiveProvider initializes client pool from env keys and round-robins."""
-        from src.api.massive import MassiveProvider
-        from unittest.mock import MagicMock
-
-        logger = MagicMock()
-        with patch.dict(os.environ, {
-            "MASSIVE_API_KEYS": "key_alpha, key_beta"
-        }, clear=True):
-            provider = MassiveProvider(logger)
-            assert len(provider.api_keys) == 2
-            assert len(provider.clients) == 2
-            
-            # Test round-robin
-            c1 = provider._get_next_client()
-            c2 = provider._get_next_client()
-            c3 = provider._get_next_client()
-            assert c1 == provider.clients[0]
-            assert c2 == provider.clients[1]
-            assert c3 == provider.clients[0]
-
-    def test_massive_provider_no_keys_logs_warning(self):
-        """MassiveProvider logs warning and has empty clients when no keys exist."""
-        from src.api.massive import MassiveProvider
-        from unittest.mock import MagicMock
-
-        logger = MagicMock()
-        with patch.dict(os.environ, {}, clear=True):
-            provider = MassiveProvider(logger)
-            assert provider.api_keys == []
-            assert provider.clients == []
-            assert provider._get_next_client() is None
-            assert any("No Massive API keys found" in str(c) for c in logger.log.call_args_list)
 

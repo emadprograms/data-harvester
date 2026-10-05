@@ -120,20 +120,6 @@ def test_api_dedicated_candles_endpoints(api_test_server):
     assert data_s.get("database") == "streaming"
 
 
-def test_api_harvester_status_and_logs(api_test_server):
-    """GET /api/harvester/status and /api/harvester/logs return manager telemetry."""
-    resp_st = requests.get(f"{api_test_server}/api/harvester/status")
-    assert resp_st.status_code == 200
-    data_st = resp_st.json()
-    assert "status" in data_st
-
-    resp_lg = requests.get(f"{api_test_server}/api/harvester/logs")
-    assert resp_lg.status_code == 200
-    data_lg = resp_lg.json()
-    assert "logs" in data_lg
-    assert isinstance(data_lg["logs"], list)
-
-
 def test_api_symbols_post_missing_field_400(api_test_server):
     """POST /api/symbols with missing display_name returns 400 Bad Request."""
     resp = requests.post(f"{api_test_server}/api/symbols", json={"capital_ticker": "ABC"})

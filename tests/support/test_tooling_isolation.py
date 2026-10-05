@@ -180,66 +180,6 @@ def test_spawned_processes_receive_explicit_isolated_configuration(tmp_path, pro
     )
 
 
-def test_benchmark_baseline_subprocess_rejects_unsafe_destination(tmp_path, production_shaped_env):
-    """VALD-01: tools/benchmark_baseline.py rejects output targeting protected roots."""
-    before = snapshot_tree(production_shaped_env)
-    unsafe_out = production_shaped_env / "leak_report.json"
-
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(PROJECT_ROOT)
-    env["DATA_HARVESTER_PROTECTED_ROOTS"] = str(production_shaped_env)
-
-    proc = subprocess.run(
-        [
-            sys.executable,
-            "tools/benchmark_baseline.py",
-            "--ticks", "10",
-            "--lag-ticks", "10",
-            "--query-iterations", "1",
-            "--output", str(unsafe_out),
-        ],
-        cwd=PROJECT_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert proc.returncode != 0
-    assert "SAFETY REFUSAL" in proc.stderr
-    assert not unsafe_out.exists()
-    assert snapshot_tree(production_shaped_env) == before
-
-
-def test_benchmark_baseline_subprocess_rejects_symlink_alias(tmp_path, production_shaped_env):
-    """VALD-01: tools/benchmark_baseline.py detects and rejects symlink aliases to protected paths."""
-    before = snapshot_tree(production_shaped_env)
-    symlink_dir = tmp_path / "symlink_to_prod"
-    symlink_dir.symlink_to(production_shaped_env, target_is_directory=True)
-    unsafe_out = symlink_dir / "symlink_report.json"
-
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(PROJECT_ROOT)
-    env["DATA_HARVESTER_PROTECTED_ROOTS"] = str(production_shaped_env)
-
-    proc = subprocess.run(
-        [
-            sys.executable,
-            "tools/benchmark_baseline.py",
-            "--ticks", "10",
-            "--lag-ticks", "10",
-            "--query-iterations", "1",
-            "--output", str(unsafe_out),
-        ],
-        cwd=PROJECT_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert proc.returncode != 0
-    assert "SAFETY REFUSAL" in proc.stderr
-    assert not (production_shaped_env / "symlink_report.json").exists()
-    assert snapshot_tree(production_shaped_env) == before
-
-
 def test_validate_concurrency_subprocess_rejects_unsafe_lake_root(tmp_path, production_shaped_env):
     """VALD-01: tools/validate_concurrency.py rejects lake roots resolving to protected paths."""
     before = snapshot_tree(production_shaped_env)

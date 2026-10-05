@@ -26,7 +26,7 @@ See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 
 Phase: 46 — Rewire Off the Disk Databases
 Plan: — (planning)
-Status: Phase 46 in progress — DASH-01..03, STOR-01/02/04, GAP-01/02 and BASE-01 done; STOR-03/05 remain
+Status: Phase 47 in progress — RMV-02/03/04/07/08/09 done; RMV-01/06 remain, plus STOR-03/05 carried from Phase 46
 Last activity: 2026-10-05 — Milestone v5.0 started; v4.3 closed with a documented waiver of phases 44–45.
 
 Progress: [░░░░░░░░░░] 0%
@@ -71,7 +71,7 @@ Progress: [░░░░░░░░░░] 0%
 ## Session Continuity
 
 Last session: 2026-10-05
-Stopped at: GAP-01/02 closed — Databento publishes into the lake through the product writer, reads its scope from `_control/registry.json`, checks backfill state against the lake, and `databento==0.86.0` is declared. The dashboard renders one Parquet-only view and `src/dashboard/server.py` imports no `src.database` module. `tests/dashboard` 86 passed; spectrum+dashboard+planning+docs 168 passed.
+Stopped at: the bar era is deleted — harvest CLI, bar providers, harvester job, dead tools and the replay subsystem are gone; Discord is transport-only. Guarded by `tests/test_bar_era_removal.py` (17 tests). The dashboard renders one Parquet-only view and `src/dashboard/server.py` imports no `src.database` module. `tests/dashboard` 86 passed; spectrum+dashboard+planning+docs 168 passed.
 Resume file: PLAN-MILESTONE-5.0.md
 
 ## Operator Next Steps
