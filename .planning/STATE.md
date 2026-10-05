@@ -20,13 +20,13 @@ progress:
 See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 
 **Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage.
-**Current focus:** Phase 46: Baseline Capture & Legacy Tick Migration Verification
+**Current focus:** Phase 46: Rewire Off the Disk Databases (test-driven)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: — (not yet planned)
-Status: Ready to plan and execute Phase 46
+Phase: 46 — Rewire Off the Disk Databases
+Plan: — (planning)
+Status: Ready to execute Phase 46
 Last activity: 2026-10-05 — Milestone v5.0 started; v4.3 closed with a documented waiver of phases 44–45.
 
 Progress: [░░░░░░░░░░] 0%
@@ -35,11 +35,13 @@ Progress: [░░░░░░░░░░] 0%
 
 ### Decisions
 
+**Working method (owner directive, 2026-10-05):** every phase is test-driven — research, write failing tests, implement, verify, re-implement and re-verify on failure. A phase is not complete until its tests pass.
+
 **Milestone v5.0 (active) — Parquet-only storage:**
 - **DuckDB is removed as storage, not as an engine** (owner decision, 2026-10-05). No `.duckdb` files may exist; DuckDB stays in `requirements.txt` and continues to read Parquet in memory.
 - **Rejected alternative:** deleting the DuckDB library and reimplementing resampling in PyArrow. Owner chose the smaller option. `reader.py`, `compaction.py`, `replay.py` are **out of scope for modification**.
-- **Phases 46–49.** Numbering continues from v4.3 (no reset).
-- **Hard sequencing constraint:** legacy tick migration must complete and verify (Phase 46) before any `.duckdb` deletion (Phase 48). Phase 46 runs on the owner's machine — this checkout has no `data/` directory.
+- **Phases 46–49, numbered in execution order (renumbered 2026-10-05).** The former Phase 46 (migration gate) is now Phase 49; the former Phase 47 (rewiring) is now Phase 46. Code phases 46-48 run in this checkout; the owner-machine gate runs last.
+- **Sequencing:** code phases 46-48 need no `data/` directory. The legacy migration verify and the deletion both happen in Phase 49, on the owner's machine, at the end.
 - **Owner actions only:** the agent never copies, exports, archives or deletes the owner's `.duckdb` files.
 - **Data sources:** Capital.com for live ticks; Databento for gap repair, writing into the lake. Massive/Polygon, Yahoo, Binance and Discord are removed with the bar subsystem.
 - **Symbols:** exactly 19 approved equities — AAPL, ADBE, AMD, AMZN, APP, AVGO, BABA, GOOGL, META, MSFT, MU, NDAQ, NVDA, ORCL, PANW, QCOM, SHOP, TSLA, TSM. `_control/registry.json` is the single authority.
@@ -49,7 +51,7 @@ Progress: [░░░░░░░░░░] 0%
 - **Platform: macOS only (owner, 2026-10-05):** the streamer runs on macOS. Build the launchd scheduler; remove or mark the Windows scripts unsupported.
 - **Schedule: weekdays only (owner, 2026-10-05):** Mon-Fri, 04:00-20:00 ET. No exchange calendar - holidays simply produce no ticks.
 - **Governing principle - maximum declutter (owner, 2026-10-05):** reduce repo clutter as much as possible. Where a choice exists between keeping something "just in case" and removing it, remove it. The dashboard becomes a single Parquet-only view; the ~2 years of bar history is permanently dropped rather than retained; unused subsystems are deleted rather than left dormant.
-- **No retention period for the legacy databases:** `historical.duckdb` and `streaming.duckdb` are deleted immediately after Phase 46 verification. The owner accepted permanent, irrecoverable loss of the bar history.
+- **No retention period for the legacy databases:** `historical.duckdb` and `streaming.duckdb` are deleted immediately after Phase 49 verification. The owner accepted permanent, irrecoverable loss of the bar history.
 - **Stop rule:** one completion report, then the milestone stops. No new phases or follow-up programme.
 
 **v4.3 outcomes (closed 2026-10-05, archived):**
@@ -59,19 +61,20 @@ Progress: [░░░░░░░░░░] 0%
 
 ### Pending Todos
 
-- Plan and execute Phase 46 (baseline capture + legacy tick migration verification).
+- Execute Phase 46 test-driven: research, write failing tests, implement, verify.
 
 ### Blockers/Concerns
 
-- **Legacy file access:** Phase 46 must run on the owner's machine, where `data/streaming.duckdb` and the lake live — this checkout has no data directory.
-- **Repo B contract:** gate G1 must be answered before Phase 49 lands the pyarrow-only contract.
+- **Legacy file access:** only Phase 49 needs the owner's machine; Phases 46-48 run entirely in this checkout.
+- **Repo B contract:** resolved 2026-10-05 — consumers read the Parquet `ticks/` tree with their own duckdb or pyarrow. Only a consumer of the legacy `.duckdb` files themselves would be affected, and none is known.
 
 ## Session Continuity
 
 Last session: 2026-10-05
-Stopped at: Milestone v5.0 initialized; ready to plan Phase 46.
+Stopped at: Phase order restructured for test-driven execution; ready to run Phase 46.
 Resume file: PLAN-MILESTONE-5.0.md
 
 ## Operator Next Steps
 
-- `/gsd-plan-phase 46` to break down the first phase.
+- Begin Phase 46 (rewire off the disk databases), test-driven.
+- Phase 49 (final gate + deletion) runs later, on the owner's machine.

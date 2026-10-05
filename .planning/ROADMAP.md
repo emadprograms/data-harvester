@@ -9,7 +9,7 @@
 - ✅ **v4.1 Partitioned Parquet Lake Deep Testing & Hardening** — Phases 22–27 (shipped 2026-10-03)
 - ✅ **v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (closed 2026-10-04)
 - ✅ **v4.3 Final Tick-Lake Implementation and Verification** — Phases 37–43 (44–45 waived; closed 2026-10-05)
-- 🟡 **v5.0 Parquet-Only Storage (DuckDB retained as query engine)** — Phases 46–49 (in progress)
+- 🟡 **v5.0 Parquet-Only Storage (DuckDB retained as query engine)** — Phases 46–49 (in progress; order = number)
 
 ## Phases
 
@@ -129,73 +129,79 @@ Archive: [milestones/v4.3-ROADMAP.md](milestones/v4.3-ROADMAP.md) · [milestones
 
 ```mermaid
 flowchart TD
-    P46["Phase 46: Baseline + Legacy Migration Verify (HARD GATE, owner machine)"] --> P47["Phase 47: Rewire Off the Disk Databases"]
-    P47 --> P48["Phase 48: Remove Bar Subsystem + Dead Providers"]
-    P48 --> P49["Phase 49: Schedule, Off-Hours Compaction, Closure"]
+    P46["Phase 46: Rewire Off the Disk Databases (TDD)"] --> P47["Phase 47: Remove Bar Subsystem + Dead Providers"]
+    P47 --> P48["Phase 48: Schedule, Compaction, Notifications"]
+    P48 --> P49["Phase 49: Final Gate - verify, delete, close (owner machine)"]
 ```
 
-#### Phase 46: Baseline & Legacy Tick Migration Verification
+**Working method (owner directive, 2026-10-05): test-driven.** Every phase: research -> write failing tests -> implement -> verify -> re-implement and re-verify on failure. A phase is complete only when its tests pass.
 
-**Goal:** Record the reference candle behaviour, and complete + verify the legacy tick migration while the legacy file still exists.
-**Depends on:** Nothing (entry phase). **Runs on the owner's machine** — this checkout has no `data/` directory.
-**Requirements:** [BASE-01, MIG-01, MIG-02, MIG-03]
+**Ordering note (2026-10-05):** phases were renumbered so numbers run in execution order. The former Phase 46 (migration gate) is now **Phase 49**; the former Phase 47 (rewiring) is now **Phase 46**. Code phases run first because they need no owner machine and no `data/` directory.
+
+#### Phase 46: Rewire Off the Disk Databases
+
+**Goal:** Capture the reference candle behaviour first, then make normal runtime unable to open a disk-backed DuckDB database, with the lake as the only source for ticks, symbols and dashboard reads.
+**Depends on:** Nothing (entry phase). Runs entirely in this checkout.
+**Requirements:** [BASE-01, STOR-01, STOR-02, STOR-03, STOR-04, STOR-05, DASH-01, DASH-02, DASH-03, GAP-01, GAP-02]
 **Success criteria:**
-1. Lake candle output recorded once as the reference.
-2. Migration completes with `verify-published` and `audit-lake` clean, reconciled per symbol and date.
-3. Re-running over an overlapping scope publishes no duplicates.
-4. Owner confirms, then deletes both `.duckdb` files.
+1. Lake candle output is recorded once as the reference **before** any code change (BASE-01).
+2. No runtime path opens or creates a disk-backed DuckDB database; a startup regression proves it.
+3. `runner.py` is lake-only - the DuckDB writer fallback is removed, not merely disabled.
+4. Symbols come from `_control/registry.json`.
+5. Dashboard, analytics and integrity read the lake; the in-memory helper survives relocation.
+6. Databento gap-fill publishes to the lake and respects maintenance fences.
 
-#### Phase 47: Rewire Off the Disk Databases
-
-**Goal:** Make normal runtime unable to open a disk-backed DuckDB database, with the lake as the only source for ticks, symbols and dashboard reads.
-**Depends on:** Phase 46
-**Requirements:** [STOR-01, STOR-02, STOR-03, STOR-04, STOR-05, DASH-01, DASH-02, DASH-03, GAP-01, GAP-02]
-**Success criteria:**
-1. No runtime path opens or creates a disk-backed DuckDB database; a startup regression proves it.
-2. `runner.py` is lake-only — the DuckDB writer fallback is removed, not disabled.
-3. Symbols come from `_control/registry.json`.
-4. Dashboard, analytics and integrity read the lake; the in-memory helper survives relocation.
-5. Databento gap-fill publishes to the lake and respects maintenance fences.
-
-#### Phase 48: Remove the Bar Subsystem & Dead Providers
+#### Phase 47: Remove the Bar Subsystem & Dead Providers
 
 **Goal:** Delete everything whose only purpose was 1-minute bars or an unrequested feature, and clean the surviving surface.
-**Depends on:** Phase 47
-**Requirements:** [RMV-01, RMV-02, RMV-03, RMV-04, RMV-05, RMV-06, RMV-07, RMV-08, RMV-09]
+**Depends on:** Phase 46
+**Requirements:** [RMV-01, RMV-02, RMV-03, RMV-04, RMV-06, RMV-07, RMV-08, RMV-09]
 **Success criteria:**
 1. No reference to either `.duckdb` file remains in code or current docs.
 2. Bar pipeline, providers, harvester job, dead tools and the unused replay subsystem removed; `discord.py` rewritten for streamer notifications (not deleted).
 3. `yfinance` and `polygon-api-client` gone; **`duckdb` stays**.
-4. Owner deletes both `.duckdb` files immediately after verification - no retention period.
-5. `.planning/` archives untouched.
+4. `.planning/` archives untouched.
 
-#### Phase 49: Schedule, Off-Hours Compaction & Closure
+> RMV-05 (owner deletion of the two `.duckdb` files) lives in Phase 49 with the final gate.
 
-**Goal:** Enforce 04:00–20:00 ET ingestion, run compaction unattended in the closed interval, restrict the registry to 19 symbols, and close.
-**Depends on:** Phase 48
-**Requirements:** [SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SYMB-01, NOTIF-01, CO-01, CO-02, CO-03]
+#### Phase 48: Schedule, Off-Hours Compaction, Notifications & Test Disposition
+
+**Goal:** Enforce 04:00-20:00 ET weekday ingestion, run compaction unattended in the closed interval, restrict the registry to 19 symbols, notify, and disposition the test suite.
+**Depends on:** Phase 47
+**Requirements:** [SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SYMB-01, NOTIF-01, CO-01, CO-02]
 **Success criteria:**
-1. Eligibility computed in `America/New_York` with an injectable clock; DST-correct.
+1. Eligibility computed in `America/New_York` with an injectable clock; DST-correct; weekdays only.
 2. Supervisor lifecycle states; no provider activity outside the window; an intentional stop is not a crash.
 3. Admission stops at 20:00, accepted ticks drain exactly once, a failed drain blocks compaction and is reported.
 4. Compaction is idempotent per closed interval under a single maintenance lease.
-5. Registry holds exactly the 19 approved symbols; out-of-scope symbols rejected.
-6. Candle behaviour verified unchanged against the Phase 46 baseline.
-7. Discord notifications fire for session start/stop, start failure, restart and maintenance failure.
-7. One completion report; the milestone stops.
+5. Registry holds exactly the 19 approved symbols; out-of-scope symbols rejected at the callback boundary.
+6. Discord notifications fire for session start/stop, **failed start**, restart and maintenance failure.
+7. Every surviving test is dispositioned retain/retarget/delete with a reason; the offline suite passes.
+8. Candle behaviour verified unchanged against the Phase 46 baseline.
+
+#### Phase 49: Final Gate, Deletion & Closure
+
+**Goal:** Verify the lake holds what the legacy tick store held, delete both `.duckdb` files, and close the milestone.
+**Depends on:** Phase 48. **Runs on the owner's machine** - this checkout has no `data/` directory.
+**Requirements:** [MIG-01, MIG-02, MIG-03, RMV-05, CO-03]
+**Success criteria:**
+1. Legacy tick source migrated with `verify-published` and `audit-lake` clean, reconciled per symbol and date.
+2. Re-running over an overlapping or broader scope publishes no duplicate rows.
+3. Owner confirms, then deletes both `.duckdb` files - no retention period.
+4. One completion report; the milestone stops.
 
 ---
 
 ## Progress
 
-**Completed milestones:** v1.0 4/4 plans · v2.0 5/5 · v3.0 5/5 · v4.0 7/7 · v4.1 6/6 · v4.2 7/9 · v4.3 7/9 (phases 44–45 waived; closed 2026-10-05).
+**Completed milestones:** v1.0 4/4 plans · v2.0 5/5 · v3.0 5/5 · v4.0 7/7 · v4.1 6/6 · v4.2 7/9 · v4.3 7/9 (phases 44-45 waived; closed 2026-10-05).
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 46. Baseline & Legacy Migration Verification | v5.0 | 0/TBD | Not started | - |
-| 47. Rewire Off the Disk Databases | v5.0 | 0/TBD | Not started | - |
-| 48. Remove Bar Subsystem & Dead Providers | v5.0 | 0/TBD | Not started | - |
-| 49. Schedule, Off-Hours Compaction & Closure | v5.0 | 0/TBD | Not started | - |
+| 46. Rewire Off the Disk Databases | v5.0 | 0/TBD | Not started | - |
+| 47. Remove Bar Subsystem & Dead Providers | v5.0 | 0/TBD | Not started | - |
+| 48. Schedule, Compaction, Notifications & Test Disposition | v5.0 | 0/TBD | Not started | - |
+| 49. Final Gate, Deletion & Closure (owner machine) | v5.0 | 0/TBD | Not started | - |
 
 ---
 
@@ -205,16 +211,16 @@ v4.3 backlog items are archived with that milestone. Active backlog for v5.0:
 
 | Candidate | Disposition | Phase |
 |-----------|-------------|-------|
-| Verify legacy tick migration before any `.duckdb` deletion | **Required (gate)** | 46 |
-| Runner lake-only; remove DuckDB writer fallback | **Required** | 47 |
-| Dashboard, analytics, integrity off the disk databases | **Required** | 47 |
-| Databento gap-fill rewired to the Parquet lake | **Required** | 47 |
-| Bar subsystem, dead providers, Discord removal | **Required** | 48 |
-| Unused replay subsystem removal (`replay.py`, exports, reader methods, tests) | **Required** | 48 |
-| Discord rewired to streamer events (bar-era functions removed) | **Required** | 48-49 |
-| Owner deletion of `historical.duckdb` + `streaming.duckdb` (no retention period) | **Owner action** | 48 |
-| Single Parquet-only dashboard (Historical view deleted) | **Required** | 47 |
-| 04:00–20:00 ET schedule + unattended off-hours compaction | **Required** | 49 |
+| Verify legacy tick migration before any `.duckdb` deletion | **Required (gate)** | 49 |
+| Runner lake-only; remove DuckDB writer fallback | **Required** | 46 |
+| Dashboard, analytics, integrity off the disk databases | **Required** | 46 |
+| Databento gap-fill rewired to the Parquet lake | **Required** | 46 |
+| Bar subsystem and dead providers removed; Discord rewritten (not removed) | **Required** | 47 |
+| Unused replay subsystem removal (`replay.py`, exports, reader methods, tests) | **Required** | 47 |
+| Discord rewired to streamer events (bar-era functions removed) | **Required** | 47-48 |
+| Owner deletion of `historical.duckdb` + `streaming.duckdb` (no retention period) | **Owner action** | 49 |
+| Single Parquet-only dashboard (Historical view deleted) | **Required** | 46 |
+| 04:00–20:00 ET weekday schedule + unattended off-hours compaction | **Required** | 48 |
 | Removing the DuckDB library / PyArrow resampling | **Out of scope** (owner-rejected) | — |
 | 24-hour endurance run, hosted CI log verification | **Out of scope** (waived in v4.3) | — |
 | Postgres / SQLite migration | **Out of scope** (rejected) | — |
