@@ -39,7 +39,7 @@ Progress: [███████░░░] 75% (code phases 46–48 of 46–49; 
 
 **Milestone v5.0 (active) — Parquet-only storage:**
 - **DuckDB is removed as storage, not as an engine** (owner decision, 2026-10-05). No `.duckdb` files may exist; DuckDB stays in `requirements.txt` and continues to read Parquet in memory.
-- **Rejected alternative:** deleting the DuckDB library and reimplementing resampling in PyArrow. Owner chose the smaller option. `reader.py`, `compaction.py`, `replay.py` are **out of scope for modification**.
+- **Rejected alternative:** deleting the DuckDB library and reimplementing resampling in PyArrow. Owner chose the smaller option. `reader.py` and `compaction.py` are **out of scope for modification**; `replay.py` was deleted later in Phase 47 (see below).
 - **Phases 46–49, numbered in execution order (renumbered 2026-10-05).** The former Phase 46 (migration gate) is now Phase 49; the former Phase 47 (rewiring) is now Phase 46. Code phases 46-48 run in this checkout; the owner-machine gate runs last.
 - **Sequencing:** code phases 46-48 need no `data/` directory. The legacy migration verify and the deletion both happen in Phase 49, on the owner's machine, at the end.
 - **Owner actions only:** the agent never copies, exports, archives or deletes the owner's `.duckdb` files.

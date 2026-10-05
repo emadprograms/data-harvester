@@ -12,7 +12,7 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 
 **Goal:** Remove DuckDB as **storage**. No `.duckdb` files exist; every persisted market datum is a Parquet tick. DuckDB remains as the in-memory query engine reading those files.
 
-**Scope decision (owner, 2026-10-05):** the larger alternative — deleting the DuckDB library and reimplementing resampling in PyArrow — was considered and **rejected**. `src/storage/reader.py`, `compaction.py` and `replay.py` are therefore **not modified** by this milestone.
+**Scope decision (owner, 2026-10-05):** the larger alternative — deleting the DuckDB library and reimplementing resampling in PyArrow — was considered and **rejected**. `src/storage/reader.py` and `compaction.py` are therefore **not modified** by this milestone; `src/storage/replay.py` was deleted in Phase 47 (RMV-08).
 
 **End state:**
 - `historical.duckdb` and `streaming.duckdb` deleted by the owner; no code path can open or create a disk-backed DuckDB database.
