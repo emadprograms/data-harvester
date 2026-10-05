@@ -51,9 +51,8 @@ import pytest
 import requests
 from bs4 import BeautifulSoup
 
-from src.database.connection import DuckDBClient
-from src.database.schema import init_streaming_db
 from src.dashboard.server import create_dashboard_server
+from tests.support.lake_population import create_lake, publish_minutes, publish_rows
 
 try:
     from src.dashboard.analytics import get_streaming_continuity_analysis, get_streaming_candles
@@ -76,65 +75,6 @@ MONITORED_19_SYMBOLS = [
 # ============================================================================
 # Helpers & Fixtures
 # ============================================================================
-
-def create_in_memory_streaming_db() -> DuckDBClient:
-    """Creates an in-memory DuckDB client initialized with streaming schema & 19 symbols."""
-    client = DuckDBClient(":memory:", read_only=False)
-    init_streaming_db(client)
-    return client
-
-
-def populate_extended_session_ticks(
-    client: DuckDBClient,
-    session_date: date,
-    symbol: str = "NVDA",
-    include_pre_market: bool = True,
-    include_regular: bool = True,
-    include_after_hours: bool = True,
-    include_overnight: bool = True,
-    base_price: float = 120.0,
-):
-    """
-    Populates ticks across pre-market (04:00-09:29 ET), regular (09:30-16:00 ET),
-    after-hours (16:01-20:00 ET), and overnight (20:01-03:59 ET) for session_date.
-    Timestamps are converted from America/New_York to UTC for storage.
-    """
-    rows = []
-
-    def add_tick(hour: int, minute: int, session_tag: str = "REG"):
-        dt_et = datetime(session_date.year, session_date.month, session_date.day, hour, minute, tzinfo=ET)
-        dt_utc = dt_et.astimezone(UTC)
-        ts_str = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
-        rows.append((ts_str, symbol, base_price, 10.0, base_price - 0.05, base_price + 0.05, "TEST", session_tag))
-
-    # Pre-market ticks: 04:00, 07:00, 08:30 ET
-    if include_pre_market:
-        add_tick(4, 0, "PRE")
-        add_tick(7, 0, "PRE")
-        add_tick(8, 30, "PRE")
-
-    # Regular market ticks: 09:30 to 16:00 ET
-    if include_regular:
-        curr = datetime(session_date.year, session_date.month, session_date.day, 9, 30, tzinfo=ET)
-        end = datetime(session_date.year, session_date.month, session_date.day, 16, 0, tzinfo=ET)
-        while curr <= end:
-            dt_utc = curr.astimezone(UTC)
-            rows.append((dt_utc.strftime("%Y-%m-%d %H:%M:%S"), symbol, base_price, 10.0, base_price - 0.05, base_price + 0.05, "TEST", "REG"))
-            curr += timedelta(minutes=1)
-
-    # After-hours ticks: 16:30, 18:00, 19:59 ET
-    if include_after_hours:
-        add_tick(16, 30, "POST")
-        add_tick(18, 0, "POST")
-        add_tick(19, 59, "POST")
-
-    # Overnight ticks (outside 04:00-20:00 ET): 21:30 ET and 02:30 ET
-    if include_overnight:
-        add_tick(21, 30, "OVERNIGHT")
-        add_tick(2, 30, "OVERNIGHT")
-
-    if rows:
-        client.executemany("INSERT INTO tick_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
 
 
 @pytest.fixture(scope="module")
@@ -311,7 +251,7 @@ global.fetch = async (url) => {{
 class TestBackendAnalyticsRedesign:
     """Validates backend analytics extensions for streaming continuity & chart redesign."""
 
-    def test_continuity_extended_hours_window(self):
+    def test_continuity_extended_hours_window(self, tmp_path, monkeypatch):
         """
         When calling get_streaming_continuity_analysis(days=5, symbol="NVDA", include_extended=True):
         - The daily window spans 04:00 to 20:00 ET (960 minutes per session day).
@@ -323,82 +263,80 @@ class TestBackendAnalyticsRedesign:
             "get_streaming_continuity_analysis must be implemented in src.dashboard.analytics"
         )
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            # Seed Wednesday 2026-09-23 with extended hours ticks
-            test_date = date(2026, 9, 23)
-            populate_extended_session_ticks(
-                mem_client,
-                session_date=test_date,
-                symbol="NVDA",
-                include_pre_market=True,
-                include_regular=True,
-                include_after_hours=True,
-                include_overnight=True
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        # Seed Friday 2026-09-25 (the newest trading day of its week) with extended hours ticks
+        test_date = date(2026, 9, 25)
+        publish_minutes(
+            lake, test_date, "NVDA",
+            minutes_list=[(hour // 60, hour % 60) for hour in range(4 * 60, 20 * 60)],
+        )
+
+        # Ticks outside the extended window plus a weekend tick must not produce false gaps
+        overnight_utc = datetime(2026, 9, 25, 21, 0, tzinfo=ET).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        sat_utc = datetime(2026, 9, 26, 12, 0, tzinfo=ET).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        publish_rows(lake, [
+            (overnight_utc, "NVDA", 120.0, 5.0, 119.9, 120.1, "TEST", "POST"),
+            (sat_utc, "NVDA", 120.0, 5.0, 119.9, 120.1, "TEST", "WEEKEND"),
+        ])
+
+        # 1. Query WITH include_extended=True
+        res_ext = get_streaming_continuity_analysis(days=1, symbol="NVDA", include_extended=True)
+
+        assert isinstance(res_ext, dict), "Result must be a dict"
+        assert "days" in res_ext and len(res_ext["days"]) > 0, "Result must contain at least 1 day"
+        day_obj = res_ext["days"][0]
+
+        buckets = day_obj.get("buckets", [])
+        # Extended window is 04:00 to 20:00 ET = 16 hours * 60 minutes = 960 minutes
+        assert len(buckets) == 960, (
+            f"Expected 960 minute buckets per session day for extended hours (04:00-20:00 ET), got {len(buckets)}"
+        )
+
+        # Check boundary times
+        assert buckets[0].get("time") == "04:00", f"First bucket in extended hours must be 04:00, got {buckets[0].get('time')}"
+        assert buckets[-1].get("time") == "19:59", f"Last bucket in extended hours must be 19:59, got {buckets[-1].get('time')}"
+
+        # Ticks outside 09:30-16:00 (pre-market 07:00, after-hours 18:00) must be recognized in buckets
+        bucket_0700 = next((b for b in buckets if b.get("time") == "07:00"), None)
+        assert bucket_0700 is not None, "Bucket for 07:00 ET must exist in extended hours"
+        assert bucket_0700.get("active_count", 0) > 0, "Pre-market tick at 07:00 ET must be recognized as active in bucket"
+        assert bucket_0700.get("status") in ["healthy", "active"], f"07:00 bucket status should be healthy, got {bucket_0700.get('status')}"
+
+        bucket_1800 = next((b for b in buckets if b.get("time") == "18:00"), None)
+        assert bucket_1800 is not None, "Bucket for 18:00 ET must exist in extended hours"
+        assert bucket_1800.get("active_count", 0) > 0, "After-hours tick at 18:00 ET must be recognized as active in bucket"
+        assert bucket_1800.get("status") in ["healthy", "active"], f"18:00 bucket status should be healthy, got {bucket_1800.get('status')}"
+
+        # Overnights (20:00 to 04:00 ET) and weekends must NOT trigger false gaps
+        all_gaps = day_obj.get("gaps", []) + res_ext.get("summary", {}).get("gaps", [])
+        for g in all_gaps:
+            g_start_str = g.get("start_str", g.get("start_time", ""))
+            g_end_str = g.get("end_str", g.get("end_time", ""))
+            # If timestamp is full datetime, extract time portion
+            if " " in g_start_str:
+                g_start_str = g_start_str.split(" ")[1][:5]
+            if " " in g_end_str:
+                g_end_str = g_end_str.split(" ")[1][:5]
+
+            # Assert gap does not represent overnight period 20:00 to 04:00
+            assert not ("20:00" <= g_start_str or g_end_str <= "04:00"), (
+                f"False overnight gap detected between 20:00 and 04:00 ET: {g}"
             )
 
-            # Insert a weekend tick (Saturday 2026-09-26 12:00 ET) to verify weekends do not produce gaps
-            sat_utc = datetime(2026, 9, 26, 12, 0, tzinfo=ET).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
-            mem_client.execute("INSERT INTO tick_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                               [sat_utc, "NVDA", 120.0, 5.0, 119.9, 120.1, "TEST", "WEEKEND"])
-
-            # 1. Query WITH include_extended=True
-            res_ext = get_streaming_continuity_analysis(days=1, symbol="NVDA", client=mem_client, include_extended=True)
-
-            assert isinstance(res_ext, dict), "Result must be a dict"
-            assert "days" in res_ext and len(res_ext["days"]) > 0, "Result must contain at least 1 day"
-            day_obj = res_ext["days"][0]
-
-            buckets = day_obj.get("buckets", [])
-            # Extended window is 04:00 to 20:00 ET = 16 hours * 60 minutes = 960 minutes
-            assert len(buckets) == 960, (
-                f"Expected 960 minute buckets per session day for extended hours (04:00-20:00 ET), got {len(buckets)}"
-            )
-
-            # Check boundary times
-            assert buckets[0].get("time") == "04:00", f"First bucket in extended hours must be 04:00, got {buckets[0].get('time')}"
-            assert buckets[-1].get("time") == "19:59", f"Last bucket in extended hours must be 19:59, got {buckets[-1].get('time')}"
-
-            # Ticks outside 09:30-16:00 (pre-market 07:00, after-hours 18:00) must be recognized in buckets
-            bucket_0700 = next((b for b in buckets if b.get("time") == "07:00"), None)
-            assert bucket_0700 is not None, "Bucket for 07:00 ET must exist in extended hours"
-            assert bucket_0700.get("active_count", 0) > 0, "Pre-market tick at 07:00 ET must be recognized as active in bucket"
-            assert bucket_0700.get("status") in ["healthy", "active"], f"07:00 bucket status should be healthy, got {bucket_0700.get('status')}"
-
-            bucket_1800 = next((b for b in buckets if b.get("time") == "18:00"), None)
-            assert bucket_1800 is not None, "Bucket for 18:00 ET must exist in extended hours"
-            assert bucket_1800.get("active_count", 0) > 0, "After-hours tick at 18:00 ET must be recognized as active in bucket"
-            assert bucket_1800.get("status") in ["healthy", "active"], f"18:00 bucket status should be healthy, got {bucket_1800.get('status')}"
-
-            # Overnights (20:00 to 04:00 ET) and weekends must NOT trigger false gaps
-            all_gaps = day_obj.get("gaps", []) + res_ext.get("summary", {}).get("gaps", [])
-            for g in all_gaps:
-                g_start_str = g.get("start_str", g.get("start_time", ""))
-                g_end_str = g.get("end_str", g.get("end_time", ""))
-                # If timestamp is full datetime, extract time portion
-                if " " in g_start_str:
-                    g_start_str = g_start_str.split(" ")[1][:5]
-                if " " in g_end_str:
-                    g_end_str = g_end_str.split(" ")[1][:5]
-
-                # Assert gap does not represent overnight period 20:00 to 04:00
-                assert not ("20:00" <= g_start_str or g_end_str <= "04:00"), (
-                    f"False overnight gap detected between 20:00 and 04:00 ET: {g}"
-                )
-
-            # 2. Query WITHOUT include_extended (default regular hours)
-            res_reg = get_streaming_continuity_analysis(days=1, symbol="NVDA", client=mem_client, include_extended=False)
-            day_reg = res_reg["days"][0]
-            reg_buckets = day_reg.get("buckets", [])
-            assert len(reg_buckets) == 390, (
-                f"Default regular session window must have 390 minute buckets (09:30-16:00 ET), got {len(reg_buckets)}"
-            )
-            assert reg_buckets[0].get("time") == "09:30"
-            assert reg_buckets[-1].get("time") == "15:59"
-        finally:
-            mem_client.close()
-
-    def test_continuity_epoch_contract(self):
+        # 2. Query WITHOUT include_extended (default regular hours)
+        res_reg = get_streaming_continuity_analysis(days=1, symbol="NVDA", include_extended=False)
+        day_reg = res_reg["days"][0]
+        reg_buckets = day_reg.get("buckets", [])
+        assert len(reg_buckets) == 390, (
+            f"Default regular session window must have 390 minute buckets (09:30-16:00 ET), got {len(reg_buckets)}"
+        )
+        assert reg_buckets[0].get("time") == "09:30"
+        assert reg_buckets[-1].get("time") == "15:59"
+    def test_continuity_epoch_contract(self, tmp_path, monkeypatch):
         """
         Asserts that gaps and buckets include exact start_epoch and end_epoch (true UTC epoch seconds)
         to eliminate timezone parsing mismatches in the frontend:
@@ -409,115 +347,107 @@ class TestBackendAnalyticsRedesign:
             "get_streaming_continuity_analysis must be implemented in src.dashboard.analytics"
         )
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            # Seed Wednesday 2026-09-23 with regular session ticks, except a 15m gap from 10:00 to 10:15 ET
-            test_date = date(2026, 9, 23)
-            # Regular session is 09:30 to 16:00 ET
-            curr = datetime(test_date.year, test_date.month, test_date.day, 9, 30, tzinfo=ET)
-            end = datetime(test_date.year, test_date.month, test_date.day, 16, 0, tzinfo=ET)
-            rows = []
-            while curr <= end:
-                curr_time = curr.time()
-                # 15m blackout: 10:00 to 10:15 ET
-                if not (dtime(10, 0) <= curr_time < dtime(10, 15)):
-                    ts_utc = curr.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
-                    rows.append((ts_utc, "NVDA", 120.0, 10.0, 119.9, 120.1, "TEST", "REG"))
-                curr += timedelta(minutes=1)
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
 
-            mem_client.executemany("INSERT INTO tick_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
 
-            res = get_streaming_continuity_analysis(days=1, symbol="NVDA", client=mem_client)
-            assert len(res.get("days", [])) > 0, "Expected at least 1 day in analysis result"
-            day = res["days"][0]
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        # Seed Friday 2026-09-25 (the newest trading day of its week) with regular session
+        # ticks, except a 15m gap from 10:00 to 10:15 ET
+        test_date = date(2026, 9, 25)
+        # Regular session is 09:30 to 16:00 ET with a 15m blackout from 10:00 to 10:15 ET
+        publish_minutes(
+            lake, test_date, "NVDA",
+            minutes_list=[
+                (hour // 60, hour % 60)
+                for hour in range(9 * 60 + 30, 16 * 60 + 1)
+                if not (10 * 60 <= hour < 10 * 60 + 15)
+            ],
+        )
 
-            buckets = day.get("buckets", [])
-            assert len(buckets) > 0, "Day must contain minute buckets"
+        res = get_streaming_continuity_analysis(days=1, symbol="NVDA")
+        assert len(res.get("days", [])) > 0, "Expected at least 1 day in analysis result"
+        day = res["days"][0]
 
-            # Check epoch contract on buckets
-            first_bucket = buckets[0]
-            assert "start_epoch" in first_bucket, "Bucket must contain 'start_epoch' (UTC epoch seconds)"
-            assert "end_epoch" in first_bucket, "Bucket must contain 'end_epoch' (UTC epoch seconds)"
-            assert isinstance(first_bucket["start_epoch"], int), "start_epoch must be an integer"
-            assert isinstance(first_bucket["end_epoch"], int), "end_epoch must be an integer"
-            assert first_bucket["end_epoch"] - first_bucket["start_epoch"] == 60, (
-                f"1-minute bucket end_epoch - start_epoch must equal 60, got {first_bucket['end_epoch'] - first_bucket['start_epoch']}"
-            )
+        buckets = day.get("buckets", [])
+        assert len(buckets) > 0, "Day must contain minute buckets"
 
-            # On 2026-09-23, 09:30 ET is 13:30 UTC -> epoch 1790170200
-            expected_0930_epoch = int(datetime(2026, 9, 23, 13, 30, tzinfo=timezone.utc).timestamp())
-            assert first_bucket["start_epoch"] == expected_0930_epoch, (
-                f"Expected start_epoch {expected_0930_epoch} for 09:30 ET on 2026-09-23, got {first_bucket['start_epoch']}"
-            )
+        # Check epoch contract on buckets
+        first_bucket = buckets[0]
+        assert "start_epoch" in first_bucket, "Bucket must contain 'start_epoch' (UTC epoch seconds)"
+        assert "end_epoch" in first_bucket, "Bucket must contain 'end_epoch' (UTC epoch seconds)"
+        assert isinstance(first_bucket["start_epoch"], int), "start_epoch must be an integer"
+        assert isinstance(first_bucket["end_epoch"], int), "end_epoch must be an integer"
+        assert first_bucket["end_epoch"] - first_bucket["start_epoch"] == 60, (
+            f"1-minute bucket end_epoch - start_epoch must equal 60, got {first_bucket['end_epoch'] - first_bucket['start_epoch']}"
+        )
 
-            # Check epoch contract on gaps
-            gaps = day.get("gaps", [])
-            assert len(gaps) > 0, "Expected at least 1 gap detected for the 10:00-10:15 outage"
-            gap_1000 = next((g for g in gaps if g.get("duration", 0) == 15 or "10:00" in str(g)), gaps[0])
+        # On 2026-09-25, 09:30 ET is 13:30 UTC
+        expected_0930_epoch = int(datetime(2026, 9, 25, 13, 30, tzinfo=timezone.utc).timestamp())
+        assert first_bucket["start_epoch"] == expected_0930_epoch, (
+            f"Expected start_epoch {expected_0930_epoch} for 09:30 ET on 2026-09-25, got {first_bucket['start_epoch']}"
+        )
 
-            assert "start_epoch" in gap_1000, "Gap object must contain 'start_epoch' (UTC epoch seconds)"
-            assert "end_epoch" in gap_1000, "Gap object must contain 'end_epoch' (UTC epoch seconds)"
-            assert isinstance(gap_1000["start_epoch"], int), "Gap start_epoch must be an integer"
-            assert isinstance(gap_1000["end_epoch"], int), "Gap end_epoch must be an integer"
-            assert gap_1000["end_epoch"] > gap_1000["start_epoch"], "Gap end_epoch must be greater than start_epoch"
+        # Check epoch contract on gaps
+        gaps = day.get("gaps", [])
+        assert len(gaps) > 0, "Expected at least 1 gap detected for the 10:00-10:15 outage"
+        gap_1000 = next((g for g in gaps if g.get("duration", 0) == 15 or "10:00" in str(g)), gaps[0])
 
-            duration_mins = gap_1000.get("duration", gap_1000.get("duration_minutes", 15))
-            expected_diff_sec = duration_mins * 60
-            assert (gap_1000["end_epoch"] - gap_1000["start_epoch"]) == expected_diff_sec, (
-                f"Gap duration seconds mismatch: end_epoch - start_epoch = {gap_1000['end_epoch'] - gap_1000['start_epoch']}, expected {expected_diff_sec}"
-            )
+        assert "start_epoch" in gap_1000, "Gap object must contain 'start_epoch' (UTC epoch seconds)"
+        assert "end_epoch" in gap_1000, "Gap object must contain 'end_epoch' (UTC epoch seconds)"
+        assert isinstance(gap_1000["start_epoch"], int), "Gap start_epoch must be an integer"
+        assert isinstance(gap_1000["end_epoch"], int), "Gap end_epoch must be an integer"
+        assert gap_1000["end_epoch"] > gap_1000["start_epoch"], "Gap end_epoch must be greater than start_epoch"
 
-            # 10:00 ET on 2026-09-23 is 14:00 UTC -> epoch 1790172000
-            expected_gap_start = int(datetime(2026, 9, 23, 14, 0, tzinfo=timezone.utc).timestamp())
-            assert gap_1000["start_epoch"] == expected_gap_start, (
-                f"Expected gap start_epoch {expected_gap_start} for 10:00 ET on 2026-09-23, got {gap_1000['start_epoch']}"
-            )
-        finally:
-            mem_client.close()
+        duration_mins = gap_1000.get("duration", gap_1000.get("duration_minutes", 15))
+        expected_diff_sec = duration_mins * 60
+        assert (gap_1000["end_epoch"] - gap_1000["start_epoch"]) == expected_diff_sec, (
+            f"Gap duration seconds mismatch: end_epoch - start_epoch = {gap_1000['end_epoch'] - gap_1000['start_epoch']}, expected {expected_diff_sec}"
+        )
 
-    def test_get_streaming_candles_full_week_limit(self):
+        # 10:00 ET on 2026-09-25 is 14:00 UTC
+        expected_gap_start = int(datetime(2026, 9, 25, 14, 0, tzinfo=timezone.utc).timestamp())
+        assert gap_1000["start_epoch"] == expected_gap_start, (
+            f"Expected gap start_epoch {expected_gap_start} for 10:00 ET on 2026-09-25, got {gap_1000['start_epoch']}"
+        )
+    def test_get_streaming_candles_full_week_limit(self, tmp_path, monkeypatch):
         """
         Asserts get_streaming_candles cleanly returns up to 10,000 candles without error or truncation.
-        Seeds 6,000 1-minute bars across an entire week into an in-memory streaming DuckDB,
+        Seeds 6,000 1-minute bars across an entire week into the tick lake,
         and requests limit=10000.
         """
         assert callable(get_streaming_candles), (
             "get_streaming_candles must be implemented in src.dashboard.analytics"
         )
 
-        mem_client = create_in_memory_streaming_db()
-        try:
-            # Seed 6,000 continuous 1-minute ticks for NVDA
-            base_start = datetime(2026, 9, 21, 4, 0, tzinfo=timezone.utc)
-            rows = []
-            for i in range(6000):
-                tick_time = base_start + timedelta(minutes=i)
-                ts_str = tick_time.strftime("%Y-%m-%d %H:%M:%S")
-                rows.append((ts_str, "NVDA", 120.0 + (i * 0.01), 10.0, 119.9, 120.1, "TEST", "REG"))
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
 
-            mem_client.executemany("INSERT INTO tick_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
 
-            # The disk-database fallback is gone; the client is injected directly.
-            mem_client.close = MagicMock()
-            res = get_streaming_candles(symbol="NVDA", timeframe="1m", limit=10000, client=mem_client)
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        # Seed 6,000 continuous 1-minute ticks for NVDA
+        base_start = datetime(2026, 9, 21, 4, 0, tzinfo=timezone.utc)
+        rows = []
+        for i in range(6000):
+            tick_time = base_start + timedelta(minutes=i)
+            ts_str = tick_time.strftime("%Y-%m-%d %H:%M:%S")
+            rows.append((ts_str, "NVDA", 120.0 + (i * 0.01), 10.0, 119.9, 120.1, "TEST", "REG"))
 
-            assert res.get("error") is None, f"get_streaming_candles returned error: {res.get('error')}"
-            assert res.get("symbol") == "NVDA"
-            assert res.get("database") == "streaming"
-            assert res.get("count") == 6000, (
-                f"Expected 6,000 candles without truncation, got count={res.get('count')}"
-            )
-            candles = res.get("candles", [])
-            assert len(candles) == 6000, f"Expected 6,000 candles in list, got {len(candles)}"
+        publish_rows(lake, rows)
 
-            # Verify ascending chronological order
-            assert candles[0]["time"] < candles[-1]["time"], "Candles must be sorted chronologically ascending"
-        finally:
-            # Restore close method and close client
-            mem_client.close = DuckDBClient.close.__get__(mem_client, DuckDBClient)
-            mem_client.close()
+        res = get_streaming_candles(symbol="NVDA", timeframe="1m", limit=10000)
 
+        assert res.get("error") is None, f"get_streaming_candles returned error: {res.get('error')}"
+        assert res.get("symbol") == "NVDA"
+        assert res.get("database") == "streaming"
+        assert res.get("count") == 6000, (
+            f"Expected 6,000 candles without truncation, got count={res.get('count')}"
+        )
+        candles = res.get("candles", [])
+        assert len(candles) == 6000, f"Expected 6,000 candles in list, got {len(candles)}"
 
+        # Verify ascending chronological order
+        assert candles[0]["time"] < candles[-1]["time"], "Candles must be sorted chronologically ascending"
 # ============================================================================
 # 2. REST API (src/dashboard/server.py)
 # ============================================================================

@@ -38,59 +38,14 @@ from zoneinfo import ZoneInfo
 import pytest
 from bs4 import BeautifulSoup
 
-from src.database.connection import DuckDBClient
-from src.database.schema import init_streaming_db
 from src.dashboard.analytics import get_streaming_candles
+from tests.support.lake_population import create_lake, publish_minutes
 
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
 HTML_PATH = Path(__file__).resolve().parent.parent / "src" / "dashboard" / "static" / "index.html"
 JS_DIR = Path(__file__).resolve().parent.parent / "src" / "dashboard" / "static" / "js"
-
-
-def create_in_memory_streaming_db() -> DuckDBClient:
-    """Creates an in-memory DuckDB client initialized with the streaming schema."""
-    client = DuckDBClient(":memory:", read_only=False)
-    init_streaming_db(client)
-    return client
-
-
-def populate_ticks_at_et(
-    client: DuckDBClient,
-    session_date: date,
-    symbol: str,
-    time_and_counts: list[tuple[int, int, int]],
-    base_price: float = 150.0,
-):
-    """
-    Populates ticks in `tick_data` for specific (hour, minute, count) ET times.
-    Converts America/New_York timestamps to UTC for database storage.
-    """
-    rows = []
-    for hh, mm, count in time_and_counts:
-        dt_et = datetime(session_date.year, session_date.month, session_date.day, hh, mm, 0, tzinfo=ET)
-        dt_utc = dt_et.astimezone(UTC)
-        is_reg = (hh > 9 or (hh == 9 and mm >= 30)) and (hh < 16)
-        is_pre = (hh < 9) or (hh == 9 and mm < 30)
-        session = "REG" if is_reg else ("PRE" if is_pre else "POST")
-        for i in range(count):
-            ts = dt_utc + timedelta(seconds=i)
-            rows.append((
-                ts.strftime("%Y-%m-%d %H:%M:%S"),
-                symbol,
-                base_price,
-                10.0,
-                base_price - 0.05,
-                base_price + 0.05,
-                "TEST_SOURCE",
-                session,
-            ))
-    if rows:
-        client.executemany(
-            "INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
 
 
 def run_js_simulation(test_body_js: str, extra_setup_js: str = "") -> dict:
@@ -308,12 +263,14 @@ class TestStreamingCandlesTickCounts:
     and `session_total_ticks` (requested session hours: extended vs regular).
     """
 
-    def test_get_streaming_candles_returns_day_and_session_ticks(self):
+    def test_get_streaming_candles_returns_day_and_session_ticks(self, tmp_path, monkeypatch):
         """
         Tests with in-memory DuckDB fixture that querying `get_streaming_candles(symbol, date=..., hours=...)`
         returns `day_total_ticks` and `session_total_ticks`.
         """
-        client = create_in_memory_streaming_db()
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+        monkeypatch.setenv("DATA_DIR", str(lake))
         target_date = date(2026, 9, 28)
 
         # Populate ticks for AAPL on 2026-09-28:
@@ -325,9 +282,7 @@ class TestStreamingCandlesTickCounts:
         # Total for full ET day = 5 + 15 + 50 + 20 + 10 = 100 ticks.
         # Extended session (04:00–20:00 ET) = 15 + 50 + 20 = 85 ticks.
         # Regular session (09:30–16:00 ET) = 50 ticks.
-        populate_ticks_at_et(
-            client,
-            target_date,
+        publish_minutes(lake, target_date,
             "AAPL",
             [
                 (2, 30, 5),
@@ -339,29 +294,31 @@ class TestStreamingCandlesTickCounts:
         )
 
         # Also populate ticks on a different day and for another symbol to ensure proper filtering:
-        populate_ticks_at_et(client, date(2026, 9, 29), "AAPL", [(10, 0, 40)])
-        populate_ticks_at_et(client, target_date, "MSFT", [(10, 0, 60)])
+        publish_minutes(lake, date(2026, 9, 29), "AAPL", [(10, 0, 40)])
+        publish_minutes(lake, target_date, "MSFT", [(10, 0, 60)])
 
         # 1. Query extended session
-        res_ext = get_streaming_candles("AAPL", date="2026-09-28", hours="extended", client=client)
+        res_ext = get_streaming_candles("AAPL", date="2026-09-28", hours="extended")
         assert "day_total_ticks" in res_ext, "get_streaming_candles response missing 'day_total_ticks'"
         assert "session_total_ticks" in res_ext, "get_streaming_candles response missing 'session_total_ticks'"
         assert res_ext["day_total_ticks"] == 100, f"Expected 100 day_total_ticks, got {res_ext.get('day_total_ticks')}"
         assert res_ext["session_total_ticks"] == 85, f"Expected 85 session_total_ticks, got {res_ext.get('session_total_ticks')}"
 
         # 2. Query regular session
-        res_reg = get_streaming_candles("AAPL", date="2026-09-28", hours="regular", client=client)
+        res_reg = get_streaming_candles("AAPL", date="2026-09-28", hours="regular")
         assert "day_total_ticks" in res_reg, "get_streaming_candles response missing 'day_total_ticks'"
         assert "session_total_ticks" in res_reg, "get_streaming_candles response missing 'session_total_ticks'"
         assert res_reg["day_total_ticks"] == 100, f"Expected 100 day_total_ticks, got {res_reg.get('day_total_ticks')}"
         assert res_reg["session_total_ticks"] == 50, f"Expected 50 session_total_ticks, got {res_reg.get('session_total_ticks')}"
 
-    def test_get_streaming_candles_zero_ticks_day(self):
+    def test_get_streaming_candles_zero_ticks_day(self, tmp_path, monkeypatch):
         """
         Tests that querying a day with 0 ticks returns `day_total_ticks: 0` and `session_total_ticks: 0`.
         """
-        client = create_in_memory_streaming_db()
-        res_zero = get_streaming_candles("AAPL", date="2026-10-05", hours="extended", client=client)
+        lake = create_lake(tmp_path / "lake", symbols=["NVDA", "AAPL", "MSFT", "SPY", "TEST_SYM", "BOUNDARY_SYM", "CONSISTENCY_SYM", "ADBE", "AMD", "APP", "TSLA"])
+        monkeypatch.setenv("TICK_LAKE_ROOT", str(lake))
+        monkeypatch.setenv("DATA_DIR", str(lake))
+        res_zero = get_streaming_candles("AAPL", date="2026-10-05", hours="extended")
 
         assert "day_total_ticks" in res_zero, "get_streaming_candles response missing 'day_total_ticks'"
         assert "session_total_ticks" in res_zero, "get_streaming_candles response missing 'session_total_ticks'"

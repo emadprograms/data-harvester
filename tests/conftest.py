@@ -51,39 +51,10 @@ from src.utils.write_guard import register_protected_root, unregister_protected_
 from src.config import US_EASTERN, UTC
 
 
-def _patch_all_modules():
-    import src.database.connection as conn_mod
-    conn_mod.DEFAULT_DATA_DIR = _SESSION_TEMP_DIR
-    conn_mod.DEFAULT_HISTORICAL_DB_PATH = os.path.join(_SESSION_TEMP_DIR, "historical.duckdb")
-    conn_mod.DEFAULT_STREAMING_DB_PATH = os.path.join(_SESSION_TEMP_DIR, "streaming.duckdb")
-    conn_mod.LEGACY_MARKET_DATA_PATH = os.path.join(_SESSION_TEMP_DIR, "market_data.duckdb")
-    conn_mod.DEFAULT_DB_PATH = conn_mod.DEFAULT_HISTORICAL_DB_PATH
 
-    for mod_name in (
-        "src.dashboard.server",
-        "src.dashboard.analytics",
-        "src.stream.runner",
-        "src.utils.integrity",
-    ):
-        if mod_name in sys.modules:
-            mod = sys.modules[mod_name]
-            if hasattr(mod, "DEFAULT_DATA_DIR"):
-                setattr(mod, "DEFAULT_DATA_DIR", _SESSION_TEMP_DIR)
-            if hasattr(mod, "DEFAULT_HISTORICAL_DB_PATH"):
-                setattr(mod, "DEFAULT_HISTORICAL_DB_PATH", os.path.join(_SESSION_TEMP_DIR, "historical.duckdb"))
-            if hasattr(mod, "DEFAULT_STREAMING_DB_PATH"):
-                setattr(mod, "DEFAULT_STREAMING_DB_PATH", os.path.join(_SESSION_TEMP_DIR, "streaming.duckdb"))
-            if hasattr(mod, "RELOAD_SIGNAL_FILE"):
-                setattr(mod, "RELOAD_SIGNAL_FILE", os.path.join(_SESSION_TEMP_DIR, ".stream_reload.signal"))
-
-
-_patch_all_modules()
-
-# Initialize session isolated databases with schema tables
-from src.database.schema import init_historical_db, init_streaming_db
+# Initialize the session lake (the only store)
 from src.storage.config import init_tick_lake
-init_historical_db()
-init_streaming_db()
+
 init_tick_lake(_SESSION_LAKE_ROOT)
 
 STANDARD_HISTORICAL_SYMBOLS = [
@@ -94,48 +65,6 @@ STANDARD_HISTORICAL_SYMBOLS = [
 ]
 
 
-def _seed_isolated_session_historical_db():
-    from src.database.connection import get_historical_db_connection
-    client = get_historical_db_connection()
-    if not client:
-        return
-    try:
-        # Category 3: Seed 40 standard symbols into historical_database_symbols
-        for sym in STANDARD_HISTORICAL_SYMBOLS:
-            client.execute(
-                """INSERT OR REPLACE INTO historical_database_symbols 
-                   (display_name, yahoo_ticker, massive_ticker, binance_ticker, capital_ticker) 
-                   VALUES (?, ?, ?, ?, ?)""",
-                [sym, sym, sym, None, sym]
-            )
-
-        # Category 2: Seed synthetic 1-minute candlestick bars for all symbols into minute_data
-        # Reference date: 2026-07-10 (regular NYSE trading session, 09:30 to 11:00 EDT -> 13:30 to 15:00 UTC)
-        base_dt = datetime(2026, 7, 10, 13, 30, 0)
-        bar_rows = []
-        for sym in STANDARD_HISTORICAL_SYMBOLS:
-            bar_count = 90 if sym in ("NVDA", "AAPL", "SPY") else 5
-            base_price = 125.0 if sym == "NVDA" else (220.0 if sym == "AAPL" else (550.0 if sym == "SPY" else 100.0))
-            for i in range(bar_count):
-                ts = base_dt + timedelta(minutes=i)
-                open_p = round(base_price + i * 0.05, 4)
-                high_p = round(open_p + 0.5, 4)
-                low_p = round(open_p - 0.5, 4)
-                close_p = round(open_p + 0.2, 4)
-                volume = round(1000.0 + i * 10.0, 2)
-                bar_rows.append((ts, sym, open_p, high_p, low_p, close_p, volume, "REG", "MASSIVE"))
-
-        client.executemany(
-            """INSERT OR IGNORE INTO minute_data 
-               (timestamp, symbol, open, high, low, close, volume, session, source) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            bar_rows
-        )
-    finally:
-        client.close()
-
-
-_seed_isolated_session_historical_db()
 
 
 # --- v5.0 (Phase 46): equivalent tick-lake population -------------------------
@@ -400,20 +329,6 @@ def guarded_duckdb_connect(*args, **kwargs):
 
 duckdb.connect = guarded_duckdb_connect
 
-from src.database.connection import DuckDBClient
-
-_original_duckdb_client_attach = DuckDBClient.attach
-
-
-def guarded_duckdb_client_attach(self, target_db_path: str, alias: str, read_only: bool = True):
-    if is_protected_path(target_db_path):
-        raise ProductionAccessBlockedError(
-            f"Blocked attach to production database path: {target_db_path}"
-        )
-    return _original_duckdb_client_attach(self, target_db_path, alias, read_only=read_only)
-
-
-DuckDBClient.attach = guarded_duckdb_client_attach
 
 
 # Ensure tests.conftest in sys.modules points to this module
@@ -473,10 +388,6 @@ def pytest_runtest_setup(item):
 
 def pytest_runtest_teardown(item, nextitem):
     setattr(sys, "_pytest_current_test_is_live", False)
-
-
-def pytest_configure(config):
-    _patch_all_modules()
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -547,7 +458,6 @@ def protected_temp_dir(tmp_path):
 def _network_and_path_tracker(request):
     is_live = request.node.get_closest_marker("live") is not None
     setattr(sys, "_pytest_current_test_is_live", is_live)
-    _patch_all_modules()
     try:
         yield
     finally:
