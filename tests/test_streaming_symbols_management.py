@@ -78,7 +78,15 @@ from src.database.operations import (
     get_streaming_database_symbols_from_db,
     get_streaming_symbol_inventory_list,
 )
-from src.dashboard.server import create_dashboard_server, RELOAD_SIGNAL_FILE
+def _reload_signal_path():
+    """Path of the lake's streamer reload signal (the disk-database fallback is gone)."""
+    from src.storage.config import resolve_tick_lake_root
+    from src.storage.registry import SymbolRegistry
+
+    return SymbolRegistry(root=resolve_tick_lake_root()).signal_path
+
+
+from src.dashboard.server import create_dashboard_server
 
 
 # ============================================================================
@@ -477,7 +485,7 @@ class TestRESTAPIStreamingSymbols:
                 f"{api_test_server}/api/streaming/symbols",
                 json={"display_name": test_sym, "capital_ticker": test_sym},
             )
-            assert resp.status_code == 200
+            assert resp.status_code in (200, 201), resp.text
             data = resp.json()
             assert data.get("success") is True
             assert data.get("database") == "streaming"
@@ -488,8 +496,8 @@ class TestRESTAPIStreamingSymbols:
             assert test_sym in names
 
             # Check signal file triggered
-            assert os.path.exists(RELOAD_SIGNAL_FILE), "Streamer reload signal file must be created/touched on symbol add"
-            assert os.path.getmtime(RELOAD_SIGNAL_FILE) >= before_ts
+            assert os.path.exists(_reload_signal_path()), "Streamer reload signal file must be created/touched on symbol add"
+            assert os.path.getmtime(_reload_signal_path()) >= before_ts
         finally:
             requests.delete(f"{api_test_server}/api/streaming/symbols/{test_sym}")
 
@@ -507,7 +515,7 @@ class TestRESTAPIStreamingSymbols:
                 f"{api_test_server}/api/symbols?source=streaming",
                 json={"display_name": test_sym, "capital_ticker": test_sym},
             )
-            assert resp.status_code == 200
+            assert resp.status_code in (200, 201), resp.text
             data = resp.json()
             assert data.get("success") is True
 
@@ -516,108 +524,82 @@ class TestRESTAPIStreamingSymbols:
             names = [s.get("display_name") for s in get_resp.json().get("symbols", [])]
             assert test_sym in names
 
-            assert os.path.exists(RELOAD_SIGNAL_FILE)
-            assert os.path.getmtime(RELOAD_SIGNAL_FILE) >= before_ts
+            assert os.path.exists(_reload_signal_path())
+            assert os.path.getmtime(_reload_signal_path()) >= before_ts
         finally:
             requests.delete(f"{api_test_server}/api/symbols/{test_sym}?source=streaming")
 
-    def test_delete_streaming_symbol_purges_ticks_and_triggers_signal(self, api_test_server):
+    def test_delete_streaming_symbol_fences_and_triggers_signal(self, api_test_server):
         """
         DELETE /api/streaming/symbols/<symbol>:
-        - Deletes symbol from streaming_database_symbols
-        - Completely purges all tick data for that symbol from tick_data
-        - Triggers streamer reload signal file (.stream_reload.signal)
+        - Fences the subscription and marks the symbol PENDING_PURGE
+        - Triggers the streamer reload signal file
         - Returns {"success": True}
+
+        The tick partitions themselves are removed by the compaction purge that
+        follows the fence (see tests/storage/test_compaction.py), not by the
+        HTTP request.
         """
         test_sym = "TEST_API_DEL_PURGE"
-        db_client = get_streaming_db_connection(read_only=False)
         try:
-            # 1. Add symbol and insert tick data
-            add_streaming_symbol_to_db(test_sym, capital_ticker=test_sym, client=db_client)
-            db_client.execute(f"""
-                INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES
-                ('2026-10-01 11:00:00', '{test_sym}', 150.0, 10.0, 149.9, 150.1, 'CAPITAL', 'REG'),
-                ('2026-10-01 11:00:05', '{test_sym}', 150.5, 12.0, 150.4, 150.6, 'CAPITAL', 'REG')
-            """)
-            ticks_before = db_client.execute(
-                "SELECT COUNT(*) FROM tick_data WHERE symbol = ?", [test_sym]
-            ).fetchone()[0]
-            assert ticks_before == 2
+            add_resp = requests.post(
+                f"{api_test_server}/api/streaming/symbols",
+                json={"display_name": test_sym, "capital_ticker": test_sym},
+            )
+            assert add_resp.status_code in (200, 201), add_resp.text
 
-            # 2. Issue DELETE request
             before_ts = time.time() - 0.5
             del_resp = requests.delete(f"{api_test_server}/api/streaming/symbols/{test_sym}")
-            assert del_resp.status_code == 200
+            assert del_resp.status_code == 200, del_resp.text
             del_data = del_resp.json()
             assert del_data.get("success") is True
+            assert del_data.get("status") == "PENDING_PURGE"
 
-            # 3. Verify symbol is removed from streaming registry
-            sym_count = db_client.execute(
-                "SELECT COUNT(*) FROM streaming_database_symbols WHERE display_name = ?", [test_sym]
-            ).fetchone()[0]
-            assert sym_count == 0, "Symbol must be deleted from streaming_database_symbols"
+            entries = {
+                s["display_name"]: s
+                for s in requests.get(f"{api_test_server}/api/streaming/symbols").json()["symbols"]
+            }
+            assert entries[test_sym]["status"] == "PENDING_PURGE"
+            assert entries[test_sym]["active"] is False
 
-            # 4. CRITICAL: Verify all ticks are purged from tick_data
-            ticks_after = db_client.execute(
-                "SELECT COUNT(*) FROM tick_data WHERE symbol = ?", [test_sym]
-            ).fetchone()[0]
-            assert ticks_after == 0, (
-                f"LEFTOVER DATA VIOLATION: DELETE /api/streaming/symbols/{test_sym} left {ticks_after} records in tick_data. "
-                "Deleting a streaming symbol MUST completely clean up and purge its tick data."
-            )
-
-            # 5. Verify reload signal triggered
-            assert os.path.exists(RELOAD_SIGNAL_FILE)
-            assert os.path.getmtime(RELOAD_SIGNAL_FILE) >= before_ts
+            assert os.path.exists(_reload_signal_path())
+            assert os.path.getmtime(_reload_signal_path()) >= before_ts
         finally:
-            # Clean up in case of failure
-            try:
-                db_client.execute("DELETE FROM streaming_database_symbols WHERE display_name = ?", [test_sym])
-                db_client.execute("DELETE FROM tick_data WHERE symbol = ?", [test_sym])
-            except Exception:
-                pass
-            db_client.close()
+            requests.delete(f"{api_test_server}/api/streaming/symbols/{test_sym}")
 
-    def test_delete_symbols_source_streaming_purges_ticks_and_signals(self, api_test_server):
+    def test_delete_symbols_source_streaming_fences_and_signals(self, api_test_server):
         """
         DELETE /api/symbols/<symbol>?source=streaming:
-        - Deletes symbol from streaming_database_symbols
-        - Completely purges all tick data for that symbol from tick_data
-        - Triggers streamer reload signal file (.stream_reload.signal)
+        - Fences the subscription and marks the symbol PENDING_PURGE
+        - Triggers the streamer reload signal file
         - Returns {"success": True}
         """
         test_sym = "TEST_API_DEL_SRC"
-        db_client = get_streaming_db_connection(read_only=False)
         try:
-            add_streaming_symbol_to_db(test_sym, capital_ticker=test_sym, client=db_client)
-            db_client.execute(f"""
-                INSERT INTO tick_data (timestamp, symbol, price, volume, bid, ask, source, session) VALUES
-                ('2026-10-01 11:01:00', '{test_sym}', 75.0, 5.0, 74.9, 75.1, 'CAPITAL', 'REG')
-            """)
+            add_resp = requests.post(
+                f"{api_test_server}/api/symbols?source=streaming",
+                json={"display_name": test_sym, "capital_ticker": test_sym},
+            )
+            assert add_resp.status_code in (200, 201), add_resp.text
 
             before_ts = time.time() - 0.5
             del_resp = requests.delete(f"{api_test_server}/api/symbols/{test_sym}?source=streaming")
-            assert del_resp.status_code == 200
+            assert del_resp.status_code == 200, del_resp.text
             del_data = del_resp.json()
             assert del_data.get("success") is True
+            assert del_data.get("status") == "PENDING_PURGE"
 
-            # Check ticks purged
-            ticks_after = db_client.execute(
-                "SELECT COUNT(*) FROM tick_data WHERE symbol = ?", [test_sym]
-            ).fetchone()[0]
-            assert ticks_after == 0, (
-                f"LEFTOVER DATA VIOLATION: DELETE /api/symbols/{test_sym}?source=streaming left {ticks_after} records in tick_data."
-            )
+            entries = {
+                s["display_name"]: s
+                for s in requests.get(f"{api_test_server}/api/symbols?source=streaming").json()["symbols"]
+            }
+            assert entries[test_sym]["active"] is False
 
-            assert os.path.exists(RELOAD_SIGNAL_FILE)
-            assert os.path.getmtime(RELOAD_SIGNAL_FILE) >= before_ts
+            assert os.path.exists(_reload_signal_path())
+            assert os.path.getmtime(_reload_signal_path()) >= before_ts
         finally:
-            try:
-                db_client.execute("DELETE FROM streaming_database_symbols WHERE display_name = ?", [test_sym])
-                db_client.execute("DELETE FROM tick_data WHERE symbol = ?", [test_sym])
-            except Exception:
-                pass
-            db_client.close()
+            requests.delete(f"{api_test_server}/api/symbols/{test_sym}?source=streaming")
+
 
     def test_api_delete_symbol_preserves_other_symbols_ticks(self, api_test_server):
         """Deleting a symbol via API does not remove tick records of other symbols."""

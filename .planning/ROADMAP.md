@@ -123,7 +123,7 @@ Archive: [milestones/v4.3-ROADMAP.md](milestones/v4.3-ROADMAP.md) · [milestones
 
 **Source plan:** [`PLAN-MILESTONE-5.0.md`](../PLAN-MILESTONE-5.0.md)
 
-**⚠ Hard sequencing constraint:** the legacy tick migration must be verified (Phase 46) **before** any `.duckdb` file is deleted. The migration tool uses DuckDB to read the legacy source. The agent never copies, exports, archives or deletes the owner's database files.
+**⚠ Hard sequencing constraint:** the legacy tick migration must be verified (**Phase 49**) **before** any `.duckdb` file is deleted. The migration tool uses DuckDB to read the legacy source. The agent never copies, exports, archives or deletes the owner's database files.
 
 #### Execution Flowchart
 
