@@ -14,12 +14,6 @@ from zoneinfo import ZoneInfo
 import psutil
 from pandas.tseries.holiday import USFederalHolidayCalendar
 
-from src.database.connection import (
-    get_historical_db_connection,
-    get_streaming_db_connection,
-    DEFAULT_HISTORICAL_DB_PATH,
-    DEFAULT_STREAMING_DB_PATH,
-)
 
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
@@ -159,6 +153,20 @@ def _get_lake_reader():
     return None
 
 
+def _no_disk_database_fallback():
+    """v5.0 removed the disk-database backend; never fall back to one.
+
+    Every lake-first branch in this module used to end by opening a read-only
+    connection to the streaming DuckDB database, so an unavailable lake would
+    silently serve data from disk instead of reporting the problem.
+    """
+    from src.storage.reader import LakeUnavailableError
+
+    raise LakeUnavailableError(
+        "The tick lake is unavailable and v5.0 has no disk-database fallback"
+    )
+
+
 def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None, end: str = None, limit: int = 1000, client=None, date: str = None, hours: str = "extended") -> dict:
     """
     Fetches OHLCV candles resampled on-the-fly exclusively from raw ticks in data/streaming.duckdb.
@@ -206,11 +214,7 @@ def get_streaming_candles(symbol: str, timeframe: str = "1m", start: str = None,
     own_client = False
     s_client = client
     if s_client is None:
-        s_client = get_streaming_db_connection(read_only=True)
-        own_client = True
-
-    if not s_client:
-        return {"error": "Streaming DuckDB unavailable", "candles": [], "count": 0, "database": "streaming"}
+        _no_disk_database_fallback()
 
     try:
         tables = [t[0] for t in s_client.execute("SHOW TABLES").fetchall()]
@@ -469,11 +473,7 @@ def get_stream_tape(symbol: str = None, limit: int = 50, offset: int = 0, client
     offset = max(0, int(offset or 0))
     own_client = False
     if client is None:
-        client = get_streaming_db_connection(read_only=True)
-        own_client = True
-    if not client:
-        return {"ticks": [], "count": 0, "error": "Streaming DB unavailable"}
-
+        _no_disk_database_fallback()
     try:
         tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
         table_name = "tick_data" if "tick_data" in tables else "ticks"
@@ -546,8 +546,7 @@ def get_ticks(symbol: str = None, start: str = None, end: str = None, limit: int
     
     own_client = False
     if client is None:
-        client = get_streaming_db_connection(read_only=True)
-        own_client = True
+        _no_disk_database_fallback()
     if not client:
         return {"ticks": [], "count": 0, "error": "Streaming DB unavailable"}
 
@@ -641,8 +640,7 @@ def get_stream_status(client=None) -> dict:
     # Database tick activity
     own_client = False
     if client is None:
-        client = get_streaming_db_connection(read_only=True)
-        own_client = True
+        _no_disk_database_fallback()
     ticks_total = 0
     latest_ts = None
     seconds_ago = None
@@ -791,13 +789,9 @@ def discover_available_weeks(client=None) -> list[dict]:
 
     own_client = False
     if client is None:
-        client = get_streaming_db_connection(read_only=True)
-        own_client = True
+        _no_disk_database_fallback()
 
     try:
-        if not client:
-            return []
-
         tables = [t[0] for t in client.execute("SHOW TABLES").fetchall()]
         table_name = "tick_data" if "tick_data" in tables else ("ticks" if "ticks" in tables else None)
         if not table_name:
@@ -921,8 +915,7 @@ def get_streaming_continuity_analysis(
 
     own_client = False
     if client is None:
-        client = get_streaming_db_connection(read_only=True)
-        own_client = True
+        _no_disk_database_fallback()
 
     try:
         available_weeks = discover_available_weeks(client=client)

@@ -17,10 +17,10 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 ### Phase 46: Rewire Off the Disk Databases
 
 - [ ] **BASE-01**: The lake's current candle output is recorded once as the reference behaviour **before** any code change, so an accidental change during the refactor is detectable.
-- [ ] **STOR-01**: No code path opens or creates a disk-backed DuckDB database during normal runtime. A startup regression proves it and would fail if one were reintroduced.
+- [x] **STOR-01**: No code path opens or creates a disk-backed DuckDB database during normal runtime. `tests/stream/test_no_disk_db_backend.py` proves it and would fail if one were reintroduced. `src/dashboard/analytics.py` no longer imports `src.database` and its six silent disk fallbacks (`get_streaming_db_connection(read_only=True)`) are gone — an unavailable lake now raises. *Residual:* the file keeps a test-only `client=` injection seam that runs DuckDB SQL against a caller-supplied client; production never passes one, and STOR-05 removes the seam with the legacy tests.
 - [ ] **STOR-02**: `src/stream/runner.py` is lake-only — the DuckDB writer fallback is **removed**, not merely disabled, and `init_streaming_db` / `save_ticks_to_storage` are gone.
 - [ ] **STOR-03**: The streaming symbol inventory is read from `_control/registry.json`; the legacy database lookups are removed.
-- [ ] **STOR-04**: The in-memory connection helper required by `src/utils/integrity.py` survives the `src/database` deletion, relocated to the storage layer.
+- [x] **STOR-04**: Satisfied without a new helper — DASH-03 made `src/utils/integrity.py` open no DuckDB connection of its own; it queries through `TickLakeReader`, which owns the in-memory engine. There is nothing to relocate when `src/database` is deleted.
 - [ ] **STOR-05**: `src/database/{connection,schema,operations}.py` are deleted with every importer resolved.
 - [ ] **DASH-01**: `/api/historical/*` routes and their analytics functions are removed; retained tick routes serve the lake.
 - [ ] **DASH-02**: The dashboard is a **single Parquet-only view**. The Historical Dashboard (nav, chart container, symbol list, source selector, 'Historical DB' stat) is deleted. Charts render tick-derived candles from the lake; dates predating tick capture return an honest empty state and never imply bars were converted.
@@ -77,11 +77,11 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BASE-01 | 46 | Pending |
-| STOR-01 | 46 | Pending |
+| BASE-01 | 46 | Complete |
+| STOR-01 | 46 | Complete |
 | STOR-02 | 46 | Pending |
 | STOR-03 | 46 | Pending |
-| STOR-04 | 46 | Pending |
+| STOR-04 | 46 | Complete |
 | STOR-05 | 46 | Pending |
 | DASH-01 | 46 | Pending |
 | DASH-02 | 46 | Pending |

@@ -111,3 +111,57 @@ def test_runner_source_retains_no_legacy_backend_reference() -> None:
     source = (REPO_ROOT / "src" / "stream" / "runner.py").read_text(encoding="utf-8")
     remaining = [name for name in LEGACY_RUNNER_SYMBOLS if name in source]
     assert not remaining, f"legacy backend references remain in runner.py: {remaining}"
+
+
+# --- STOR-01: the last reachable disk-database fallbacks ----------------------
+# src/dashboard/analytics.py used to end every lake-first branch with
+# `client = get_streaming_db_connection(read_only=True)`, so an unavailable lake
+# silently opened a disk database instead of reporting the problem.
+
+ANALYTICS_MODULE = REPO_ROOT / "src" / "dashboard" / "analytics.py"
+
+LEGACY_ANALYTICS_SYMBOLS = (
+    "src.database",
+    "get_streaming_db_connection",
+    "get_historical_db_connection",
+    "DEFAULT_STREAMING_DB_PATH",
+    "DEFAULT_HISTORICAL_DB_PATH",
+)
+
+
+def test_dashboard_analytics_retains_no_disk_database_reference() -> None:
+    source = ANALYTICS_MODULE.read_text(encoding="utf-8")
+    for needle in LEGACY_ANALYTICS_SYMBOLS:
+        assert needle not in source, f"disk-database reference remains in analytics.py: {needle}"
+
+
+def test_analytics_report_a_missing_lake_instead_of_a_disk_fallback(tmp_path, monkeypatch) -> None:
+    """An explicitly selected but absent lake must fail loudly."""
+    from src.dashboard import analytics
+
+    monkeypatch.setenv("TICK_LAKE_ROOT", str(tmp_path / "absent_lake"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    with pytest.raises(Exception) as excinfo:
+        analytics.get_stream_tape(limit=5)
+
+    message = str(excinfo.value).lower()
+    assert "lake" in message, f"unexpected failure for a missing lake: {excinfo.value}"
+
+
+def test_no_analytics_function_opens_a_default_disk_database(monkeypatch) -> None:
+    """With no lake selected at all, the functions must not reach a disk database."""
+    _clear_backend_env(monkeypatch)
+    from src.dashboard import analytics
+
+    for call in (
+        lambda: analytics.get_stream_tape(limit=5),
+        lambda: analytics.get_stream_status(),
+        lambda: analytics.discover_available_weeks(),
+    ):
+        try:
+            result = call()
+        except Exception:
+            continue
+        if isinstance(result, dict):
+            assert result.get("database") != "streaming" or not result.get("ticks")

@@ -497,23 +497,21 @@ class TestBackendAnalyticsRedesign:
 
             mem_client.executemany("INSERT INTO tick_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
 
-            # Patch get_streaming_db_connection to return mem_client without closing it
+            # The disk-database fallback is gone; the client is injected directly.
             mem_client.close = MagicMock()
-            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client), \
-                 patch("src.dashboard.analytics._get_lake_reader", return_value=None):
-                res = get_streaming_candles(symbol="NVDA", timeframe="1m", limit=10000)
+            res = get_streaming_candles(symbol="NVDA", timeframe="1m", limit=10000, client=mem_client)
 
-                assert res.get("error") is None, f"get_streaming_candles returned error: {res.get('error')}"
-                assert res.get("symbol") == "NVDA"
-                assert res.get("database") == "streaming"
-                assert res.get("count") == 6000, (
-                    f"Expected 6,000 candles without truncation, got count={res.get('count')}"
-                )
-                candles = res.get("candles", [])
-                assert len(candles) == 6000, f"Expected 6,000 candles in list, got {len(candles)}"
+            assert res.get("error") is None, f"get_streaming_candles returned error: {res.get('error')}"
+            assert res.get("symbol") == "NVDA"
+            assert res.get("database") == "streaming"
+            assert res.get("count") == 6000, (
+                f"Expected 6,000 candles without truncation, got count={res.get('count')}"
+            )
+            candles = res.get("candles", [])
+            assert len(candles) == 6000, f"Expected 6,000 candles in list, got {len(candles)}"
 
-                # Verify ascending chronological order
-                assert candles[0]["time"] < candles[-1]["time"], "Candles must be sorted chronologically ascending"
+            # Verify ascending chronological order
+            assert candles[0]["time"] < candles[-1]["time"], "Candles must be sorted chronologically ascending"
         finally:
             # Restore close method and close client
             mem_client.close = DuckDBClient.close.__get__(mem_client, DuckDBClient)

@@ -154,7 +154,10 @@ def test_dashboard_lake_error_does_not_fall_back_to_streaming_duckdb(tmp_path, m
         raise AssertionError("dashboard must surface lake failure rather than query legacy storage")
 
     monkeypatch.setattr(reader_module, "get_tick_lake_reader", corrupt_lake)
-    monkeypatch.setattr(analytics, "get_streaming_db_connection", forbidden_legacy)
+    # v5.0 removed the analytics-side connection helper; the disk-database entry
+    # point still exists until STOR-05 deletes src/database, so trip that instead.
+    assert not hasattr(analytics, "get_streaming_db_connection")
+    monkeypatch.setattr("src.database.connection.get_streaming_db_connection", forbidden_legacy)
 
     with pytest.raises(ValueError, match="lake metadata is corrupt"):
         analytics.get_streaming_candles("AAPL")

@@ -278,21 +278,12 @@ def test_backend_selection_fails_closed_when_the_lake_is_explicit(monkeypatch):
     monkeypatch.setenv(TICK_LAKE_ROOT_ENV, missing_root)
     monkeypatch.delenv(DATA_DIR_ENV, raising=False)
 
-    opened = []
-    real_connect = analytics.get_streaming_db_connection
-
-    def spy(*args, **kwargs):
-        opened.append(True)
-        return real_connect(*args, **kwargs)
-
-    monkeypatch.setattr(analytics, "get_streaming_db_connection", spy)
+    # v5.0 removed the disk-database backend outright: there is no legacy
+    # connection helper left for the lake to fall back to.
+    assert not hasattr(analytics, "get_streaming_db_connection")
 
     with pytest.raises(Exception):
         analytics.get_stream_tape(symbol="AAPL", limit=5)
-
-    assert opened == [], (
-        "an explicitly selected lake fell back to the legacy streaming database"
-    )
 
 
 def test_autodetection_still_uses_the_lake_when_it_is_populated(contract_lake, docs_data_dir, monkeypatch):
@@ -301,17 +292,9 @@ def test_autodetection_still_uses_the_lake_when_it_is_populated(contract_lake, d
     # No explicit selection: the lake must be autodetected under DATA_DIR.
     monkeypatch.setenv(DATA_DIR_ENV, str(docs_data_dir))
 
-    opened = []
-    real_connect = analytics.get_streaming_db_connection
-
-    def spy(*args, **kwargs):
-        opened.append(True)
-        return real_connect(*args, **kwargs)
-
-    monkeypatch.setattr(analytics, "get_streaming_db_connection", spy)
+    assert not hasattr(analytics, "get_streaming_db_connection")
 
     result = analytics.get_stream_tape(symbol="AAPL", limit=5)
-    assert opened == [], "the populated lake was skipped in favour of the legacy database"
     assert result is not None
 
 
