@@ -53,11 +53,16 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 
 ### Phase 49: Final Gate, Deletion & Closure *(owner's machine)*
 
-- [ ] **MIG-01**: The legacy tick source is migrated into the Parquet lake with `plan → export → verify → verify-published → audit-lake` all completing, and row counts reconciled per symbol and per date.
-- [ ] **MIG-02**: Migration is confirmed **before** any `.duckdb` file is deleted. The agent never copies, exports, archives or deletes the owner's database files — deletion is an owner action.
-- [ ] **MIG-03**: Re-running the migration over an overlapping or broader scope publishes no duplicate rows (source-coverage ledger).
-- [ ] **RMV-05**: The owner deletes `data/historical.duckdb` and `data/streaming.duckdb` **immediately after Phase 49 verification** — no retention or confirmation period. Permanent loss of the bar history was accepted by the owner on 2026-10-05.
-- [ ] **CO-03**: The milestone closes with one completion report and **stops** — no new phases, audits, or follow-up programme.
+**Runbook: [`docs/operations/phase49_migration_runbook.md`](../docs/operations/phase49_migration_runbook.md)** —
+rehearsal-tested from the repo root on 2026-10-05 against a synthetic legacy database
+(360 rows / 3 symbols / 3 dates): all six stages passed, a re-run published nothing new,
+a tampered published file was refused, and `--purge` retired an out-of-scope symbol.
+
+- [ ] **MIG-01**: The legacy tick source is migrated into the Parquet lake with `plan → export → verify → publish → verify-published → audit-lake` all completing, and row counts reconciled per symbol and per date (the verifier's two-way `EXCEPT ALL` runs per partition and records any difference with its `symbol`/`date`). Runbook §1 carries the acceptance table.
+- [ ] **MIG-02**: Migration is confirmed **before** any `.duckdb` file is deleted — the gate is a `PASSED` verification plus `verify-published` and `audit-lake` both exiting `0`. The agent never copies, exports, archives or deletes the owner's database files — deletion is an owner action. Runbook §1 → §3.
+- [ ] **MIG-03**: Re-running the migration over an overlapping or broader scope publishes no duplicate rows (the `_migration/coverage.json` ledger marks each partition `COVERED` with its source fingerprint and per-file SHA-256; a changed source or published file stops the run with `MigrationError` instead of duplicating). Runbook §2.
+- [ ] **RMV-05**: The owner deletes `data/historical.duckdb` and `data/streaming.duckdb` **immediately after Phase 49 verification** — no retention or confirmation period. Permanent loss of the bar history was accepted by the owner on 2026-10-05. Runbook §3.
+- [ ] **CO-03**: The milestone closes with one completion report and **stops** — no new phases, audits, or follow-up programme. Runbook §5 records the values the report must contain.
 
 ---
 

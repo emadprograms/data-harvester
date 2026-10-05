@@ -209,11 +209,15 @@ Options: `--ticks` (default 6000), `--lake-root`, `--dashboard-requests` (defaul
 ### 🔍 Lake Audit & Environment Preflight
 ```bash
 # Audit lake integrity (partition inventory, schema, orphan/gap checks)
-python tools/migrate_streaming_to_parquet.py audit-lake --lake-root data/tick_lake
+python3 tools/migrate_streaming_to_parquet.py audit-lake --lake-root data/tick_lake
 
 # Verify the local environment before starting the streamer
-python tools/preflight.py
+python3 tools/preflight.py
 ```
+
+The one-time legacy migration, the deletion of the two `.duckdb` files and the milestone
+close-out are owner actions, step by step in
+[`docs/operations/phase49_migration_runbook.md`](docs/operations/phase49_migration_runbook.md).
 
 ### 🧗 Hardening & Chaos Suites
 ```bash
