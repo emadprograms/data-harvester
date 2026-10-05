@@ -17,6 +17,7 @@ Requirements Covered:
      ({ time: epoch } without OHLC) so physical empty spaces are naturally visible on the x-axis where data
      is missing, rather than collapsing the gap.
 """
+import contextlib
 import json
 import os
 import re
@@ -506,28 +507,26 @@ class TestBackendWeekAndDayAnalytics:
             populate_ticks_for_day(mem_client, date(2026, 9, 30), "NVDA", minutes_list=[(10, 0)])
 
             mem_client.close = MagicMock()
-            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client), \
-                 patch("src.dashboard.analytics._get_lake_reader", return_value=None):
-                res = get_streaming_candles(symbol="NVDA", date="2026-09-29", hours="extended", limit=2000)
+            res = get_streaming_candles(symbol="NVDA", date="2026-09-29", hours="extended", limit=2000, client=mem_client)
 
-                assert res.get("error") is None, f"get_streaming_candles error: {res.get('error')}"
-                assert "session_start_epoch" in res, "Response must include session_start_epoch"
-                assert "session_end_epoch" in res, "Response must include session_end_epoch"
+            assert res.get("error") is None, f"get_streaming_candles error: {res.get('error')}"
+            assert "session_start_epoch" in res, "Response must include session_start_epoch"
+            assert "session_end_epoch" in res, "Response must include session_end_epoch"
 
-                start_epoch = res["session_start_epoch"]
-                end_epoch = res["session_end_epoch"]
+            start_epoch = res["session_start_epoch"]
+            end_epoch = res["session_end_epoch"]
 
-                # Expected duration of extended session: 16 hours = 16 * 3600 = 57,600 seconds
-                assert end_epoch - start_epoch == 57600, (
-                    f"Expected 57,600 seconds between 04:00 ET and 20:00 ET, got {end_epoch - start_epoch}"
+            # Expected duration of extended session: 16 hours = 16 * 3600 = 57,600 seconds
+            assert end_epoch - start_epoch == 57600, (
+                f"Expected 57,600 seconds between 04:00 ET and 20:00 ET, got {end_epoch - start_epoch}"
+            )
+
+            candles = res.get("candles", [])
+            assert len(candles) == 3, f"Expected exactly 3 candles for 2026-09-29, got {len(candles)}"
+            for c in candles:
+                assert start_epoch <= c["time"] < end_epoch, (
+                    f"Candle time {c['time']} is outside session bounds [{start_epoch}, {end_epoch})"
                 )
-
-                candles = res.get("candles", [])
-                assert len(candles) == 3, f"Expected exactly 3 candles for 2026-09-29, got {len(candles)}"
-                for c in candles:
-                    assert start_epoch <= c["time"] < end_epoch, (
-                        f"Candle time {c['time']} is outside session bounds [{start_epoch}, {end_epoch})"
-                    )
         finally:
             mem_client.close = DuckDBClient.close.__get__(mem_client, DuckDBClient)
             mem_client.close()
@@ -594,9 +593,11 @@ class TestBackendWeekAndDayAnalytics:
             # Populate sparse ticks with an intentional gap between 05:00 and 10:00 ET
             populate_ticks_for_day(mem_client, date(2026, 9, 29), "NVDA", minutes_list=[(4, 30), (5, 0), (10, 0), (19, 30)])
             mem_client.close = MagicMock()
-            with patch("src.dashboard.analytics.get_streaming_db_connection", return_value=mem_client), \
-                 patch("src.dashboard.analytics._get_lake_reader", return_value=None):
-                res = get_streaming_candles(symbol="NVDA", date="2026-09-29", hours="extended", limit=2000)
+            # The disk-database fallback is gone; the client is injected directly.
+            with contextlib.nullcontext():
+                res = get_streaming_candles(
+                    symbol="NVDA", date="2026-09-29", hours="extended", limit=2000, client=mem_client
+                )
 
                 assert res.get("error") is None, f"get_streaming_candles error: {res.get('error')}"
                 assert "gaps" in res, (

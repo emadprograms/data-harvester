@@ -830,9 +830,12 @@ def test_p25_03_analytics_decoupling_zero_streaming_duckdb_access(tmp_path, monk
     def forbidden_streaming_db(*args, **kwargs):
         raise RuntimeError("Forbidden access: streaming.duckdb should never be accessed when tick lake exists!")
 
-    # Patch in both database.connection and dashboard.analytics
+    # The disk-database entry point must never be reached. analytics no longer
+    # even has a connection helper of its own to call (v5.0 removed it).
     monkeypatch.setattr("src.database.connection.get_streaming_db_connection", forbidden_streaming_db)
-    monkeypatch.setattr("src.dashboard.analytics.get_streaming_db_connection", forbidden_streaming_db)
+    import src.dashboard.analytics as analytics_module
+
+    assert not hasattr(analytics_module, "get_streaming_db_connection")
 
     # 1. get_streaming_candles (both existing and non-existent symbols)
     c_existing = get_streaming_candles("AAPL")

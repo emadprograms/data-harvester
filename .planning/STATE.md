@@ -26,7 +26,7 @@ See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 
 Phase: 46 — Rewire Off the Disk Databases
 Plan: — (planning)
-Status: Phase 46 in progress — the dashboard is single-store (DASH-01/DASH-02 done); STOR/GAP remain
+Status: Phase 46 in progress — DASH-01..03, STOR-01/02/04 and BASE-01 done; STOR-03/05 and GAP-01/02 remain
 Last activity: 2026-10-05 — Milestone v5.0 started; v4.3 closed with a documented waiver of phases 44–45.
 
 Progress: [░░░░░░░░░░] 0%
@@ -71,10 +71,11 @@ Progress: [░░░░░░░░░░] 0%
 ## Session Continuity
 
 Last session: 2026-10-05
-Stopped at: DASH-02 landed (`45b89bb`). The dashboard renders one Parquet-only view and `src/dashboard/server.py` imports no `src.database` module. `tests/dashboard` 86 passed; spectrum+dashboard+planning+docs 168 passed.
+Stopped at: BASE-01 candle baseline recorded and STOR-01 closed (analytics no longer imports `src.database` and its six silent disk fallbacks are gone). The dashboard renders one Parquet-only view and `src/dashboard/server.py` imports no `src.database` module. `tests/dashboard` 86 passed; spectrum+dashboard+planning+docs 168 passed.
 Resume file: PLAN-MILESTONE-5.0.md
 
 ## Operator Next Steps
 
-- Continue Phase 46, test-driven: STOR-01..05 (delete `src/database`, rewire `analytics.py:17`, `databento_backfill.py:24`, `harvester.py:87`, `main.py`, `tools/*`, `tests/conftest.py`) and GAP-01..02 (Databento publishes into the lake).
+- Continue Phase 46, test-driven: GAP-01..02 (Databento publishes into the lake, checks the lake, symbols from `_control/registry.json`; pin `databento` and scope to the 19).
+- Then STOR-03/05: move the last legacy in-memory DuckDB tests onto the lake, drop the `client=` seam in `analytics.py`, delete `src/database` (part 2 falls out of Phase 47's file deletions).
 - Phase 49 (final gate + deletion) runs later, on the owner's machine.

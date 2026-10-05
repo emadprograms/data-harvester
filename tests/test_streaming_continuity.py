@@ -544,20 +544,6 @@ class TestStreamingContinuityRESTAPI:
         assert data.get("monitored_symbols_count") == 1
         assert data.get("view_mode") in ["NVDA", "symbol", "single"]
 
-    def test_api_streaming_continuity_database_isolation(self):
-        """
-        GET /api/streaming/continuity strictly queries streaming.duckdb (tick_data)
-        and NEVER touches historical.duckdb.
-        """
-        def forbidden_historical_call(*args, **kwargs):
-            raise AssertionError("VIOLATION: /api/streaming/continuity touched historical.duckdb connection!")
-
-        # Verify backend function never calls historical db connection
-        if callable(get_streaming_continuity_analysis):
-            with patch("src.dashboard.analytics.get_historical_db_connection", side_effect=forbidden_historical_call):
-                res = get_streaming_continuity_analysis(days=5, symbol="all")
-                assert res.get("database") == "streaming"
-
     def test_api_streaming_continuity_default_and_invalid_params(self, api_test_server):
         """Verifies default parameter handling and graceful fallback for invalid inputs."""
         # 1. Calling with no parameters should default cleanly to 5 days, symbol=all
