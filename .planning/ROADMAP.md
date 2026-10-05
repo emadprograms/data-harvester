@@ -115,7 +115,7 @@ See: [.planning/milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 3. **Phase 39: Reader Root Correctness & Portable Executable Contract (Package C)**: Distinguish uninitialized/unavailable roots from legitimate empty lakes (no silent fallback to legacy DuckDB); barrier-controlled snapshot race test (C43-07) asserting complete snapshot or explicit snapshot-unavailable error (never partial silent reads); execute published markdown reader contract examples in isolated subprocess with zero internal repo imports.
 4. **Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D)**: Real OS SIGINT/SIGTERM runner lifecycle test verifying `_shutdown_signal_handler` and queue drain; assertion-bearing barriers at admission, intent, staged fsync, promotion, receipt, and ack; honest gap reporting recording explicit visible gap start/end and loss unknown when unquantifiable; guaranteed documented RAM loss boundary.
 5. **Phase 43 (Pass 1): Initial Corrected Benchmarks & Baseline Measurement (Package G)**: Run initial corrected benchmarks before the Phase 41 compaction decision; >=19-symbol hot-skew datasets at 1M/10M scale to measure raw-partition query latency and fan-out; continuous background peak RSS/CPU sampling; real arrival-to-visible p99 latency through actual runner and separate reader; enforced qualification upper limits.
-6. **Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E)**: Required capacity monitoring (files/day per symbol, small-file sizes, free space, rate-limited threshold warnings); conditional compaction implementation and tests if required by Phase 43 Pass 1 benchmark SLAs (with maintenance journal, consumer drain, multiset equivalence verification, immutable receipt lineage, and crash-safe promotion).
+6. **Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E) [x]**: Required capacity monitoring (files/day per symbol, small-file sizes, free space, rate-limited threshold warnings); conditional compaction implementation and tests if required by Phase 43 Pass 1 benchmark SLAs (with maintenance journal, consumer drain, multiset equivalence verification, immutable receipt lineage, and crash-safe promotion).
 7. **Phase 42 (Decision): Market Rewind & Bounded Replay Iterator (Package F)**: Route Phase 41 into Phase 42 unconditionally. Decision branches:
    - **Yes (market rewind included in release)**: implement and test replay iterator (`src/storage/replay.py`, snapshot file inventory iterator, deterministic `(timestamp, symbol, ingest_id)` order, cursor resume across fresh processes) -> proceed to Phase 43 Pass 2.
    - **No (market rewind omitted)**: go directly to Phase 43 Pass 2.
@@ -223,8 +223,9 @@ flowchart TD
 
 ---
 
-#### Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E)
+#### Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E) [x]
 
+**Status**: Completed 2026-10-05 (commit `ef9e57fe`)
 **Goal**: Deliver actionable capacity monitoring and alert thresholds; implement recoverable offline compaction and physical purge under a durable maintenance journal if required by Phase 43 Pass 1 benchmark SLAs.
 **Depends on**: Phase 43 (Pass 1)
 **Requirements**: [CAPA-01, CAPA-02, CAPA-03, CAPA-04]
@@ -234,7 +235,7 @@ flowchart TD
   3. Offline compaction (if enabled by Pass 1 SLAs) writes consolidated files outside active globs, verifies multiset equivalence before replacement, and preserves an immutable receipt lineage map.
   4. Administrative symbol purge removes files only under an inactive fenced generation, with crash-safe recovery and rollback.
 
-**Plans**: 0 plans (run `/gsd-plan-phase 41` to break down)
+**Plans**: 1 plan complete (commit `ef9e57fe`)
 
 ---
 

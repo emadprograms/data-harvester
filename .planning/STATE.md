@@ -4,13 +4,13 @@ milestone: v4.3
 status: in_progress
 last_updated: "2026-10-05T00:00:00.000Z"
 last_activity: 2026-10-05
-last_activity_desc: "Phase 43 Pass 1 verified and completed (commit e6414f78). Corrected benchmark harness (>=19 symbols, continuous sampler, real freshness measurement) and Pass 1 baseline characterization verified with 0 xfails. Advanced to Phase 41."
+last_activity_desc: "Phase 41 verified and completed (commit ef9e57fe). Capacity monitoring, durable maintenance journal, consumer drain protocol, offline compaction with multiset equivalence and immutable lineage, and physical purge verified with 0 xfails. Advanced to Phase 42."
 progress:
   total_phases: 9
-  completed_phases: 5
-  total_plans: 5
-  completed_plans: 5
-  percent: 55
+  completed_phases: 6
+  total_plans: 6
+  completed_plans: 6
+  percent: 67
 milestone_name: "v4.3 Final Tick-Lake Implementation and Verification"
 ---
 
@@ -21,16 +21,16 @@ milestone_name: "v4.3 Final Tick-Lake Implementation and Verification"
 See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-04)
 
 **Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage.
-**Current focus:** Phase 41 — Capacity Monitoring, Offline Compaction & Physical Purge (Package E)
+**Current focus:** Phase 42 — Market Rewind & Bounded Replay Iterator Decision (Package F)
 
 ## Current Position
 
-Phase: 41 of 45 (Capacity Monitoring, Offline Compaction & Physical Purge - Package E)
+Phase: 42 of 45 (Market Rewind & Bounded Replay Iterator Decision - Package F)
 Plan: — (not yet planned)
-Status: Ready to plan
-Last activity: 2026-10-05 — Phase 43 Pass 1 verified and completed (commit `e6414f78`). Deterministic dataset with 20 symbols and Zipfian hot skew, continuous background ResourceSampler (peak RSS/CPU/queue backlog), real arrival-to-visible freshness benchmark with independent reader, and strict fail-closed performance evaluator verified with 0 xfails. Baseline characterization persisted in `reports/benchmarks/pass1_baseline_measurement.json` establishing empirical raw-partition fan-out overhead for Phase 41 compaction. Advanced to Phase 41.
+Status: Ready to evaluate / plan
+Last activity: 2026-10-05 — Phase 41 verified and completed (commit `ef9e57fe`). Capacity monitor (`src/storage/capacity.py`), durable maintenance journal at `_maintenance/journal.json` with 6 states and consumer drain protocol, offline compactor (`src/storage/compaction.py`) with 100% multiset equivalence and immutable lineage in `_control/lineage.json`, and physical purge automation under fenced generations verified with 0 xfails across 1032 passed tests. Advanced to Phase 42.
 
-Progress: [█████░░░░░] 55%
+Progress: [███████░░░] 67%
 
 ## Accumulated Context
 
@@ -44,12 +44,13 @@ Progress: [█████░░░░░] 55%
 - **Phase 39 Complete (Package C)**: Lake reader validates roots upfront with structured exceptions (`LakeUnavailableError`, `LakeCorruptedMetadataError`, `LakeIncompatibleSchemaError`) and zero silent fallback to legacy DuckDB. C43-07 resolved via barrier synchronization proving DuckDB raises `duckdb.IOException` on removed files rather than partial silent reads. Contract examples run in isolated subprocess with zero `src` imports; timezone-aware normalization and half-open intervals verified with 0 xfails.
 - **Phase 40 Complete (Package D)**: Real OS signals (SIGINT, SIGTERM) cleanly caught by `_shutdown_signal_handler` in live subprocess with cooperative queue drain to Parquet lake and returncode 0. Named persistence barrier injection across all 7 boundaries (`admission`, `intent_durability`, `staged_fsync`, `staged_promotion`, `directory_fsync`, `receipt_durability`, `acknowledgment`) tested with transient retry and persistent clean rejection. Multi-partition crash recovery verified with 100% multiset equality and zero duplicates. Provider gap ledger persistently records incidents to `<lake_root>/_control/gaps.json` with `status: "LOSS_UNKNOWN"` when unquantifiable. Canonical contract strictly asserts documented RAM loss boundary with zero xfails.
 - **Phase 43 Pass 1 Complete (Package G Baseline)**: Corrected benchmark harness implemented and verified: `DeterministicDataset` with 20 symbols, Zipfian hot skew, session/month spans, and authoritative manifest; continuous `ResourceSampler` sampling peak RSS/CPU/queue backlog at 50ms intervals; real arrival-to-visible freshness measurement with independent reader process and truthful artificial delay detection; strict fail-closed `evaluate_performance_gates`. Pass 1 baseline characterization established in `reports/benchmarks/pass1_baseline_measurement.json`: warm session 1m (5.59ms) and 5m (3.78ms) well below 100ms; warm month 1d (5.96ms) well below 250ms; freshness p99 (536.48ms) well below 1500ms; writer CPU (-129.3% vs legacy) demonstrates the raw-partition fan-out overhead (36.95s/M vs 16.11s/M) across 640 small files, providing the definitive empirical justification for Phase 41 offline compaction.
+- **Phase 41 Complete (Package E)**: Capacity monitor implements threshold alerts for small files, partition file counts, free disk space (with injection hooks), and query discovery latency with rate-limited persistence to `<lake_root>/_control/capacity_status.json`. Durable maintenance journal at `<lake_root>/_maintenance/journal.json` tracks all 6 states (`REQUESTED`, `DRAINING`, `IN_PROGRESS`, `STAGED`, `COMMITTED`, `ABORTED`). Lake publisher lock and `_maintenance/in_progress.json` guard fence concurrent writers and readers (`LakeMaintenanceInProgressError`). Consumer drain pauses supervisor restarts and refuses replacement on active/unknown readers (`ConsumerDrainRefusedError`). Offline compaction verifies multiset equivalence via DuckDB bidirectional `EXCEPT ALL` and logical payload fingerprint before atomic replacement outside active globs. Generation advancement (`compacted_gen1_...`, `compacted_gen2_...`) handles late arrivals. Immutable lineage mapping at `<lake_root>/_control/lineage.json` ensures writer retries (`ALREADY_PUBLISHED`) and migration verification (`verify_published`) succeed after compaction. Crash recovery (`recover_maintenance`) handles crashes across all journal stages. Physical purge (`purge_symbol_physical`) safely unlinks partition files for symbols in `PENDING_PURGE` status under inactive fenced generations while keeping backups and active symbols untouched. Verified with 0 failures, 0 errors, 0 xfails (1032 passed tests).
 - **Phase 42 Decision Gate**: Market Rewind inclusion is evaluated; if YES, implement and qualify replay iterator; if NO, route directly to Pass 2 qualification.
 - **Durability Guarantee Boundary**: RAM loss boundary is guaranteed and documented honestly; durable inbox/disk spooling is an optional extension.
 
 ### Pending Todos
 
-- Plan Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (`/gsd-plan-phase 41`)
+- Evaluate Phase 42: Market Rewind & Bounded Replay Iterator Decision (`/gsd-plan-phase 42`)
 
 ### Blockers/Concerns
 
@@ -59,5 +60,5 @@ Progress: [█████░░░░░] 55%
 ## Session Continuity
 
 Last session: 2026-10-05
-Stopped at: Phase 43 Pass 1 verified and recorded; Phase 41 ready to plan.
+Stopped at: Phase 41 verified and recorded; Phase 42 ready to evaluate.
 Resume file: None

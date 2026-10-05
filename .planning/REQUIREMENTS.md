@@ -50,10 +50,10 @@
 
 ### Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E)
 
-- [ ] **CAPA-01**: Capacity monitor tracks files/day by symbol, small-file distribution, intent/receipt growth, free disk space, and query discovery cost, with rate-limited warning and critical alerts.
-- [ ] **CAPA-02**: Durable maintenance journal and consumer drain protocol stops reader admission, drains active queries/replays, pauses supervisor restarts, and refuses unmanaged external readers during maintenance.
-- [ ] **CAPA-03**: Offline compaction implementation (conditional on Phase 43 Pass 1 SLA requirements) writes consolidated files outside active globs, verifies multiset equivalence before replacement, and preserves an immutable receipt lineage map.
-- [ ] **CAPA-04**: Physical purge automation removes fenced `PENDING_PURGE` symbol files only under an inactive fenced generation, with crash-safe recovery and rollback.
+- [x] **CAPA-01**: Capacity monitor tracks files/day by symbol, small-file distribution, intent/receipt growth, free disk space, and query discovery cost, with rate-limited warning and critical alerts.
+- [x] **CAPA-02**: Durable maintenance journal and consumer drain protocol stops reader admission, drains active queries/replays, pauses supervisor restarts, and refuses unmanaged external readers during maintenance.
+- [x] **CAPA-03**: Offline compaction implementation (conditional on Phase 43 Pass 1 SLA requirements) writes consolidated files outside active globs, verifies multiset equivalence before replacement, and preserves an immutable receipt lineage map.
+- [x] **CAPA-04**: Physical purge automation removes fenced `PENDING_PURGE` symbol files only under an inactive fenced generation, with crash-safe recovery and rollback.
 
 ### Phase 42: Market Rewind & Bounded Replay Iterator Decision (Package F - Decision Gated)
 
@@ -115,10 +115,10 @@
 | PERF-03 | Phase 43 | Complete |
 | PERF-04 | Phase 43 | Complete (Pass 1) |
 | PERF-05 | Phase 43 | Complete (Pass 1) |
-| CAPA-01 | Phase 41 | Pending |
-| CAPA-02 | Phase 41 | Pending |
-| CAPA-03 | Phase 41 | Pending |
-| CAPA-04 | Phase 41 | Pending |
+| CAPA-01 | Phase 41 | Complete |
+| CAPA-02 | Phase 41 | Complete |
+| CAPA-03 | Phase 41 | Complete |
+| CAPA-04 | Phase 41 | Complete |
 | RPLY-01 | Phase 42 | Pending |
 | RPLY-02 | Phase 42 | Pending |
 | RPLY-03 | Phase 42 | Pending |
