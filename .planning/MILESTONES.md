@@ -2,7 +2,7 @@
 
 _Newest first. Each entry is a shipped, verified milestone._
 
-- [ ] **v4.3 Final Tick-Lake Implementation and Verification** — Phases 37–45 (**in progress**, started 2026-10-04)
+- [x] **v4.3 Final Tick-Lake Implementation and Verification** — Phases 37–43 complete; phases 44–45 waived by owner (closed 2026-10-05)
 - [x] **v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (closed 2026-10-04)
 - [x] **v4.1 Partitioned Parquet Lake Deep Testing & Hardening** — Phases 22–27 (shipped 2026-10-03)
 - [x] **v4.0 Partitioned Parquet Tick Lake (Decoupled High-Concurrency Storage)** — Phases 15–21 (shipped 2026-10-03)
@@ -12,22 +12,32 @@ _Newest first. Each entry is a shipped, verified milestone._
 
 ---
 
-## v4.3 Final Tick-Lake Implementation and Verification (In progress: started 2026-10-04)
+## v4.3 Final Tick-Lake Implementation and Verification (Closed: 2026-10-05)
 
-**Goal:** Finish the historical DuckDB-to-Parquet migration and concurrent ingestion/analytics work, correct incomplete qualification, implement the remaining operational capabilities (capacity monitoring, offline compaction/purge if needed, market rewind decision & replay iterator, 24-hour endurance), and produce one final evidence-backed signoff based strictly on `docs/plans/milestone-4.3-final-concurrency-closeout.md`.
+**Phases:** 37–45 — **37–43 complete; 44–45 waived by owner decision on 2026-10-05.**
+**Status:** Closed with a documented waiver. Nothing below is a claim of unconditional signoff.
 
-**Status:** Initialized; Phase 37 ready to plan.
+**Why 44–45 were waived.** Phase 44 (24-hour sustained endurance run) requires a dedicated host for a full day; Phase 45 (candidate CI log verification and closeout audit) requires authenticated hosted-CI access. Neither adds capability to the tick lake — they are release ceremony over a system that already works. The owner elected to close the milestone rather than continue a verification loop whose remaining work does not change the shipped software.
 
-**Phases:**
-- Phase 37: Preflight, Test Isolation & Fail-Closed Validator (Package A)
-- Phase 38: Migration Overlap Protection & Provenance-Scoped Verification (Package B)
-- Phase 39: Reader Root Correctness & Portable Executable Contract (Package C)
-- Phase 40: Honest Durability Boundaries & Provider Gap Ledger (Package D)
-- Phase 43: Initial & Re-run Performance Qualification (Package G - Pass 1 & Pass 2)
-- Phase 41: Capacity Monitoring, Offline Compaction & Physical Purge (Package E)
-- Phase 42: Market Rewind & Bounded Replay Iterator Decision (Package F)
-- Phase 44: 24-Hour Sustained Multi-Process Endurance Run (Package H)
-- Phase 45: Operational Rehearsal, Candidate CI & Milestone Closeout Audit (Package I)
+**Honest reconciliation — the Phase 43 writer-CPU gate is NOT a pass.**
+- `reports/benchmarks/pass2_qualification_report.json` records `"overall_passed": false`.
+- The failing gate is the writer-CPU reduction target (`>= 50%` vs the legacy DuckDB baseline). Measured: **−14.4%** (Parquet lake **18.78 s** per 1M ticks vs in-memory DuckDB **16.42 s** per 1M ticks).
+- This is a real, structural cost of partitioned Parquet writes (fan-out across many small files), not a measurement error.
+- `.planning/phases/43/VERIFICATION_PASS2.md` relabels this gate as an "informational comparison". That overstates the evidence. **The machine-readable report is authoritative** and the gate is recorded here as a *measured characterization*, not a qualification pass.
+- PERF-01's 1M/10M scale claim was not re-run after remediation; Pass 1 and Pass 2 both executed at 200,000 rows.
+
+**What phases 37–43 did deliver:**
+- Fail-closed release-report validator with table-driven mutation tests; isolated run directories and production write guards (Phase 37).
+- Migration source-coverage ledger making overlapping re-runs idempotent (resolving the v4.2 duplicate-partition defect), provenance-scoped publication verification, whole-lake inventory audit, and coordinator cutover/rollback rehearsal (Phase 38).
+- Reader fail-fast on uninitialized/unavailable/corrupt roots with zero silent legacy fallback; barrier-controlled snapshot race test; subprocess-isolated portable reader contract (Phase 39).
+- Real OS SIGINT/SIGTERM lifecycle tests; crash matrix across seven persistence barriers; provider gap ledger recording explicit visible gaps with `LOSS_UNKNOWN` where loss is unquantifiable; documented RAM-only loss boundary (Phase 40).
+- Capacity monitoring with rate-limited alerting; offline compaction under a durable maintenance journal with consumer drain, multiset equivalence verification, and immutable lineage; fenced physical purge with crash-safe recovery (Phase 41).
+- Deterministic bounded replay iterator over frozen file inventories with cursor resumption across processes (Phase 42).
+- Corrected benchmark harness with continuous resource sampling and receive-to-visible freshness measurement (Phase 43).
+
+**Test suite at close:** ~1,045 passing offline tests, 0 failures, 0 xfails.
+
+**Archive:** [`milestones/v4.3-ROADMAP.md`](milestones/v4.3-ROADMAP.md) · [`milestones/v4.3-REQUIREMENTS.md`](milestones/v4.3-REQUIREMENTS.md) · [`milestones/v4.3-phases/`](milestones/v4.3-phases/)
 
 ---
 
