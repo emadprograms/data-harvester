@@ -37,11 +37,12 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 ### Phase 48: Remove the Bar Subsystem & Dead Providers
 
 - [ ] **RMV-01**: `grep -ri "historical.duckdb\|streaming.duckdb"` returns nothing in `src/`, `tools/`, `tests/`, `main.py` or current user-facing docs.
-- [ ] **RMV-02**: The bar subsystem is deleted — `main.py` harvest CLI, `src/data/harvester.py`, `src/data/normalizer.py`, `src/api/massive.py`, `src/api/yahoo.py`, `src/api/binance.py`, `tools/backfill_massive.py`, `tools/benchmark_baseline.py`, `tools/audit_database_integrity.py`, `src/dashboard/harvester_job.py`, `src/utils/discord.py`.
+- [ ] **RMV-02**: The bar subsystem is deleted — `main.py` harvest CLI, `src/data/harvester.py`, `src/data/normalizer.py`, `src/api/massive.py`, `src/api/yahoo.py`, `src/api/binance.py`, `tools/backfill_massive.py`, `tools/benchmark_baseline.py`, `tools/audit_database_integrity.py`, `src/dashboard/harvester_job.py`.
 - [ ] **RMV-03**: Bar-era frontend surfaces are removed — historical navigation, data-source selector, harvester controls, stale database labels.
-- [ ] **RMV-04**: `yfinance` and `polygon-api-client` are removed from `requirements.txt`. **`duckdb` stays** (in-memory engine). Retained: `pyarrow`, `pandas`, `pytz`/`tzdata`, `websockets`, `requests`, `python-dotenv`, `psutil`, `pytest`.
+- [ ] **RMV-04**: `yfinance` and `polygon-api-client` are removed from `requirements.txt`. `DISCORD_WEBHOOK_URL` is **retained** in `.env.example`. **`duckdb` stays** (in-memory engine). Retained: `pyarrow`, `pandas`, `pytz`/`tzdata`, `websockets`, `requests`, `python-dotenv`, `psutil`, `pytest`.
 - [ ] **RMV-05**: The owner deletes `data/historical.duckdb` and `data/streaming.duckdb` **immediately after Phase 46 verification** - no retention or confirmation period. Permanent loss of the bar history was accepted by the owner on 2026-10-05.
 - [ ] **RMV-06**: Reference cleanup covers code and current user-facing docs; `.planning/` archives are left intact.
+- [ ] **RMV-09**: `src/utils/discord.py` is **rewritten, not deleted** — bar-era functions (`build_health_alerts`, `build_database_health_grid`, `send_discord_harvest_report`) are removed; the webhook plumbing (`_post_embed`, `_post_file`) and `get_discord_webhook_url()` are retained for streamer notifications.
 - [ ] **RMV-07**: `src/config.py`'s dead bar constants are removed, and Capital credentials are retained (live auth depends on them).
 - [ ] **RMV-08**: The unused replay subsystem is removed — `src/storage/replay.py`, `tests/storage/test_replay.py`, its exports in `src/storage/__init__.py`, and the `create_replay_iterator`/`create_replay_snapshot` methods on `TickLakeReader`. `PROJECT.md` places market-rewind out of scope; it was built during v4.3 against that decision and is reachable only programmatically.
 
@@ -55,6 +56,7 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 - [ ] **SYMB-01**: `_control/registry.json` is the single symbol authority containing exactly the 19 approved equities. Unsolicited and out-of-scope symbols are rejected at the callback boundary and cannot be added through the UI.
 - [ ] **CO-01**: Tests are dispositioned retain / retarget / delete with a one-line reason each; the retained offline suite passes with no required xfails.
 - [ ] **CO-02**: Candle behaviour is verified unchanged against the Phase 46 baseline — the query engine was not modified.
+- [ ] **NOTIF-01**: Operational notifications reach Discord for: session started, session stopped, **session failed to start**, supervisor restart/crash, and drain or compaction failure. Notifications are best-effort — a webhook failure must never block or crash ingestion.
 - [ ] **CO-03**: The milestone closes with one completion report and **stops** — no new phases, audits, or follow-up programme.
 
 ---
@@ -96,6 +98,7 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 | RMV-05 | 48 | Pending |
 | RMV-06 | 48 | Pending |
 | RMV-07 | 48 | Pending |
+| RMV-09 | 48 | Pending |
 | RMV-08 | 48 | Pending |
 | SCHED-01 | 49 | Pending |
 | SCHED-02 | 49 | Pending |
@@ -105,9 +108,10 @@ A requirement is **Complete** only when its stated evidence exists. Shortfalls a
 | SYMB-01 | 49 | Pending |
 | CO-01 | 49 | Pending |
 | CO-02 | 49 | Pending |
+| NOTIF-01 | 49 | Pending |
 | CO-03 | 49 | Pending |
 
-**Coverage:** 31 requirements, 31 mapped, 0 unmapped ✓
+**Coverage:** 33 requirements, 33 mapped, 0 unmapped ✓
 
 ---
 

@@ -161,10 +161,10 @@ flowchart TD
 
 **Goal:** Delete everything whose only purpose was 1-minute bars or an unrequested feature, and clean the surviving surface.
 **Depends on:** Phase 47
-**Requirements:** [RMV-01, RMV-02, RMV-03, RMV-04, RMV-05, RMV-06, RMV-07, RMV-08]
+**Requirements:** [RMV-01, RMV-02, RMV-03, RMV-04, RMV-05, RMV-06, RMV-07, RMV-08, RMV-09]
 **Success criteria:**
 1. No reference to either `.duckdb` file remains in code or current docs.
-2. Bar pipeline, providers, Discord, harvester job, dead tools and the unused replay subsystem removed.
+2. Bar pipeline, providers, harvester job, dead tools and the unused replay subsystem removed; `discord.py` rewritten for streamer notifications (not deleted).
 3. `yfinance` and `polygon-api-client` gone; **`duckdb` stays**.
 4. Owner deletes both `.duckdb` files immediately after verification - no retention period.
 5. `.planning/` archives untouched.
@@ -173,7 +173,7 @@ flowchart TD
 
 **Goal:** Enforce 04:00–20:00 ET ingestion, run compaction unattended in the closed interval, restrict the registry to 19 symbols, and close.
 **Depends on:** Phase 48
-**Requirements:** [SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SYMB-01, CO-01, CO-02, CO-03]
+**Requirements:** [SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SYMB-01, NOTIF-01, CO-01, CO-02, CO-03]
 **Success criteria:**
 1. Eligibility computed in `America/New_York` with an injectable clock; DST-correct.
 2. Supervisor lifecycle states; no provider activity outside the window; an intentional stop is not a crash.
@@ -181,6 +181,7 @@ flowchart TD
 4. Compaction is idempotent per closed interval under a single maintenance lease.
 5. Registry holds exactly the 19 approved symbols; out-of-scope symbols rejected.
 6. Candle behaviour verified unchanged against the Phase 46 baseline.
+7. Discord notifications fire for session start/stop, start failure, restart and maintenance failure.
 7. One completion report; the milestone stops.
 
 ---
@@ -210,6 +211,7 @@ v4.3 backlog items are archived with that milestone. Active backlog for v5.0:
 | Databento gap-fill rewired to the Parquet lake | **Required** | 47 |
 | Bar subsystem, dead providers, Discord removal | **Required** | 48 |
 | Unused replay subsystem removal (`replay.py`, exports, reader methods, tests) | **Required** | 48 |
+| Discord rewired to streamer events (bar-era functions removed) | **Required** | 48-49 |
 | Owner deletion of `historical.duckdb` + `streaming.duckdb` (no retention period) | **Owner action** | 48 |
 | Single Parquet-only dashboard (Historical view deleted) | **Required** | 47 |
 | 04:00–20:00 ET schedule + unattended off-hours compaction | **Required** | 49 |

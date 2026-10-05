@@ -26,7 +26,8 @@ The owner's instruction (2026-10-05): **reduce clutter in this repo as much as p
 - Ticks only — no 1-minute bars anywhere.
 - 19 approved equities: AAPL, ADBE, AMD, AMZN, APP, AVGO, BABA, GOOGL, META, MSFT, MU, NDAQ, NVDA, ORCL, PANW, QCOM, SHOP, TSLA, TSM.
 - Live source Capital.com; gap repair Databento (writing to the lake).
-- Ingestion 04:00–20:00 ET; compaction unattended in the closed window.
+- Ingestion 04:00–20:00 ET, **weekdays only**; compaction unattended in the closed window.
+- **Platform: macOS.** Only the launchd-based scheduler is built; Windows scripts are removed or marked unsupported.
 
 ## 3. Definition of done
 
@@ -42,7 +43,9 @@ The owner's instruction (2026-10-05): **reduce clutter in this repo as much as p
 
 **Stays (untouched):** `src/storage/reader.py` · `compaction.py` · `replay.py` · `publication.py` · `parquet_writer.py` · `registry.py` · `capacity.py` · the DuckDB in-memory query engine.
 
-**Deleted:** `data/historical.duckdb` + `data/streaming.duckdb` (owner action) · `src/database/{connection,schema,operations}.py` (disk-backed DB layer) · `src/storage/replay.py` + `tests/storage/test_replay.py` + replay exports/methods (unused; owner did not request it) · `main.py` harvest CLI · `src/data/harvester.py`, `normalizer.py` · `src/api/massive.py`, `yahoo.py`, `binance.py` · `tools/backfill_massive.py`, `benchmark_baseline.py`, `audit_database_integrity.py` · `src/utils/discord.py` · `src/dashboard/harvester_job.py` · `/api/historical/*` and their frontend callers · `yfinance`, `polygon-api-client` dependencies.
+**Deleted:** `data/historical.duckdb` + `data/streaming.duckdb` (owner action) · `src/database/{connection,schema,operations}.py` (disk-backed DB layer) · `src/storage/replay.py` + `tests/storage/test_replay.py` + replay exports/methods (unused; owner did not request it) · `main.py` harvest CLI · `src/data/harvester.py`, `normalizer.py` · `src/api/massive.py`, `yahoo.py`, `binance.py` · `tools/backfill_massive.py`, `benchmark_baseline.py`, `audit_database_integrity.py` · `src/dashboard/harvester_job.py` · `/api/historical/*` and their frontend callers · `yfinance`, `polygon-api-client` dependencies.
+
+**Rewritten:** `src/utils/discord.py` — bar-era alert builders removed; webhook plumbing kept and redirected to operational events (session start/stop/failure, crash, maintenance failure).
 
 **Rewired:** `src/stream/runner.py` (drop the DuckDB writer fallback; symbols from the registry) · `src/dashboard/{server,analytics}.py` (lake-only) · `src/utils/integrity.py` (tick checks against the lake; drop cross-store drift) · `src/data/databento_backfill.py` (write to the lake).
 
