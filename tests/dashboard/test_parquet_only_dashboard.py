@@ -85,6 +85,45 @@ def test_historical_routes_are_removed(lake_server) -> None:
         assert resp.status_code == 404, f"{route} should be gone, got {resp.status_code}"
 
 
+def test_historical_symbol_write_routes_are_removed(lake_server) -> None:
+    base_url, _ = lake_server
+    post = requests.post(
+        f"{base_url}/api/historical/symbols", json={"display_name": "AAPL"}, timeout=10
+    )
+    assert post.status_code == 404, f"POST historical symbols should be gone, got {post.status_code}"
+
+    delete = requests.delete(f"{base_url}/api/historical/symbols/AAPL", timeout=10)
+    assert delete.status_code == 404, f"DELETE historical symbols should be gone, got {delete.status_code}"
+
+
+def test_symbol_writes_never_name_a_historical_source(lake_server) -> None:
+    base_url, _ = lake_server
+    resp = requests.post(
+        f"{base_url}/api/symbols?source=historical", json={"display_name": "ZZZZ"}, timeout=10
+    )
+    assert resp.status_code in (400, 404), (
+        f"a historical source must not be writable, got {resp.status_code}: {resp.text[:200]}"
+    )
+
+
+def test_dashboard_server_does_not_import_the_disk_database_layer() -> None:
+    import ast
+    from pathlib import Path
+
+    source_file = Path(__file__).resolve().parents[2] / "src" / "dashboard" / "server.py"
+    tree = ast.parse(source_file.read_text(encoding="utf-8"))
+
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            modules.add(node.module)
+        elif isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+
+    offenders = sorted(m for m in modules if m.startswith("src.database"))
+    assert not offenders, f"dashboard server imports the disk database layer: {offenders}"
+
+
 def test_historical_analytics_functions_are_removed() -> None:
     import src.dashboard.analytics as analytics
 

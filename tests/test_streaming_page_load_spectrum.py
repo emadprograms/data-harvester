@@ -89,7 +89,7 @@ function mockElement(id, initialClasses = []) {{
 
 // Initialize expected DOM nodes
 const elementIds = [
-  'view-historical', 'view-streaming', 'nav-historical', 'nav-streaming',
+  'view-streaming', 'nav-streaming',
   'streaming-spectrum-view', 'streaming-detail-view', 'streaming-chart-card',
   'streaming-chart-container', 'streaming-chart-loading', 'streaming-symbol-select',
   'streaming-chart-limit-select', 'continuity-ribbon-canvas', 'continuity-ribbon-view',

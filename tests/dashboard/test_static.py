@@ -64,8 +64,8 @@ def test_serve_static_css(static_server):
 
 @pytest.mark.parametrize("js_module,expected_symbol", [
     ("state.js", "showToast"),
-    ("chart.js", "initChart"),
-    ("tables.js", "renderInspectorTable"),
+    ("chart.js", "initStreamingChart"),
+    ("tables.js", "renderStreamingSymbolsTable"),
     ("telemetry.js", "fetchStreamTape"),
     ("harvester.js", "triggerHarvestRun"),
     ("app.js", "DOMContentLoaded"),

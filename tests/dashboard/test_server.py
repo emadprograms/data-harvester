@@ -37,7 +37,8 @@ def test_dashboard_static_index_html_served(dashboard_test_server):
     assert resp.status_code == 200
     assert "text/html" in resp.headers["Content-Type"]
     assert "DATA HARVESTER" in resp.text
-    assert "symbol_map" in resp.text
+    assert "view-streaming" in resp.text
+    assert "view-historical" not in resp.text
 
 
 def test_api_status_endpoint(dashboard_test_server):
@@ -65,31 +66,27 @@ def test_api_symbols_add_and_delete_lifecycle(dashboard_test_server):
     """Verify adding, fetching, and removing a symbol via REST endpoints."""
     test_symbol = "DASHUNIT"
 
-    # 1. Add symbol
-    add_payload = {
-        "display_name": test_symbol,
-        "capital_ticker": test_symbol,
-        "massive_ticker": test_symbol,
-        "yahoo_ticker": f"{test_symbol}.US"
-    }
-    add_resp = requests.post(f"{dashboard_test_server}/api/symbols?source=historical", json=add_payload)
-    assert add_resp.status_code == 200
-    assert add_resp.json()["success"] is True
+    # 1. Add symbol to the tick lake registry (the only store)
+    add_payload = {"display_name": test_symbol, "capital_ticker": test_symbol}
+    add_resp = requests.post(f"{dashboard_test_server}/api/symbols", json=add_payload)
+    assert add_resp.status_code in (200, 201), add_resp.text
 
     # 2. Verify symbol is in inventory
-    list_resp = requests.get(f"{dashboard_test_server}/api/symbols?source=historical")
+    list_resp = requests.get(f"{dashboard_test_server}/api/symbols")
     symbols = [s["display_name"] for s in list_resp.json()["symbols"]]
     assert test_symbol in symbols
 
-    # 3. Delete symbol
-    del_resp = requests.delete(f"{dashboard_test_server}/api/symbols/{test_symbol}?source=historical")
-    assert del_resp.status_code == 200
+    # 3. Delete symbol: the registry fences the subscription and marks it for purge
+    del_resp = requests.delete(f"{dashboard_test_server}/api/symbols/{test_symbol}")
+    assert del_resp.status_code == 200, del_resp.text
     assert del_resp.json()["success"] is True
+    assert del_resp.json()["status"] == "PENDING_PURGE"
 
-    # 4. Verify symbol is removed
-    list_resp2 = requests.get(f"{dashboard_test_server}/api/symbols?source=historical")
-    symbols2 = [s["display_name"] for s in list_resp2.json()["symbols"]]
-    assert test_symbol not in symbols2
+    # 4. Verify the symbol is fenced and no longer active
+    list_resp2 = requests.get(f"{dashboard_test_server}/api/symbols")
+    entries = {s["display_name"]: s for s in list_resp2.json()["symbols"]}
+    assert entries[test_symbol]["status"] == "PENDING_PURGE"
+    assert entries[test_symbol]["active"] is False
 
 
 def test_api_integrity_audit_endpoint(dashboard_test_server):
