@@ -20,14 +20,14 @@ progress:
 See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 
 **Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage.
-**Current focus:** Phase 46: Rewire Off the Disk Databases (test-driven)
+**Current focus:** Phase 48: Schedule, Off-Hours Compaction, Notifications & Test Disposition (test-driven)
 
 ## Current Position
 
-Phase: 46 — Rewire Off the Disk Databases
-Plan: — (planning)
-Status: Phase 47 in progress — RMV-02/03/04/07/08/09 done; RMV-01/06 remain, plus STOR-03/05 carried from Phase 46
-Last activity: 2026-10-05 — Milestone v5.0 started; v4.3 closed with a documented waiver of phases 44–45.
+Phase: 48 — Schedule, Off-Hours Compaction, Notifications & Test Disposition
+Plan: — (researching; TDD per owner directive)
+Status: Phase 46 complete (STOR-01..05, DASH-01..03, BASE-01). Phase 47 complete 8/8 (RMV-01/02/03/04/06/07/08/09 + RMV-10 crypto-stream removal). Phase 48 requirements SCHED-01..05, SYMB-01, NOTIF-01, CO-01, CO-02 are open.
+Last activity: 2026-10-05 — Phase 47 closed: disk-DB references cleaned, crypto streaming removed, docs/README rewritten for Parquet-only storage; full offline suite 872 passed with 4 host-load timing flakes (3 timing gates plus the pre-existing `test_off_loop_event_loop_responsiveness`).
 
 Progress: [░░░░░░░░░░] 0%
 
