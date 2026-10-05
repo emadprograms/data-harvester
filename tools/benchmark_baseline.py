@@ -46,6 +46,8 @@ from src.utils.write_guard import (
     is_production_path,
     ProductionAccessBlockedError,
 )
+from src.utils.resource_sampler import ResourceSampler
+
 
 
 # ============================================================================
@@ -206,14 +208,12 @@ def benchmark_writer(
     wall_start = time.perf_counter()
     cpu_start = time.process_time()
 
-    peak_rss = rss_before
-    for i in range(0, total_ticks, batch_size):
-        batch = ticks[i : i + batch_size]
-        save_ticks_to_storage(client, batch)
-        current_rss = process.memory_info().rss
-        if current_rss > peak_rss:
-            peak_rss = current_rss
+    with ResourceSampler(pids=[os.getpid()], interval_seconds=0.05) as sampler:
+        for i in range(0, total_ticks, batch_size):
+            batch = ticks[i : i + batch_size]
+            save_ticks_to_storage(client, batch)
 
+    res_summary = sampler.get_summary()
     cpu_elapsed = time.process_time() - cpu_start
     wall_elapsed = time.perf_counter() - wall_start
 
@@ -222,6 +222,8 @@ def benchmark_writer(
     cpu_sec_per_1m = (cpu_elapsed / total_ticks) * 1_000_000.0 if total_ticks else 0.0
     throughput = total_ticks / wall_elapsed if wall_elapsed > 0 else 0.0
     mb = 1024 * 1024
+    peak_rss_mb = res_summary.peak_rss_mb
+    rss_before_mb = res_summary.start_rss_mb
 
     return {
         "total_ticks": total_ticks,
@@ -231,9 +233,9 @@ def benchmark_writer(
         "cpu_time_seconds": round(cpu_elapsed, 4),
         "cpu_seconds_per_1m_ticks": round(cpu_sec_per_1m, 3),
         "throughput_ticks_per_sec": round(throughput, 1),
-        "rss_before_mb": round(rss_before / mb, 2),
-        "peak_rss_mb": round(peak_rss / mb, 2),
-        "rss_growth_mb": round(max(0, peak_rss - rss_before) / mb, 2),
+        "rss_before_mb": round(rss_before_mb, 2),
+        "peak_rss_mb": round(peak_rss_mb, 2),
+        "rss_growth_mb": round(max(0.0, peak_rss_mb - rss_before_mb), 2),
     }
 
 

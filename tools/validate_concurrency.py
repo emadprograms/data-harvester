@@ -37,6 +37,7 @@ import sys
 import tempfile
 import time
 from typing import Any, Dict, List, Optional, Tuple
+import urllib.parse
 import psutil
 
 logger = logging.getLogger("validate_concurrency")
@@ -50,8 +51,10 @@ from src.utils.write_guard import (
     is_production_path,
     ProductionAccessBlockedError,
 )
+from src.utils.resource_sampler import ResourceSampler
+from tests.support.deterministic_dataset import DEFAULT_SYMBOLS
 
-SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"]
+SYMBOLS = list(DEFAULT_SYMBOLS)
 
 
 @dataclass
@@ -83,6 +86,10 @@ class ConcurrencyMetrics:
     writer_peak_rss_mb: float = 0.0
     dashboard_peak_rss_mb: float = 0.0
     repo_b_peak_rss_mb: float = 0.0
+    aggregate_peak_rss_mb: float = 0.0
+    aggregate_peak_cpu_percent: float = 0.0
+    freshness_p99_ms: float = 0.0
+    freshness_samples_count: int = 0
     open_fds_count: int = 0
 
 
@@ -147,7 +154,11 @@ except (ImportError, ModuleNotFoundError):
 
 import duckdb
 
-SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"]
+SYMBOLS = [
+    "NVDA", "TSLA", "AAPL", "MSFT", "AMD", "AMZN", "META", "GOOGL",
+    "AVGO", "MU", "BABA", "TSM", "QCOM", "ORCL", "SHOP", "ADBE",
+    "PANW", "BRK.B", "BTC/USD", "EURUSD",
+]
 lake_root = Path(lake_root_str)
 ticks_dir = lake_root / "ticks"
 
@@ -156,9 +167,22 @@ io_exceptions = 0
 corrupted_footers = 0
 completed_iterations = 0
 stop_file = Path(stop_signal_file)
+seen_files = set()
+visible_records = {}
+
+def _encode_sym(s: str) -> str:
+    safe = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
+    out = []
+    for c in s:
+        if c in safe:
+            out.append(c)
+        else:
+            for b in c.encode("utf-8"):
+                out.append(f"%{b:02X}")
+    return "".join(out)
 
 def resolve_files(sym: str):
-    sym_dir = ticks_dir / f"symbol={sym.upper()}"
+    sym_dir = ticks_dir / f"symbol={_encode_sym(sym)}"
     if not sym_dir.is_dir():
         return []
     matched = []
@@ -181,6 +205,24 @@ while completed_iterations < iterations or not stop_file.is_file():
     files = resolve_files(sym)
 
     if files:
+        new_files = [f for f in files if f not in seen_files]
+        if new_files:
+            for nf in new_files:
+                seen_files.add(nf)
+            try:
+                con_vis = duckdb.connect(":memory:")
+                res_ids = con_vis.execute(
+                    "SELECT ingest_id FROM read_parquet(?, hive_partitioning=false)",
+                    [new_files],
+                ).fetchall()
+                now_m = time.monotonic()
+                for (iid,) in res_ids:
+                    if iid and iid not in visible_records:
+                        visible_records[iid] = now_m
+                con_vis.close()
+            except Exception:
+                pass
+
         # Candle Resampling Query from Repo B Contract
         q_candles = '''
             SELECT
@@ -276,6 +318,7 @@ output = {
     "io_exceptions": io_exceptions,
     "corrupted_footers": corrupted_footers,
     "total_query_rows": total_query_rows,
+    "visible_records": visible_records,
 }
 with open(out_file_str, "w", encoding="utf-8") as f:
     json.dump(output, f, indent=2)
@@ -306,15 +349,31 @@ writer = TickLakeWriter(
     flush_interval_seconds=1.0,
 )
 
-SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"]
+SYMBOLS = [
+    "NVDA", "TSLA", "AAPL", "MSFT", "AMD", "AMZN", "META", "GOOGL",
+    "AVGO", "MU", "BABA", "TSM", "QCOM", "ORCL", "SHOP", "ADBE",
+    "PANW", "BRK.B", "BTC/USD", "EURUSD",
+]
+import random
+rng = random.Random(42)
+alpha = 1.05
+raw_weights = [1.0 / (rank ** alpha) for rank in range(1, len(SYMBOLS) + 1)]
+cum_weights = []
+acc = 0.0
+for w in raw_weights:
+    acc += w
+    cum_weights.append(acc)
+
 heartbeat_lags = []
+arrival_records = {}
 running = True
 
 async def heartbeat():
     global running
     interval = 0.005  # 5ms
     # Warm up timer structures before recording measurements
-    await asyncio.sleep(interval)
+    for _ in range(3):
+        await asyncio.sleep(interval)
     while running:
         t0 = time.perf_counter()
         await asyncio.sleep(interval)
@@ -329,7 +388,9 @@ async def ingest_ticks():
 
     batch = []
     for i in range(total_ticks):
-        sym = SYMBOLS[i % len(SYMBOLS)]
+        sym = rng.choices(SYMBOLS, cum_weights=cum_weights, k=1)[0]
+        tick_id = f"tick_{i:08d}"
+        arrival_records[tick_id] = time.monotonic()
         tick = {
             "timestamp": t_base + timedelta(milliseconds=i * 10),
             "symbol": sym,
@@ -339,6 +400,7 @@ async def ingest_ticks():
             "ask": 100.05,
             "source": "CAPITAL",
             "session": "REG",
+            "ingest_id": tick_id,
         }
         batch.append(tick)
         if len(batch) >= 500:
@@ -387,6 +449,7 @@ async def main():
         "max_lag_ms": round(max_lag, 3),
         "heartbeat_samples": len(heartbeat_lags),
         "duration_seconds": round(duration, 3),
+        "arrival_records": arrival_records,
     }
     with open(out_file_str, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
@@ -479,29 +542,7 @@ def run_concurrency_validation(
     repo_b_proc: Optional[subprocess.Popen] = None
     writer_proc: Optional[subprocess.Popen] = None
 
-    writer_peak_rss = 0.0
-    dash_peak_rss = 0.0
-    repo_b_peak_rss = 0.0
-
-    def sample_peaks():
-        nonlocal writer_peak_rss, dash_peak_rss, repo_b_peak_rss
-        for proc, kind in [
-            (writer_proc, "writer"),
-            (server_proc, "dash"),
-            (repo_b_proc, "repo_b"),
-        ]:
-            if proc is not None and proc.poll() is None:
-                try:
-                    p = psutil.Process(proc.pid)
-                    rss = p.memory_info().rss / (1024 * 1024)
-                    if kind == "writer" and rss > writer_peak_rss:
-                        writer_peak_rss = rss
-                    elif kind == "dash" and rss > dash_peak_rss:
-                        dash_peak_rss = rss
-                    elif kind == "repo_b" and rss > repo_b_peak_rss:
-                        repo_b_peak_rss = rss
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
+    sampler = ResourceSampler(interval_seconds=0.05, include_children=True)
 
     try:
         # Step 1: Start Process 4 (Lock Isolation Guard)
@@ -510,6 +551,7 @@ def run_concurrency_validation(
         dummy_db_path = dummy_db_dir / "streaming.duckdb"
 
         lock_proc = _run_lock_guard_process(dummy_db_path)
+        sampler.register_target("lock", lock_proc.pid)
         
         # Assert that dummy_db is indeed exclusively locked by Process 4
         import duckdb
@@ -540,6 +582,7 @@ def run_concurrency_validation(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        sampler.register_target("dashboard", server_proc.pid)
 
         # Health-check server until ready
         import requests
@@ -581,6 +624,7 @@ def run_concurrency_validation(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+        sampler.register_target("repo_b", repo_b_proc.pid)
 
         # Step 5: Launch Process 1 (Writer Subprocess)
         writer_proc = subprocess.Popen(
@@ -597,6 +641,10 @@ def run_concurrency_validation(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+        sampler.register_target("writer", writer_proc.pid)
+
+        # Start continuous resource sampling across all 4 targets
+        sampler.start()
 
         # Step 6: Concurrently execute Dashboard HTTP load (150+ requests)
         dashboard_latencies: List[float] = []
@@ -618,13 +666,13 @@ def run_concurrency_validation(
         urls_to_fire = []
         for i in range(dashboard_requests):
             sym = SYMBOLS[i % len(SYMBOLS)]
+            enc_sym = urllib.parse.quote(sym, safe="")
             tmpl = endpoints[i % len(endpoints)]
-            urls_to_fire.append(tmpl.format(sym=sym))
+            urls_to_fire.append(tmpl.format(sym=enc_sym))
 
         with ThreadPoolExecutor(max_workers=5) as pool:
             futures = [pool.submit(_fire_request, u) for u in urls_to_fire]
             for f in as_completed(futures):
-                sample_peaks()
                 try:
                     code, lat = f.result()
                     if code == 200:
@@ -638,13 +686,11 @@ def run_concurrency_validation(
         w_start = time.perf_counter()
         w_timeout = 60.0
         while writer_proc.poll() is None:
-            sample_peaks()
             time.sleep(0.05)
             if time.perf_counter() - w_start > w_timeout:
                 writer_proc.kill()
                 raise TimeoutError(f"Writer process timed out after {w_timeout}s")
 
-        sample_peaks()
         w_out, w_err = writer_proc.communicate()
         if writer_proc.returncode != 0:
             logger.error(f"Writer stderr: {w_err.decode('utf-8', errors='replace')}")
@@ -657,20 +703,20 @@ def run_concurrency_validation(
         rb_start = time.perf_counter()
         rb_timeout = 60.0
         while repo_b_proc.poll() is None:
-            sample_peaks()
             time.sleep(0.05)
             if time.perf_counter() - rb_start > rb_timeout:
                 repo_b_proc.kill()
                 raise TimeoutError(f"Repo B process timed out after {rb_timeout}s")
 
-        sample_peaks()
         rb_out, rb_err = repo_b_proc.communicate()
         if repo_b_proc.returncode != 0:
             logger.error(f"Repo B stderr: {rb_err.decode('utf-8', errors='replace')}")
             raise RuntimeError(f"Repo B process failed with code {repo_b_proc.returncode}")
 
     finally:
-        # Step 9: Reaping and stopping all child processes safely
+        # Step 9: Stop resource sampler and reap all child processes safely
+        res_summary = sampler.stop()
+
         for p in [writer_proc, repo_b_proc, server_proc, lock_proc]:
             if p is not None and p.poll() is None:
                 try:
@@ -703,6 +749,26 @@ def run_concurrency_validation(
     dash_avg = sum(dashboard_latencies) / len(dashboard_latencies) if dashboard_latencies else 0.0
     dash_max = max(dashboard_latencies) if dashboard_latencies else 0.0
 
+    # Visibility freshness latency calculation
+    writer_arrivals = writer_data.get("arrival_records", {})
+    repo_b_visible = repo_b_data.get("visible_records", {})
+    freshness_latencies = []
+    for iid, arr_t in writer_arrivals.items():
+        if iid in repo_b_visible:
+            lat = (repo_b_visible[iid] - arr_t) * 1000.0
+            if lat >= 0:
+                freshness_latencies.append(lat)
+    freshness_latencies.sort()
+    if freshness_latencies:
+        idx99_fresh = min(int(len(freshness_latencies) * 0.99), len(freshness_latencies) - 1)
+        freshness_p99 = round(freshness_latencies[idx99_fresh], 3)
+    else:
+        freshness_p99 = 0.0
+
+    writer_peak_rss = res_summary.per_process_peak_rss_mb.get("writer", 0.0)
+    dash_peak_rss = res_summary.per_process_peak_rss_mb.get("dashboard", 0.0)
+    repo_b_peak_rss = res_summary.per_process_peak_rss_mb.get("repo_b", 0.0)
+
     metrics = ConcurrencyMetrics(
         total_ticks_published=writer_data["total_published"],
         writer_p99_lag_ms=writer_data["p99_lag_ms"],
@@ -726,10 +792,14 @@ def run_concurrency_validation(
         writer_peak_rss_mb=round(writer_peak_rss, 2),
         dashboard_peak_rss_mb=round(dash_peak_rss, 2),
         repo_b_peak_rss_mb=round(repo_b_peak_rss, 2),
+        aggregate_peak_rss_mb=round(res_summary.peak_aggregate_rss_mb, 2),
+        aggregate_peak_cpu_percent=round(res_summary.peak_cpu_percent, 2),
+        freshness_p99_ms=freshness_p99,
+        freshness_samples_count=len(freshness_latencies),
         open_fds_count=open_fds,
     )
 
-    # Evaluate the 6 Gates
+    # Evaluate the 7 Gates
     gates = [
         ValidationGate(
             name="DuckDB File Lock Errors (IOException)",
@@ -767,6 +837,12 @@ def run_concurrency_validation(
             actual=f"{metrics.repo_b_query_rows} / {metrics.total_ticks_published}",
             passed=metrics.data_parity_match,
         ),
+        ValidationGate(
+            name="Writer-to-Repo B Freshness SLA (p99)",
+            target="<= 2000.00 ms",
+            actual=f"{metrics.freshness_p99_ms:.2f} ms",
+            passed=(metrics.freshness_p99_ms > 0 and metrics.freshness_p99_ms <= 2000.0),
+        ),
     ]
 
     all_passed = all(g.passed for g in gates)
@@ -803,11 +879,13 @@ def print_summary_table(summary: ValidationSummary):
     print(f"   • Dashboard Load: {m.dashboard_requests} requests, avg={m.dashboard_avg_latency_ms:.2f}ms, p95={m.dashboard_p95_latency_ms:.2f}ms (errors: {m.dashboard_error_count})")
     print(f"   • Repo B Standalone: {m.repo_b_iterations} iterations, avg={m.repo_b_avg_latency_ms:.2f}ms, p95={m.repo_b_p95_latency_ms:.2f}ms")
     print(f"   • Data Parity: 100% Exact Match ({m.repo_b_query_rows:,} verified rows)")
-    print(f"   • Peak Memory: writer={m.writer_peak_rss_mb:.1f}MB, dashboard={m.dashboard_peak_rss_mb:.1f}MB, repo_b={m.repo_b_peak_rss_mb:.1f}MB | Open FDs: {m.open_fds_count}")
+    print(f"   • Freshness: p99={m.freshness_p99_ms:.2f}ms across {m.freshness_samples_count} tracked arrivals")
+    print(f"   • Peak Memory: writer={m.writer_peak_rss_mb:.1f}MB, dashboard={m.dashboard_peak_rss_mb:.1f}MB, repo_b={m.repo_b_peak_rss_mb:.1f}MB | Agg Peak RSS: {m.aggregate_peak_rss_mb:.1f}MB, Agg Peak CPU: {m.aggregate_peak_cpu_percent:.1f}% | Open FDs: {m.open_fds_count}")
     print("-" * 88)
     if summary.overall_passed:
-        print(f" OVERALL RESULT: ALL 6 PERFORMANCE & INTEGRITY GATES PASSED [Total time: {summary.duration_seconds:.2f}s]")
+        print(f" OVERALL RESULT: ALL 7 PERFORMANCE & INTEGRITY GATES PASSED [Total time: {summary.duration_seconds:.2f}s]")
     else:
+        print(f" OVERALL RESULT: ONE OR MORE GATES FAILED [Total time: {summary.duration_seconds:.2f}s]")
         print(f" OVERALL RESULT: ONE OR MORE GATES FAILED [Total time: {summary.duration_seconds:.2f}s]")
     print("=" * 88 + "\n")
 

@@ -126,3 +126,54 @@ def test_invalid_arguments_are_rejected():
         DeterministicDataset(row_count=0)
     with pytest.raises(ValueError):
         list(DeterministicDataset(row_count=10).iter_batches(batch_size=0))
+
+
+def test_perf_01_default_symbols_has_at_least_19_symbols():
+    assert len(DEFAULT_SYMBOLS) >= 19
+    assert len(set(DEFAULT_SYMBOLS)) == len(DEFAULT_SYMBOLS)
+
+
+def test_perf_01_month_window_and_session_window_configurations():
+    # Month window (default)
+    month_ds = DeterministicDataset(row_count=1_000, seed=42, window_type="month")
+    month_ds.generate()
+    span = month_ds.manifest.date_spans
+    assert span["days"] >= 28.0
+
+    # Session window
+    session_ds = DeterministicDataset(row_count=1_000, seed=42, window_type="session")
+    session_ds.generate()
+    s_span = session_ds.manifest.date_spans
+    assert s_span["duration_seconds"] <= 12 * 3600
+
+
+def test_perf_01_zipfian_skew_distribution_monotonicity():
+    dataset = DeterministicDataset(row_count=10_000, seed=123)
+    dataset.generate()
+    counts = dataset.manifest.symbol_counts
+    # Top 3 symbols should have more ticks than bottom 10 symbols
+    top_3 = sum(counts[DEFAULT_SYMBOLS[i]] for i in range(3))
+    bottom_10 = sum(counts[DEFAULT_SYMBOLS[-i]] for i in range(1, 11))
+    assert top_3 > bottom_10
+    # Every symbol should have received at least some ticks
+    assert len(counts) == len(DEFAULT_SYMBOLS)
+
+
+def test_perf_01_manifest_persistence_and_distributions(tmp_path):
+    dataset = DeterministicDataset(row_count=1_000, seed=77)
+    dataset.generate()
+    
+    # Save manifest
+    target = tmp_path / "manifest.json"
+    dataset.manifest.save_manifest(target)
+    assert target.is_file()
+    
+    import json
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data["seed"] == 77
+    assert data["row_counts"]["produced"] == 1_000
+    assert len(data["symbols"]) >= 19
+    assert "date_spans" in data
+    assert "partition_distribution" in data
+    assert len(data["partition_distribution"]) > 0
+

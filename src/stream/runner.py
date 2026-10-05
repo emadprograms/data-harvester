@@ -152,6 +152,7 @@ class StreamingEngine:
         self.registry = None
         self.registry_poll_interval = float(registry_poll_interval)
         self.registry_debounce_interval: float = float(registry_debounce_interval)
+        self._is_shutdown = False
 
         if self.lake_root is not None:
             self.lake_root = Path(self.lake_root).resolve()
@@ -310,7 +311,7 @@ class StreamingEngine:
     async def _handle_capital_tick(self, tick):
         """Feeds a tick from Capital.com directly into the write queue, filtering out excluded/purged assets."""
         if isinstance(tick, dict):
-            raw_epic = tick.get("epic", "")
+            raw_epic = tick.get("epic", "") or tick.get("symbol", "")
             # Subscription fencing: drop if symbol is not active
             if self._subscriptions_initialized or self.active_streaming_symbols:
                 if raw_epic not in self.active_streaming_symbols:
@@ -322,7 +323,20 @@ class StreamingEngine:
             ts_str = ts.strftime('%Y-%m-%d %H:%M:%S.%f') if isinstance(ts, datetime) else str(ts)
             bid = tick.get("bid")
             ask = tick.get("ask")
-            tick_tuple = (ts_str, symbol, price, 1.0, bid, ask, "CAPITAL", "REG")
+            vol = float(tick.get("volume", 1.0))
+            src = tick.get("source", "CAPITAL")
+            sess = tick.get("session", "REG")
+            ingest_id = tick.get("ingest_id")
+            if ingest_id:
+                tick_tuple = (ts_str, symbol, price, vol, bid, ask, src, sess, str(ingest_id))
+            else:
+                tick_tuple = (ts_str, symbol, price, vol, bid, ask, src, sess)
+        elif hasattr(tick, "symbol") and hasattr(tick, "timestamp"):
+            sym = getattr(tick, "symbol")
+            if self._subscriptions_initialized or self.active_streaming_symbols:
+                if sym not in self.active_streaming_symbols:
+                    return
+            tick_tuple = tick
         else:
             tick_tuple = tick
             if isinstance(tick_tuple, (list, tuple)) and len(tick_tuple) > 1:
@@ -388,7 +402,11 @@ class StreamingEngine:
         cancelled = False
 
         def normalize_bar(tick):
-            if isinstance(tick, (list, tuple)) and len(tick) == 9:
+            if (
+                isinstance(tick, (list, tuple))
+                and len(tick) == 9
+                and tick[8] in ("CAPITAL", "BINANCE", "SIMULATED", "MANUAL")
+            ):
                 return (tick[0], tick[1], tick[5], tick[6], None, None, tick[8], tick[7])
             return tick
 
@@ -758,7 +776,10 @@ class StreamingEngine:
 
     async def shutdown(self, drain_timeout: float = 10.0):
         """Stop providers and report failure rather than acknowledge unsaved work."""
+        if getattr(self, "_is_shutdown", False):
+            return
         self.running = False
+        self._is_shutdown = True
         if self.drain_delay > 0:
             await asyncio.sleep(self.drain_delay)
 
