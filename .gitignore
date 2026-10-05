@@ -54,3 +54,6 @@ buy_cash/
 
 # Pytest cache
 .pytest_cache/
+
+# GSD Core agent tooling (local install, not shared)
+.claude/
