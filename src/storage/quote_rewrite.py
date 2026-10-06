@@ -14,6 +14,7 @@ from pathlib import Path
 import shutil
 import sys
 from typing import Any, Callable, Dict, List, Optional
+import uuid
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -80,18 +81,31 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
 
 def _load_progress(root: Path) -> Dict[str, Any]:
     path = root / "_maintenance" / PROGRESS_NAME
+    empty = {"run_id": "", "finished": [], "files": {}}
     if not path.is_file():
-        return {"finished": []}
+        return empty
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"finished": []}
+        return empty
     finished = data.get("finished") or []
-    return {"finished": list(finished)}
+    files = data.get("files") or {}
+    if not isinstance(files, dict):
+        files = {}
+    return {
+        "run_id": str(data.get("run_id") or ""),
+        "finished": list(finished),
+        "files": files,
+    }
 
 
-def _save_progress(root: Path, finished: List[str]) -> None:
-    _atomic_write_json(root / "_maintenance" / PROGRESS_NAME, {"finished": sorted(set(finished))})
+def _save_progress(root: Path, progress: Dict[str, Any]) -> None:
+    payload = {
+        "run_id": progress.get("run_id") or "",
+        "finished": sorted(set(progress.get("finished") or [])),
+        "files": progress.get("files") or {},
+    }
+    _atomic_write_json(root / "_maintenance" / PROGRESS_NAME, payload)
 
 
 def _list_tick_files(root: Path) -> List[Path]:
@@ -164,11 +178,60 @@ def _rewrite_table(table: pa.Table) -> tuple[pa.Table, List[Dict[str, Any]]]:
     return out, quarantine
 
 
-def _copy_lake(lake_root: Path, backup_root: Path, copy_impl: Callable[..., Any]) -> None:
+def _file_inventory(root: Path, *, exclude_names: Optional[set[str]] = None) -> Dict[str, Dict[str, Any]]:
+    skip = exclude_names or set()
+    inventory: Dict[str, Dict[str, Any]] = {}
+    if not root.exists():
+        return inventory
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.name in skip:
+            continue
+        rel = path.relative_to(root).as_posix()
+        inventory[rel] = {"size": path.stat().st_size, "sha256": _sha256_file(path)}
+    return inventory
+
+
+def _inventories_match(expected: Dict[str, Dict[str, Any]], actual: Dict[str, Dict[str, Any]]) -> bool:
+    if set(expected) != set(actual):
+        return False
+    for rel, meta in expected.items():
+        other = actual.get(rel) or {}
+        if int(other.get("size", -1)) != int(meta.get("size", -2)):
+            return False
+        if str(other.get("sha256", "")) != str(meta.get("sha256", "")):
+            return False
+    return True
+
+
+def _read_backup_marker(backup_root: Path) -> Optional[Dict[str, Any]]:
     marker = backup_root / BACKUP_MARKER
-    if marker.is_file():
-        return
-    if backup_root.exists() and any(backup_root.iterdir()):
+    if not marker.is_file():
+        return None
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or "run_id" not in data or "lake_root" not in data:
+        return None
+    return data
+
+
+def _copy_lake(
+    lake_root: Path,
+    backup_root: Path,
+    copy_impl: Callable[..., Any],
+    *,
+    run_id: str,
+) -> None:
+    marker = backup_root / BACKUP_MARKER
+    existing = _read_backup_marker(backup_root)
+    if existing is not None:
+        if existing.get("lake_root") == str(lake_root) and existing.get("run_id") == run_id:
+            backup_files = _file_inventory(backup_root, exclude_names={BACKUP_MARKER})
+            if _inventories_match(existing.get("files") or {}, backup_files):
+                return
+        raise QuoteRewriteError(f"backup marker does not match lake {lake_root} run {run_id}")
+    if backup_root.exists() and any(path.name != BACKUP_MARKER for path in backup_root.iterdir()):
         raise QuoteRewriteError(f"backup copy is incomplete at {backup_root}")
     try:
         copy_impl(lake_root, backup_root, dirs_exist_ok=True)
@@ -176,7 +239,12 @@ def _copy_lake(lake_root: Path, backup_root: Path, copy_impl: Callable[..., Any]
         copy_impl(lake_root, backup_root)
     except OSError as exc:
         raise QuoteRewriteError(f"lake copy failed: {exc}") from exc
-    marker.write_text("ok\n", encoding="utf-8")
+    live = _file_inventory(lake_root)
+    backup_files = _file_inventory(backup_root, exclude_names={BACKUP_MARKER})
+    if not _inventories_match(live, backup_files):
+        raise QuoteRewriteError("backup copy is incomplete: size or checksum mismatch")
+    payload = {"lake_root": str(lake_root), "run_id": run_id, "files": live}
+    marker.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def _receipt_index(root: Path) -> Dict[str, Dict[str, Any]]:
@@ -242,20 +310,6 @@ def _swap_file(root: Path, relative: str, new_table: pa.Table) -> None:
     os.replace(staging, live)
 
 
-def _probe_lock(root: Path) -> None:
-    probe = LakePublisherLock(
-        root,
-        writer_id="quote-rewrite-probe",
-        ignore_maintenance=True,
-    )
-    try:
-        probe.acquire(blocking=False)
-    except LakeOwnershipError as exc:
-        raise QuoteRewriteError(f"publisher lock already held for {root}") from exc
-    else:
-        probe.release()
-
-
 def _foreign_guard(root: Path) -> None:
     guard = root / "_maintenance" / MAINTENANCE_GUARD_FILENAME
     if not guard.exists():
@@ -271,7 +325,10 @@ def _foreign_guard(root: Path) -> None:
 def _hold_lock(root: Path) -> LakePublisherLock:
     guard = root / "_maintenance" / MAINTENANCE_GUARD_FILENAME
     lock = LakePublisherLock(root, writer_id=f"maintenance:{REWRITE_OPERATION}")
-    lock.acquire(blocking=False)
+    try:
+        lock.acquire(blocking=False)
+    except LakeOwnershipError as exc:
+        raise QuoteRewriteError(f"publisher lock already held for {root}") from exc
     if not guard.exists():
         guard.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -296,6 +353,25 @@ def _release_lock(root: Path, lock: LakePublisherLock, successful: bool) -> None
     lock.release()
 
 
+def _journal_entry(kept_rows: int, quarantine: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return {
+        "kept_rows": int(kept_rows),
+        "quarantined_rows": len(quarantine),
+        "quarantine": quarantine,
+    }
+
+
+def _cumulative_from_journal(progress: Dict[str, Any]) -> tuple[int, List[Dict[str, Any]]]:
+    kept_total = 0
+    quarantine_all: List[Dict[str, Any]] = []
+    files = progress.get("files") or {}
+    for relative in progress.get("finished") or []:
+        info = files.get(relative) or {}
+        kept_total += int(info.get("kept_rows") or 0)
+        quarantine_all.extend(list(info.get("quarantine") or []))
+    return kept_total, quarantine_all
+
+
 def rewrite_quote_lake(
     *,
     lake_root: Path,
@@ -310,7 +386,6 @@ def rewrite_quote_lake(
     if not (lake_root / LAKE_METADATA_FILENAME).is_file():
         raise QuoteRewriteError(f"lake.json missing at {lake_root}")
 
-    _probe_lock(lake_root)
     _foreign_guard(lake_root)
 
     lake_bytes = _dir_size_bytes(lake_root)
@@ -320,46 +395,51 @@ def rewrite_quote_lake(
             f"backup will not fit: lake is {lake_bytes} bytes, free_bytes={available}"
         )
 
-    copier = copy_impl or shutil.copytree
-    try:
-        _copy_lake(lake_root, backup_root, copier)
-    except QuoteRewriteError:
-        raise
-    except OSError as exc:
-        raise QuoteRewriteError(f"lake copy failed: {exc}") from exc
-
     lock = _hold_lock(lake_root)
-    finished = list(_load_progress(lake_root)["finished"])
-    finished_set = set(finished)
-    quarantine_all: List[Dict[str, Any]] = []
-    kept_total = 0
-    rewritten = 0
-    skipped = 0
+    progress = _load_progress(lake_root)
+    if not progress.get("run_id"):
+        progress["run_id"] = uuid.uuid4().hex
+        _save_progress(lake_root, progress)
     try:
+        copier = copy_impl or shutil.copytree
+        try:
+            _copy_lake(lake_root, backup_root, copier, run_id=str(progress["run_id"]))
+        except QuoteRewriteError:
+            raise
+        except Exception as exc:
+            raise QuoteRewriteError(f"lake copy failed: {exc}") from exc
+
+        finished = list(progress.get("finished") or [])
+        finished_set = set(finished)
+        files_journal: Dict[str, Any] = dict(progress.get("files") or {})
+        rewritten = 0
+        skipped = 0
         files = _list_tick_files(lake_root)
         for path in files:
             relative = path.relative_to(lake_root).as_posix()
             table = pq.ParquetFile(path).read()
-            if "bid_price" in table.schema.names:
+            already_v2 = "bid_price" in table.schema.names
+            if already_v2 or relative in finished_set:
                 if relative not in finished_set:
                     finished.append(relative)
                     finished_set.add(relative)
-                    _save_progress(lake_root, finished)
+                    progress["finished"] = finished
+                    progress["files"] = files_journal
+                    _save_progress(lake_root, progress)
                 skipped += 1
                 if after_file is not None:
                     after_file(relative)
                 continue
-            if relative in finished_set:
-                skipped += 1
-                continue
             new_table, quarantined = _rewrite_table(table)
+            files_journal[relative] = _journal_entry(new_table.num_rows, quarantined)
+            progress["files"] = files_journal
+            _save_progress(lake_root, progress)
             _retire_original(lake_root, relative, path)
             _swap_file(lake_root, relative, new_table)
-            kept_total += new_table.num_rows
-            quarantine_all.extend(quarantined)
             finished.append(relative)
             finished_set.add(relative)
-            _save_progress(lake_root, finished)
+            progress["finished"] = finished
+            _save_progress(lake_root, progress)
             rewritten += 1
             if after_file is not None:
                 after_file(relative)
@@ -383,18 +463,22 @@ def rewrite_quote_lake(
         payload["compatible_versions"] = versions
         _atomic_write_json(lake_root / LAKE_METADATA_FILENAME, payload)
 
+        progress["finished"] = finished
+        progress["files"] = files_journal
+        kept_total, quarantine_all = _cumulative_from_journal(progress)
         report = {
             "kept_rows": kept_total,
             "quarantined_rows": len(quarantine_all),
             "quarantine": quarantine_all,
             "files_rewritten": rewritten,
             "files_skipped": skipped,
+            "run_id": progress["run_id"],
         }
         _atomic_write_json(lake_root / "_maintenance" / QUARANTINE_REPORT, report)
         _release_lock(lake_root, lock, successful=True)
         return report
     except Exception:
-        _save_progress(lake_root, finished)
+        _save_progress(lake_root, progress)
         _release_lock(lake_root, lock, successful=False)
         raise
 

@@ -8,6 +8,7 @@ ask are appended as schema v2. Existing files are not rewritten. The publisher
 lock is checked before any Databento call. Cost is still checked before each
 day so the credit budget is respected.
 """
+import hashlib
 import os
 from pathlib import Path
 import time
@@ -52,16 +53,17 @@ def _is_approved_equity(symbol: str) -> bool:
     )
 
 
-def get_target_stock_symbols() -> List[str]:
+def get_target_stock_symbols(lake_root: Optional[Any] = None) -> List[str]:
     """
-    Active symbols from the lake's _control/registry.json, restricted to the
-    approved single-stock equity scope.
+    Active symbols from the selected lake's _control/registry.json, restricted
+    to the approved single-stock equity scope.
     """
     from src.storage.config import resolve_tick_lake_root
     from src.storage.registry import SymbolRegistry
 
     try:
-        registry = SymbolRegistry(root=resolve_tick_lake_root())
+        root = Path(lake_root) if lake_root is not None else resolve_tick_lake_root()
+        registry = SymbolRegistry(root=root)
     except Exception:
         return []
     if not registry.root.exists():
@@ -77,24 +79,6 @@ def get_target_stock_symbols() -> List[str]:
         for entry in entries
     }
     return sorted(sym for sym in symbols if sym and _is_approved_equity(sym))
-
-
-def get_day_trading_bounds(trading_date: date) -> Tuple[datetime, datetime, datetime]:
-    """
-    Computes exact UTC start and end bounds for:
-    - Last 30 minutes of premarket: 09:00:00 ET to 09:30:00 ET
-    - Regular market hours: 09:30:00 ET to 16:00:00 ET
-    Returns (start_utc, reg_open_utc, end_utc).
-    """
-    dt_pre_start = datetime(trading_date.year, trading_date.month, trading_date.day, 9, 0, 0, tzinfo=NY_TZ)
-    dt_reg_open = datetime(trading_date.year, trading_date.month, trading_date.day, 9, 30, 0, tzinfo=NY_TZ)
-    dt_reg_close = datetime(trading_date.year, trading_date.month, trading_date.day, 16, 0, 0, tzinfo=NY_TZ)
-
-    return (
-        dt_pre_start.astimezone(timezone.utc),
-        dt_reg_open.astimezone(timezone.utc),
-        dt_reg_close.astimezone(timezone.utc),
-    )
 
 
 def get_databento_client(api_key: Optional[str] = None) -> Any:
@@ -113,58 +97,25 @@ def get_databento_client(api_key: Optional[str] = None) -> Any:
     return db.Historical(api_key)
 
 
-def estimate_day_cost(
+def estimate_interval_cost(
     client: Any,
     symbols: List[str],
-    trading_date: date,
+    start: datetime,
+    end: datetime,
     schema: str = "tbbo",
-    dataset: str = "DBEQ.BASIC"
+    dataset: str = "DBEQ.BASIC",
 ) -> float:
-    """
-    Queries Databento metadata API to get the exact cost in USD for the day's requested slice.
-    """
-    start_utc, _, end_utc = get_day_trading_bounds(trading_date)
-    start_str = start_utc.strftime("%Y-%m-%dT%H:%M:%S")
-    end_str = end_utc.strftime("%Y-%m-%dT%H:%M:%S")
-
+    """Cost of one actual Databento request window, in USD."""
+    start_str = start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    end_str = end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     cost = client.metadata.get_cost(
         dataset=dataset,
         symbols=symbols,
         schema=schema,
         start=start_str,
-        end=end_str
+        end=end_str,
     )
     return float(cost)
-
-
-def is_day_already_backfilled(trading_date: date, symbols: Optional[List[str]] = None) -> bool:
-    """
-    Checks whether DATABENTO ticks already exist in the lake for the trading day.
-
-    Only gap-filled history counts: a day captured live by Capital.com must not
-    stop the gap-filler from adding what it is missing.
-    """
-    from src.storage.config import resolve_tick_lake_root
-    from src.storage.reader import TickLakeReader
-
-    start_utc, _, end_utc = get_day_trading_bounds(trading_date)
-    window = (start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None))
-
-    try:
-        reader = TickLakeReader(root=resolve_tick_lake_root())
-    except Exception:
-        return False
-
-    filled = 0
-    for symbol in (symbols or [None]):
-        try:
-            rows = reader.query_ticks(symbol=symbol, start=window[0], end=window[1], limit=1001)
-        except Exception:
-            return False
-        filled += sum(1 for row in rows if str(row.get("source", "")).upper() == "DATABENTO")
-        if filled > 1000:
-            return True
-    return False
 
 
 QUOTE_V2_COLUMNS = ["timestamp", "symbol", "bid_price", "ask_price", "source", "session"]
@@ -190,7 +141,8 @@ def normalize_tbbo_frame(df: pd.DataFrame, trading_date: date) -> pd.DataFrame:
     if ts_col not in frame.columns or "symbol" not in frame.columns:
         return empty
 
-    _start_utc, reg_open_utc, _end_utc = get_day_trading_bounds(trading_date)
+    from src.data.gap_fill import session_label
+
     ts_series = pd.to_datetime(frame[ts_col], utc=True)
     bid = (
         pd.to_numeric(frame["bid_px_00"], errors="coerce")
@@ -202,7 +154,7 @@ def normalize_tbbo_frame(df: pd.DataFrame, trading_date: date) -> pd.DataFrame:
         if "ask_px_00" in frame.columns
         else pd.Series(float("nan"), index=frame.index)
     )
-    session = ts_series.map(lambda ts: "PRE" if ts < reg_open_utc else "REG")
+    session = ts_series.map(lambda ts: session_label(ts.to_pydatetime(), trading_date))
     norm_df = pd.DataFrame(
         {
             "timestamp": ts_series.dt.strftime("%Y-%m-%d %H:%M:%S.%f"),
@@ -218,48 +170,58 @@ def normalize_tbbo_frame(df: pd.DataFrame, trading_date: date) -> pd.DataFrame:
     return norm_df.reset_index(drop=True)
 
 
-def fetch_and_normalize_day(
-    client: Any,
-    symbols: List[str],
-    trading_date: date,
-    schema: str = "tbbo",
-    dataset: str = "DBEQ.BASIC"
-) -> pd.DataFrame:
-    """
-    Downloads tick TBBO data from Databento and maps it into schema v2:
-    [timestamp, symbol, bid_price, ask_price, source, session]
-    """
-    start_utc, _reg_open_utc, end_utc = get_day_trading_bounds(trading_date)
-    start_str = start_utc.strftime("%Y-%m-%dT%H:%M:%S")
-    end_str = end_utc.strftime("%Y-%m-%dT%H:%M:%S")
-
-    data = client.timeseries.get_range(
-        dataset=dataset,
-        symbols=symbols,
-        schema=schema,
-        start=start_str,
-        end=end_str
+def _stable_tbbo_ingest_id(record: Dict[str, Any]) -> str:
+    payload = "|".join(
+        [
+            str(record.get("symbol", "")),
+            str(record.get("timestamp", "")),
+            str(record.get("bid_price", "")),
+            str(record.get("ask_price", "")),
+            str(record.get("source", "DATABENTO")),
+        ]
     )
-    return normalize_tbbo_frame(data.to_df(), trading_date)
+    return "dbtbbo_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
-def publish_ticks_to_lake(df: pd.DataFrame, lake_root: Optional[Any] = None) -> int:
+def publish_ticks_to_lake(
+    df: pd.DataFrame,
+    lake_root: Optional[Any] = None,
+    batch_id: Optional[str] = None,
+    writer_id: str = "databento_backfill",
+    sequence: int = 0,
+    ownership_lock: Optional[Any] = None,
+) -> int:
     """
     Publishes normalized ticks into the Parquet tick lake — the only store.
 
     Goes through the product writer, so an in-progress maintenance window or a
     competing publisher makes this raise rather than write a partial day.
+    A stable batch_id replays an existing receipt instead of appending a copy.
     """
     if df.empty:
         return 0
 
     from src.storage.config import resolve_tick_lake_root
     from src.storage.parquet_writer import TickLakeWriter
+    from src.storage.publication import LakePublisher
 
     root = Path(lake_root) if lake_root is not None else Path(resolve_tick_lake_root())
     records = df.to_dict("records")
+    for record in records:
+        ingest_id = record.get("ingest_id")
+        if ingest_id is None or ingest_id == "" or (isinstance(ingest_id, float) and pd.isna(ingest_id)):
+            record["ingest_id"] = _stable_tbbo_ingest_id(record)
 
-    writer = TickLakeWriter(root=root, writer_id="databento_backfill")
+    if batch_id:
+        with LakePublisher(
+            root=root,
+            writer_id=writer_id,
+            ownership_lock=ownership_lock,
+        ) as publisher:
+            publisher.publish_batch(records, batch_id=batch_id, sequence=sequence)
+        return len(records)
+
+    writer = TickLakeWriter(root=root, writer_id=writer_id)
     try:
         writer.write_ticks(records)
         writer.flush(block=True)
@@ -295,10 +257,20 @@ def run_databento_backfill(
     rewritten. Cost is checked before each day so the credit budget still stops
     the walk.
     """
+    from src.data.gap_fill import (
+        GapFillBudgetExceeded,
+        GapFillEstimateError,
+        fill_named_day,
+        is_full_nyse_holiday,
+        refuse_if_lake_locked,
+    )
+    from src.storage.config import resolve_tick_lake_root
+
+    root = Path(lake_root) if lake_root is not None else resolve_tick_lake_root()
     if client is None:
         client = get_databento_client()
 
-    symbols = get_target_stock_symbols()
+    symbols = get_target_stock_symbols(root)
     if not symbols:
         return {"success": False, "error": "No eligible stock symbols found in symbol_map."}
 
@@ -319,10 +291,6 @@ def run_databento_backfill(
     print(f"Starting from: {start_date} going backward", flush=True)
     print(f"============================================================", flush=True)
 
-    from src.data.gap_fill import fill_named_day, is_full_nyse_holiday, refuse_if_lake_locked
-    from src.storage.config import resolve_tick_lake_root
-
-    root = Path(lake_root) if lake_root is not None else resolve_tick_lake_root()
     refuse_if_lake_locked(root)
 
     curr_day = start_date
@@ -343,28 +311,24 @@ def run_databento_backfill(
             print(f"⏩ [{day_str}] Full NYSE holiday. Skipping.", flush=True)
             continue
 
-        # Estimate cost for this trading day
+        remaining = max_budget - accumulated_cost
+        print(f"📥 [{day_str}] Filling silent stretches...", flush=True)
         try:
-            day_cost = estimate_day_cost(client, symbols, trading_day, schema="tbbo")
-        except Exception as e:
-            print(f"⚠️ [{day_str}] Cost estimate failed (holiday or market closed): {e}. Skipping.", flush=True)
+            result = fill_named_day(
+                trading_day,
+                client=client,
+                lake_root=root,
+                symbols=symbols,
+                remaining_budget=remaining,
+            )
+        except GapFillBudgetExceeded as exc:
+            print(f"🛑 Budget limit reached! {exc}. Stopping.", flush=True)
+            break
+        except GapFillEstimateError as exc:
+            print(f"⚠️ [{day_str}] Cost estimate failed (holiday or market closed): {exc}. Skipping.", flush=True)
             continue
 
-        # A zero estimate for the old regular-session window must not hide a
-        # pre-market or post-market silence. Holidays are skipped above.
-        # Check budget limit
-        if accumulated_cost + day_cost > max_budget:
-            print(f"🛑 Budget limit reached! (Next day ${day_cost:.2f} would exceed budget of ${max_budget:.2f}). Stopping.", flush=True)
-            break
-
-        # Request only all-symbol silence. Existing files are not rewritten.
-        print(f"📥 [{day_str}] Filling silent stretches... (Estimated Cost: ${day_cost:.3f} USD)", flush=True)
-        result = fill_named_day(
-            trading_day,
-            client=client,
-            lake_root=root,
-            symbols=symbols,
-        )
+        day_cost = float(result.get("estimated_cost") or 0.0)
         ticks_inserted = int(result["rows"])
         if result["requests"] or ticks_inserted:
             accumulated_cost += day_cost

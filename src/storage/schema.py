@@ -341,6 +341,36 @@ LAKE_SCHEMA_V2 = pa.schema(
     },
 )
 
+SCHEMA_MIXED_COLUMNS = [
+    "timestamp",
+    "symbol",
+    "price",
+    "volume",
+    "bid",
+    "ask",
+    "bid_price",
+    "ask_price",
+    "source",
+    "session",
+    "ingest_id",
+]
+
+LAKE_SCHEMA_MIXED = pa.schema(
+    [
+        pa.field("timestamp", pa.timestamp("us"), nullable=False),
+        pa.field("symbol", pa.string(), nullable=False),
+        pa.field("price", pa.float64(), nullable=True),
+        pa.field("volume", pa.float64(), nullable=True),
+        pa.field("bid", pa.float64(), nullable=True),
+        pa.field("ask", pa.float64(), nullable=True),
+        pa.field("bid_price", pa.float64(), nullable=True),
+        pa.field("ask_price", pa.float64(), nullable=True),
+        pa.field("source", pa.string(), nullable=True),
+        pa.field("session", pa.string(), nullable=True),
+        pa.field("ingest_id", pa.string(), nullable=False),
+    ],
+)
+
 
 @dataclass
 class QuoteV2:

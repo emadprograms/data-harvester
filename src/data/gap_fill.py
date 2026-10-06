@@ -4,6 +4,11 @@ This module does not rewrite existing files. A named day is scanned, qualifying
 silence is requested, and returned quotes are appended as schema v2.
 """
 
+import argparse
+import hashlib
+import json
+import os
+import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Sequence, Set, Tuple
@@ -29,6 +34,25 @@ Stretch = Tuple[datetime, datetime]
 
 class GapFillRefused(RuntimeError):
     """The fill did not start because the lake writer already owns the lock."""
+
+
+class GapFillBudgetExceeded(RuntimeError):
+    """The summed interval estimate exceeds the remaining Databento budget."""
+
+
+class GapFillEstimateError(RuntimeError):
+    """Cost estimation for the actual request intervals failed."""
+
+
+# Exceptional NYSE full closures in the supported historical range that are
+# not produced by the recurring holiday calendar.
+NYSE_EXCEPTIONAL_FULL_CLOSURES = frozenset(
+    {
+        date(2025, 1, 9),  # National Day of Mourning for President Carter
+    }
+)
+
+COVERAGE_FILENAME = "gap_fill_coverage.json"
 
 
 def _et(day: date, hour: int, minute: int = 0) -> datetime:
@@ -95,6 +119,7 @@ def nyse_holidays(year: int) -> Set[date]:
     next_new_year = date(year + 1, 1, 1)
     if next_new_year.weekday() == 5:
         holidays.add(date(year, 12, 31))
+    holidays.update(day for day in NYSE_EXCEPTIONAL_FULL_CLOSURES if day.year == year)
     return {day for day in holidays if day.year == year}
 
 
@@ -178,12 +203,32 @@ def _append_if_long_enough(
         found.append((start, end))
 
 
-def refuse_if_lake_locked(lake_root: Path) -> None:
-    lock = LakePublisherLock(root=lake_root, writer_id="gap_fill_probe")
+def session_label(ts: datetime, trading_date: date) -> str:
+    """Classify PRE / REG / POST using the trading day's session boundaries."""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    local = ts.astimezone(NY)
+    pre_end = _et(trading_date, 9, 30)
+    early = early_close_et(trading_date)
+    reg_end = early if early is not None else _et(trading_date, 16, 0)
+    if local < pre_end:
+        return "PRE"
+    if local < reg_end:
+        return "REG"
+    return "POST"
+
+
+def _acquire_gap_fill_lock(lake_root: Path) -> LakePublisherLock:
+    lock = LakePublisherLock(root=lake_root, writer_id="gap_fill")
     try:
         lock.acquire(blocking=False)
     except (LakeOwnershipError, LakeMaintenanceInProgressError) as exc:
         raise GapFillRefused("Gap fill refused because the live writer holds the lake lock") from exc
+    return lock
+
+
+def refuse_if_lake_locked(lake_root: Path) -> None:
+    lock = _acquire_gap_fill_lock(lake_root)
     lock.release()
 
 
@@ -251,6 +296,116 @@ def occupied_minutes_in_lake(
     return {_floor_et_minute(row[0]) for row in rows}
 
 
+def _coverage_path(root: Path) -> Path:
+    return root / "_control" / COVERAGE_FILENAME
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _load_coverage(root: Path) -> List[dict]:
+    path = _coverage_path(root)
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    intervals = data.get("intervals") if isinstance(data, dict) else data
+    if not isinstance(intervals, list):
+        return []
+    return [item for item in intervals if isinstance(item, dict)]
+
+
+def _symbol_key(symbols: Sequence[str]) -> List[str]:
+    return sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
+
+
+def _parse_coverage_time(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(NY)
+
+
+def _coverage_minutes(
+    root: Path,
+    trading_date: date,
+    symbols: Sequence[str],
+    dataset: str,
+    schema: str,
+) -> Set[datetime]:
+    wanted = _symbol_key(symbols)
+    minutes: Set[datetime] = set()
+    for record in _load_coverage(root):
+        if record.get("date") != trading_date.isoformat():
+            continue
+        if record.get("dataset") != dataset or record.get("schema") != schema:
+            continue
+        if _symbol_key(record.get("symbols") or []) != wanted:
+            continue
+        cursor = _parse_coverage_time(str(record["start"]))
+        end = _parse_coverage_time(str(record["end"]))
+        while cursor < end:
+            minutes.add(cursor)
+            cursor += timedelta(minutes=1)
+    return minutes
+
+
+def _interval_identity(
+    trading_date: date,
+    symbols: Sequence[str],
+    dataset: str,
+    schema: str,
+    start: datetime,
+    end: datetime,
+) -> str:
+    payload = "|".join(
+        [
+            trading_date.isoformat(),
+            dataset,
+            schema,
+            ",".join(_symbol_key(symbols)),
+            start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+            end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+        ]
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:40]
+    return f"gfill_{digest}"
+
+
+def _record_coverage(
+    root: Path,
+    trading_date: date,
+    symbols: Sequence[str],
+    dataset: str,
+    schema: str,
+    start: datetime,
+    end: datetime,
+    batch_id: str,
+) -> None:
+    record = {
+        "date": trading_date.isoformat(),
+        "dataset": dataset,
+        "schema": schema,
+        "symbols": _symbol_key(symbols),
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "batch_id": batch_id,
+    }
+    intervals = [
+        item
+        for item in _load_coverage(root)
+        if item.get("batch_id") != batch_id
+    ]
+    intervals.append(record)
+    _atomic_write_json(_coverage_path(root), {"intervals": intervals})
+
+
 def fill_named_day(
     trading_date: date,
     client: Any,
@@ -258,11 +413,14 @@ def fill_named_day(
     symbols: Sequence[str],
     occupied_minutes: Optional[Iterable[datetime]] = None,
     dataset: str = "DBEQ.BASIC",
+    remaining_budget: Optional[float] = None,
+    schema: str = "tbbo",
 ) -> dict:
     """Request tbbo only for all-symbol silence on one named day, then append v2 rows.
 
     Existing files are not rewritten. A smaller Databento result is not a reason
-    to ask again.
+    to ask again. Successful interval coverage is recorded after a durable
+    publish or a successful empty response.
     """
     if lake_root is None:
         from src.storage.config import resolve_tick_lake_root
@@ -270,31 +428,122 @@ def fill_named_day(
         root = resolve_tick_lake_root()
     else:
         root = Path(lake_root)
-    refuse_if_lake_locked(root)
-    if not symbols or trading_date.weekday() >= 5 or is_full_nyse_holiday(trading_date):
-        return {"requests": 0, "follow_up_requests": 0, "rows": 0, "stretches": []}
-
-    from src.data.databento_backfill import normalize_tbbo_frame, publish_ticks_to_lake
-
-    if occupied_minutes is None:
-        occupied = occupied_minutes_in_lake(root, symbols, trading_date)
-    else:
-        occupied = set(occupied_minutes)
-    stretches = silence_stretches(trading_date, occupied, symbols)
-    written = 0
-    for start, end in stretches:
-        data = client.timeseries.get_range(
-            dataset=dataset,
-            symbols=list(symbols),
-            schema="tbbo",
-            start=start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
-            end=end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
-        )
-        frame = normalize_tbbo_frame(data.to_df(), trading_date)
-        written += publish_ticks_to_lake(frame, lake_root=root)
-    return {
-        "requests": len(stretches),
+    lock = _acquire_gap_fill_lock(root)
+    empty = {
+        "requests": 0,
         "follow_up_requests": 0,
-        "rows": written,
-        "stretches": [(start.isoformat(), end.isoformat()) for start, end in stretches],
+        "rows": 0,
+        "stretches": [],
+        "estimated_cost": 0.0,
     }
+    try:
+        if not symbols or trading_date.weekday() >= 5 or is_full_nyse_holiday(trading_date):
+            return empty
+
+        from src.data.databento_backfill import (
+            estimate_interval_cost,
+            normalize_tbbo_frame,
+            publish_ticks_to_lake,
+        )
+
+        if occupied_minutes is None:
+            occupied = occupied_minutes_in_lake(root, symbols, trading_date)
+        else:
+            occupied = set(occupied_minutes)
+        occupied |= _coverage_minutes(root, trading_date, symbols, dataset, schema)
+        stretches = silence_stretches(trading_date, occupied, symbols)
+        if not stretches:
+            return empty
+
+        estimated_cost = 0.0
+        if remaining_budget is not None:
+            try:
+                estimated_cost = sum(
+                    estimate_interval_cost(
+                        client,
+                        list(symbols),
+                        start,
+                        end,
+                        schema=schema,
+                        dataset=dataset,
+                    )
+                    for start, end in stretches
+                )
+            except Exception as exc:
+                raise GapFillEstimateError(
+                    f"Cost estimate failed for {trading_date.isoformat()}: {exc}"
+                ) from exc
+            if estimated_cost > remaining_budget:
+                raise GapFillBudgetExceeded(
+                    f"Estimated ${estimated_cost:.4f} for {len(stretches)} interval(s) "
+                    f"exceeds remaining budget ${remaining_budget:.4f}"
+                )
+
+        written = 0
+        for start, end in stretches:
+            batch_id = _interval_identity(trading_date, symbols, dataset, schema, start, end)
+            data = client.timeseries.get_range(
+                dataset=dataset,
+                symbols=list(symbols),
+                schema=schema,
+                start=start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+                end=end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+            )
+            frame = normalize_tbbo_frame(data.to_df(), trading_date)
+            if frame.empty:
+                _record_coverage(root, trading_date, symbols, dataset, schema, start, end, batch_id)
+                continue
+            written += publish_ticks_to_lake(
+                frame,
+                lake_root=root,
+                batch_id=batch_id,
+                writer_id="gap_fill",
+                sequence=0,
+                ownership_lock=lock,
+            )
+            _record_coverage(root, trading_date, symbols, dataset, schema, start, end, batch_id)
+        return {
+            "requests": len(stretches),
+            "follow_up_requests": 0,
+            "rows": written,
+            "stretches": [(start.isoformat(), end.isoformat()) for start, end in stretches],
+            "estimated_cost": estimated_cost,
+        }
+    finally:
+        lock.release()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Fill all-symbol silence on exactly one named day.",
+    )
+    parser.add_argument("--date", required=True, help="Trading date YYYY-MM-DD")
+    parser.add_argument("--lake-root", default=None, help="Lake root. Defaults to the resolved tick lake.")
+    parser.add_argument("--max-budget", type=float, default=None, help="Refuse if interval estimates exceed this USD amount.")
+    parser.add_argument("--dataset", default="DBEQ.BASIC")
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
+    trading_date = date.fromisoformat(args.date)
+    from src.data.databento_backfill import get_databento_client, get_target_stock_symbols
+    from src.storage.config import resolve_tick_lake_root
+
+    root = Path(args.lake_root) if args.lake_root else resolve_tick_lake_root()
+    symbols = get_target_stock_symbols(root)
+    client = get_databento_client()
+    result = fill_named_day(
+        trading_date,
+        client=client,
+        lake_root=root,
+        symbols=symbols,
+        remaining_budget=args.max_budget,
+        dataset=args.dataset,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

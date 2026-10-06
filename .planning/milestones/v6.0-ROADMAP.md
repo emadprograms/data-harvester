@@ -210,11 +210,11 @@ v5.0 backlog is closed with that milestone. Active backlog for v6.0:
 |-----------|-------------|-------|
 | Store `bid_price` and `ask_price` only; drop midpoint, `price`, `volume`, and sizes | **Required** | 50 |
 | Inspection chart reads `bid_price`; volume histogram removed | **Required** | 50 |
-| Rewrite the existing 7,367 schema v1 files; do not invent a bid from `price` | **Required** | 51 |
-| Quarantine null bid or ask; update receipts; schema version 2 only at the end | **Required** | 51 |
-| Gap fill one day on all-symbol silence (15 min pre/post, 2 min regular) | **Required** | 52 |
-| Skip weekends, full holidays, and post-early-close time | **Required** | 52 |
-| README, operations guide, and Repo B contract | **Required** | 53 |
+| Rewrite the existing 7,367 schema v1 files; do not invent a bid from `price` | **Required** | 53 |
+| Quarantine null bid or ask; update receipts; schema version 2 only at the end | **Required** | 53 |
+| Gap fill one day on all-symbol silence (15 min pre/post, 2 min regular) | **Required** | 51 |
+| Skip weekends, full holidays, and post-early-close time | **Required** | 51 |
+| README, operations guide, and Repo B contract | **Required** | 52 |
 | Bid quantity and ask quantity | **Out of scope** (owner dropped; never stored) | — |
 | Databento `mbp-1` or matching row counts across feeds | **Out of scope** (owner accepted the difference) | — |
 
