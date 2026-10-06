@@ -11,6 +11,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the v6.0 audit records verification revisions and the
+          # provenance tests assert those revisions resolve. A depth-1 clone cannot
+          # resolve any ancestor, so those checks would skip instead of verify.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'

@@ -42,9 +42,10 @@ mirror_local*.db
 *.db-shm
 *.db-journal
 *.db-info
+# Anchor the lake directory: a bare `data` pattern also matches any path component
+# named data, which silently ignores new files under tests/data/ and src/data/.
 /data
 /data/
-data
 *.duckdb*
 scratch/
 

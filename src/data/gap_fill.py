@@ -5,6 +5,7 @@ silence is requested, and returned quotes are appended as schema v2.
 """
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -62,6 +63,9 @@ COVERAGE_VERSION = 2
 # Same alphabet LakePublisher._safe_batch_id enforces. Validated here before any batch
 # identity is used to build a path, so a hand-edited ledger cannot probe outside the lake.
 BATCH_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,180}")
+# Every gap-fill batch identity starts with this prefix, so a receipt or intent
+# carrying it is recoverable evidence for this module rather than shared-directory junk.
+GAP_FILL_BATCH_PREFIX = "gfill_"
 PENDING_FIELDS = ("date", "dataset", "schema", "symbols", "start", "end", "batch_id")
 GAP_FILL_WRITER_ID = "gap_fill"
 
@@ -312,17 +316,28 @@ def _coverage_path(root: Path) -> Path:
 
 
 def _fsync_directory(path: Path) -> None:
-    """Persist a directory entry after an atomic replace."""
+    """Persist a directory entry after an atomic replace.
+
+    The directory barrier is part of the recovery contract: the pending interval and
+    the completed coverage record are what let a crash rebuild state instead of buying
+    the same data twice. A filesystem that explicitly refused the write (EIO, ENOSPC)
+    must therefore surface, not be reported as success. Refusals that only mean
+    "directory fsync is unavailable here" stay tolerated, matching LakePublisher's
+    policy for the same barrier.
+    """
     if sys.platform == "win32":
         return
     try:
         descriptor = os.open(str(path), os.O_RDONLY)
-    except OSError:
+    except OSError as err:
+        if err.errno in (errno.ENOSPC, errno.EIO):
+            raise
         return
     try:
         os.fsync(descriptor)
-    except OSError:
-        pass
+    except OSError as err:
+        if err.errno in (errno.ENOSPC, errno.EIO):
+            raise
     finally:
         os.close(descriptor)
 
@@ -493,6 +508,32 @@ def _minute_set(start: datetime, end: datetime) -> Set[datetime]:
     return minutes
 
 
+def _is_gap_fill_evidence(stem: str) -> bool:
+    """True when a file name could only have been written by this module's fill."""
+    return stem.startswith(GAP_FILL_BATCH_PREFIX) and bool(BATCH_ID_PATTERN.fullmatch(stem))
+
+
+def _scope_bounds_present(scope: Any) -> bool:
+    """True when a request scope can be rebuilt into a completed coverage interval."""
+    if not isinstance(scope, dict):
+        return False
+    if not all(
+        key in scope for key in ("date", "dataset", "schema", "symbols", "start", "end")
+    ):
+        return False
+    return isinstance(scope.get("symbols"), (list, tuple))
+
+
+def _unattributable_evidence(path: Path, why: str) -> GapFillRecoveryError:
+    """Refusal for gap-fill evidence whose interval can no longer be established."""
+    return GapFillRecoveryError(
+        f"Gap-fill evidence at {path} cannot be verified ({why}), so the interval it "
+        "covers cannot be established and requesting again could pay twice. Inspect it: "
+        "if the batch never reached the lake, remove the file so its interval can be "
+        "requested again."
+    )
+
+
 def _verified_receipt(root: Path, batch_id: str) -> Optional[Any]:
     """Verified receipt for one batch, or None when nothing was published."""
     from src.storage.publication import PublishError, verify_published_receipt
@@ -506,7 +547,14 @@ def _verified_receipt(root: Path, batch_id: str) -> Optional[Any]:
 
 
 def _scope_receipts(root: Path, scope_key: Tuple, known: Set[str]) -> List[Any]:
-    """Verified receipts in this scope whose coverage entry is missing."""
+    """Verified receipts in this scope whose coverage entry is missing.
+
+    Names that only the gap-fill path can write (`gfill_…`) are treated as evidence:
+    if one is unreadable or carries no usable request scope it must refuse, because
+    ignoring it is indistinguishable from having no evidence at all and the interval
+    would be bought again. Files that could not be gap-fill evidence stay skippable,
+    so junk in the shared receipts directory never blocks a fill.
+    """
     receipts_dir = root / "_control" / "receipts"
     if not receipts_dir.is_dir():
         return []
@@ -518,16 +566,63 @@ def _scope_receipts(root: Path, scope_key: Tuple, known: Set[str]) -> List[Any]:
         # not be one, so junk in the receipts directory cannot block the fill.
         if not BATCH_ID_PATTERN.fullmatch(path.stem) or path.stem in {".", ".."}:
             continue
+        gap_fill_evidence = _is_gap_fill_evidence(path.stem)
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as exc:
+            if gap_fill_evidence:
+                raise _unattributable_evidence(path, f"unreadable: {exc}") from exc
             continue
         scope = data.get("request") if isinstance(data, dict) else None
-        if not isinstance(scope, dict) or _scope_key(scope) != scope_key:
+        if not _scope_bounds_present(scope):
+            if gap_fill_evidence:
+                raise _unattributable_evidence(path, "no readable request scope")
+            continue
+        if _scope_key(scope) != scope_key:
             continue
         receipt = _verified_receipt(root, path.stem)
         if receipt is not None:
             found.append(receipt)
+    return found
+
+
+def _orphan_intents(root: Path, scope_key: Tuple, known: Set[str]) -> List[dict]:
+    """Gap-fill intents in this scope that the ledger no longer describes.
+
+    Reconciliation used to walk only the ledger's `pending` entries, so losing the
+    ledger hid a surviving intent completely: the promoted quote shortened the next
+    selection and the original bounds were requested again. Intents are therefore
+    discovered from the intent directory itself, and one that cannot be read or
+    attributed refuses before any spend rather than being silently dropped.
+    """
+    intent_dir = root / "_control" / "intent"
+    if not intent_dir.is_dir():
+        return []
+    found: List[dict] = []
+    for path in sorted(intent_dir.glob("*.json")):
+        stem = path.stem
+        if stem in known or not _is_gap_fill_evidence(stem):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise _unattributable_evidence(path, f"unreadable: {exc}") from exc
+        if not isinstance(data, dict) or str(data.get("batch_id")) != stem:
+            raise _unattributable_evidence(path, "identity mismatch")
+        if str(data.get("writer_id", "")) != GAP_FILL_WRITER_ID:
+            continue  # another writer's in-flight batch is not this fill's evidence
+        try:
+            sequence = int(data.get("sequence", 0))
+        except (TypeError, ValueError) as exc:
+            raise _unattributable_evidence(path, "unreadable sequence") from exc
+        if sequence != 0:
+            raise _unattributable_evidence(path, "unexpected sequence")
+        scope = data.get("request")
+        if not _scope_bounds_present(scope):
+            raise _unattributable_evidence(path, "no readable request scope")
+        if _scope_key(scope) != scope_key:
+            continue
+        found.append(dict(scope))
     return found
 
 
@@ -602,6 +697,26 @@ def _reconcile_recovery_state(
             retries.append(record)
             remaining.append(record)
             continue
+        _assert_receipt_matches(record, receipt)
+        intervals = _upsert(intervals, _interval_from_scope(record))
+        known.add(batch_id)
+        recovered += 1
+        changed = True
+
+    for scope in _orphan_intents(root, scope_key, known):
+        batch_id = str(scope["batch_id"])
+        record = dict(scope)
+        record["writer_id"] = GAP_FILL_WRITER_ID
+        record["sequence"] = 0
+        receipt = _verified_receipt(root, batch_id)
+        if receipt is None:
+            recover_pending_publications(root, batch_ids={batch_id}, ownership_lock=lock)
+            receipt = _verified_receipt(root, batch_id)
+        if receipt is None:
+            raise _unattributable_evidence(
+                root / "_control" / "intent" / f"{batch_id}.json",
+                "the named publication is not recoverable",
+            )
         _assert_receipt_matches(record, receipt)
         intervals = _upsert(intervals, _interval_from_scope(record))
         known.add(batch_id)
