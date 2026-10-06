@@ -17,8 +17,9 @@ _Newest first. Each entry is a shipped, verified milestone._
 ## v6.0 Bid and Ask Prices (Checkout shipped: 2026-10-06)
 
 **Phases completed:** 4 phases (Phases 50–53)  
-**Tests in this checkout:** Phase 50–53 focused suites 99 passed. Production lake not rewritten.  
-**Closeout:** checkout complete; owner still runs `python -m src.storage.quote_rewrite --lake-root … --backup-root …` against the real lake.
+**Tests in this checkout:** Phase 50–53 focused suites 134 passed (99 at audit; gap-fill remediation `261006-hfu` added the rest). Full offline suite 1,061 passed. Production lake not rewritten.  
+**Closeout:** checkout complete; owner still runs `python -m src.storage.quote_rewrite --lake-root … --backup-root …` against the real lake.  
+**Post-audit remediation:** quick task `261006-hfu` closed the two gap-fill findings (same-day filename collision; a completed request bought twice after an interrupted coverage write) and fixed the CI dependency that had failed the `Offline tests` workflow on every run.
 
 **Key accomplishments:**
 

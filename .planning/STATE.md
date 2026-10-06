@@ -1,10 +1,13 @@
 ---
 gsd_state_version: "1.0"
 milestone: v6.0
-milestone_name: Bid and Ask Prices
+milestone_name: Bid and Ask Prices (Checkout complete)
+current_phase: 53
 status: idle
-last_updated: "2026-10-06T12:00:00.000Z"
+last_updated: "2026-10-06T12:47:15.576Z"
 last_activity: 2026-10-06
+last_activity_desc: Completed quick task 261006-hfu (v6.0 gap-fill remediation: distinct batch filenames, durable pending intervals, receipt reconciliation, recoverable empty named batches). Production rewrite remains owner-run.
+state_head: f46720bfce3a4775aa2e3fc562c0e036ea34d1f1
 progress:
   total_phases: 4
   completed_phases: 4
@@ -27,7 +30,7 @@ See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 Phase: 53 (complete)
 Plan: 53-01
 Status: Milestone v6.0 tools and tests are in this checkout. The production lake was not rewritten.
-Last activity: 2026-10-06 — v6.0 checkout closeout (docs honesty, dead helpers, planning artifacts). Production rewrite remains owner-run.
+Last activity: 2026-10-06 - Completed quick task 261006-hfu: v6.0 gap-fill remediation: distinct batch filenames for same-day intervals, durable pending intervals with receipt reconciliation, recoverable empty named batches. Production rewrite remains owner-run.
 
 ## Accumulated Context
 
@@ -76,6 +79,12 @@ Last activity: 2026-10-06 — v6.0 checkout closeout (docs honesty, dead helpers
 ### Blockers/Concerns
 
 - None.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+| 261006-hfu | v6.0 gap-fill remediation: distinct batch filenames for same-day intervals, durable pending intervals with receipt reconciliation, recoverable empty named batches | 2026-10-06 | f46720b | Verified | [261006-hfu-v6-0-gap-fill-remediation-distinct-batch](./quick/261006-hfu-v6-0-gap-fill-remediation-distinct-batch/) |
 
 ## Session Continuity
 

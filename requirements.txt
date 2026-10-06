@@ -10,3 +10,4 @@ python-dotenv
 pytest
 tzdata
 psutil
+beautifulsoup4

@@ -126,3 +126,156 @@ def test_budget_cap_stops_execution(tmp_path):
     assert res["total_cost_usd"] == 20.0
     assert res["remaining_budget_usd"] == 5.0
     assert mock_fetch.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# v6.0 gap-fill remediation (quick task 261006-hfu): named-batch publication
+#
+# P1: named batches at sequence zero shared one physical filename per
+#     (symbol, UTC date) partition, so a second interval raised
+#     BatchCollisionError after its download had already been paid for.
+# ---------------------------------------------------------------------------
+
+import json
+
+import pyarrow.parquet as pq
+
+from src.data.databento_backfill import publish_ticks_to_lake
+from src.storage.publication import LakePublisher
+
+
+def _quote_frame(symbol: str, timestamp: str, ingest_id: str):
+    return pd.DataFrame(
+        {
+            "timestamp": [timestamp],
+            "symbol": [symbol],
+            "bid_price": [100.00],
+            "ask_price": [100.04],
+            "source": ["DATABENTO"],
+            "session": ["REG"],
+            "ingest_id": [ingest_id],
+        }
+    )
+
+
+def _request_scope(batch_id: str, start: str = "2026-10-02T10:01:00-04:00"):
+    return {
+        "date": "2026-10-02",
+        "dataset": "DBEQ.BASIC",
+        "schema": "tbbo",
+        "symbols": ["AAPL", "NVDA"],
+        "start": start,
+        "end": "2026-10-02T10:06:00-04:00",
+        "batch_id": batch_id,
+    }
+
+
+def _published_files(lake):
+    return sorted((lake / "ticks").glob("symbol=*/date=*/*.parquet"))
+
+
+def test_named_batches_at_sequence_zero_get_distinct_files(tmp_path):
+    """Two intervals at sequence zero must not share one physical filename."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+
+    first = _quote_frame("NVDA", "2026-10-02 14:01:00", "gfill_first")
+    second = _quote_frame("NVDA", "2026-10-02 14:11:00", "gfill_second")
+    rows_first = publish_ticks_to_lake(
+        first, lake_root=lake, batch_id="gfill_first", writer_id="gap_fill", sequence=0
+    )
+    rows_second = publish_ticks_to_lake(
+        second, lake_root=lake, batch_id="gfill_second", writer_id="gap_fill", sequence=0
+    )
+
+    assert (rows_first, rows_second) == (1, 1)
+    files = _published_files(lake)
+    assert len(files) == 2, f"expected two files, got {[path.name for path in files]}"
+    assert len({path.name for path in files}) == 2
+    assert all("db_" in path.name for path in files)
+    assert len(list((lake / "_control" / "receipts").glob("gfill_*.json"))) == 2
+
+
+def test_replaying_named_batch_writes_no_additional_file(tmp_path):
+    """A stable batch identity replays its receipt instead of appending a copy."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    frame = _quote_frame("NVDA", "2026-10-02 14:01:00", "gfill_replay")
+
+    publish_ticks_to_lake(frame, lake_root=lake, batch_id="gfill_replay", writer_id="gap_fill", sequence=0)
+    publish_ticks_to_lake(frame, lake_root=lake, batch_id="gfill_replay", writer_id="gap_fill", sequence=0)
+
+    files = _published_files(lake)
+    assert len(files) == 1
+    assert len(list((lake / "_control" / "receipts").glob("gfill_*.json"))) == 1
+    assert pq.read_table(files[0]).num_rows == 1
+
+
+def test_named_batch_receipt_records_the_request_scope(tmp_path):
+    """The receipt carries the request scope that produced it."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    frame = _quote_frame("NVDA", "2026-10-02 14:01:00", "gfill_scope")
+    scope = _request_scope("gfill_scope")
+
+    publish_ticks_to_lake(
+        frame,
+        lake_root=lake,
+        batch_id="gfill_scope",
+        writer_id="gap_fill",
+        sequence=0,
+        request_scope=scope,
+    )
+
+    receipt = json.loads(
+        (lake / "_control" / "receipts" / "gfill_scope.json").read_text(encoding="utf-8")
+    )
+    assert receipt["request"] == scope
+    assert receipt["request"]["batch_id"] == receipt["batch_id"]
+
+
+def test_named_empty_batch_publishes_a_zero_row_receipt(tmp_path):
+    """An empty named response is a recoverable publication, not a silent no-op."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+
+    written = publish_ticks_to_lake(
+        pd.DataFrame(),
+        lake_root=lake,
+        batch_id="gfill_empty",
+        writer_id="gap_fill",
+        sequence=0,
+        request_scope=_request_scope("gfill_empty"),
+    )
+
+    assert written == 0
+    assert _published_files(lake) == []
+    receipt = json.loads(
+        (lake / "_control" / "receipts" / "gfill_empty.json").read_text(encoding="utf-8")
+    )
+    assert receipt["row_count"] == 0
+    assert receipt["file_paths"] == []
+    assert receipt["request"]["batch_id"] == "gfill_empty"
+
+
+def test_legacy_unnamespaced_receipt_still_replays(tmp_path):
+    """Receipts written before the namespace change keep replaying."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    frame = _quote_frame("NVDA", "2026-10-02 14:01:00", "gfill_legacy")
+    records = frame.to_dict("records")
+
+    with LakePublisher(root=lake, writer_id="gap_fill") as publisher:
+        publisher.publish_batch(records, batch_id="gfill_legacy", sequence=0)
+    legacy_files = _published_files(lake)
+    assert [path.name for path in legacy_files] == ["batch_gap_fill_000000.parquet"]
+
+    written = publish_ticks_to_lake(
+        frame, lake_root=lake, batch_id="gfill_legacy", writer_id="gap_fill", sequence=0
+    )
+
+    assert written == 1
+    files = _published_files(lake)
+    assert [path.name for path in files] == ["batch_gap_fill_000000.parquet"]
+    assert len(list((lake / "_control" / "receipts").glob("gfill_*.json"))) == 1
+    assert pq.read_table(files[0]).num_rows == 1

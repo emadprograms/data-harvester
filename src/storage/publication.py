@@ -73,6 +73,9 @@ class PublishReceipt:
     status: str = "PUBLISHED"  # "PUBLISHED" | "ALREADY_PUBLISHED"
     published_at: str = ""
     payload_sha256: str = ""
+    # Optional caller-supplied request scope (a named gap-fill interval, for example).
+    # It lets a lost coverage ledger be rebuilt without inferring bounds from a hash.
+    request_scope: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -515,9 +518,20 @@ class LakePublisher:
         records_or_table: Any,
         batch_id: str,
         sequence: int,
+        request_scope: Optional[Dict[str, Any]] = None,
     ) -> PublishReceipt:
-        """Publish one immutable, payload-identified batch atomically."""
+        """Publish one immutable, payload-identified batch atomically.
+
+        `request_scope`, when supplied, is stored in the intent and in the receipt so a
+        caller can rebuild its own coverage state after losing it. Omitting it keeps the
+        published payload byte-shape unchanged.
+        """
         batch_id = _safe_batch_id(batch_id)
+        scope: Dict[str, Any] = dict(request_scope) if request_scope else {}
+        if scope.get("batch_id") not in (None, batch_id):
+            raise PublishError(
+                f"Request scope names batch {scope.get('batch_id')!r}, not {batch_id!r}"
+            )
         if isinstance(records_or_table, pa.Table):
             table = records_or_table
             validate_published_table(table)
@@ -554,6 +568,11 @@ class LakePublisher:
             if declared_payload_sha256 and declared_payload_sha256 != payload_sha256:
                 raise BatchCollisionError(f"Batch {batch_id} was already published with a different payload")
             file_paths = rdata.get("file_paths", [fd.relative_path for fd in file_details])
+            stored_scope = rdata.get("request") if isinstance(rdata.get("request"), dict) else {}
+            if scope and stored_scope and stored_scope != scope:
+                raise BatchCollisionError(
+                    f"Batch {batch_id} was already published with a different request scope"
+                )
             return PublishReceipt(
                 batch_id=batch_id,
                 writer_id=rdata.get("writer_id", self.writer_id),
@@ -564,6 +583,7 @@ class LakePublisher:
                 status="ALREADY_PUBLISHED",
                 published_at=rdata.get("published_at", ""),
                 payload_sha256=stored_payload_sha256,
+                request_scope=dict(stored_scope),
             )
 
         if receipt_file.is_file():
@@ -585,6 +605,11 @@ class LakePublisher:
             prepared_fingerprint = pending.get("payload_sha256")
             if prepared_fingerprint and prepared_fingerprint != payload_sha256:
                 raise BatchCollisionError(f"Batch {batch_id} has a pending intent for a different payload")
+            prepared_scope = pending.get("request") if isinstance(pending.get("request"), dict) else {}
+            if scope and prepared_scope and prepared_scope != scope:
+                raise BatchCollisionError(
+                    f"Batch {batch_id} has a pending intent for a different request scope"
+                )
             recover_pending_publications(self.root, batch_ids={batch_id}, ownership_lock=self.lock)
             if receipt_file.is_file():
                 return replay_receipt()
@@ -606,6 +631,8 @@ class LakePublisher:
                 "status": "PUBLISHED",
                 "published_at": published_at,
             }
+            if scope:
+                receipt_payload["request"] = scope
             tmp_receipt = self.staging_dir / f"tmp_receipt_{uuid.uuid4().hex}.json"
             with open(tmp_receipt, "w", encoding="utf-8") as handle:
                 json.dump(receipt_payload, handle, indent=2)
@@ -620,6 +647,7 @@ class LakePublisher:
                 status="PUBLISHED",
                 published_at=published_at,
                 payload_sha256=payload_sha256,
+                request_scope=scope,
             )
 
         # Partition rows by (symbol, UTC date).
@@ -698,6 +726,8 @@ class LakePublisher:
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "targets": staged_targets,
             }
+            if scope:
+                intent_payload["request"] = scope
             tmp_intent = self.staging_dir / f"tmp_intent_{uuid.uuid4().hex}.json"
             with open(tmp_intent, "w", encoding="utf-8") as handle:
                 json.dump(intent_payload, handle, indent=2)
@@ -776,6 +806,8 @@ class LakePublisher:
                 "status": "PUBLISHED",
                 "published_at": published_at,
             }
+            if scope:
+                receipt_payload["request"] = scope
             tmp_receipt = self.staging_dir / f"tmp_receipt_{uuid.uuid4().hex}.json"
             with open(tmp_receipt, "w", encoding="utf-8") as handle:
                 json.dump(receipt_payload, handle, indent=2)
@@ -796,6 +828,7 @@ class LakePublisher:
                 status="PUBLISHED",
                 published_at=published_at,
                 payload_sha256=payload_sha256,
+                request_scope=scope,
             )
         except Exception:
             if not intent_written:
@@ -816,6 +849,41 @@ class LakePublisher:
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.close()
+
+
+def verify_published_receipt(root: Path, batch_id: str) -> Optional[PublishReceipt]:
+    """Read and fully verify one published receipt without publishing anything.
+
+    Returns None when no receipt exists. Raises PublishError when the receipt is
+    unreadable, names a different batch, or its files fail verification, so a caller
+    that treats a receipt as recovery evidence can refuse instead of guessing.
+    """
+    root = Path(root).resolve()
+    batch_id = _safe_batch_id(batch_id)
+    receipt_file = root / "_control" / "receipts" / f"{batch_id}.json"
+    if not receipt_file.is_file():
+        return None
+    try:
+        with open(receipt_file, "r", encoding="utf-8") as handle:
+            receipt_data = json.load(handle)
+    except Exception as exc:
+        raise PublishError(f"Cannot read publication receipt for {batch_id}: {exc}") from exc
+    if not isinstance(receipt_data, dict) or receipt_data.get("batch_id") != batch_id:
+        raise PublishError(f"Receipt identity mismatch for {batch_id}")
+    file_details, _, actual_payload_sha256 = _verify_receipt_files(root, receipt_data)
+    scope = receipt_data.get("request") if isinstance(receipt_data.get("request"), dict) else {}
+    return PublishReceipt(
+        batch_id=batch_id,
+        writer_id=str(receipt_data.get("writer_id", "")),
+        sequence=int(receipt_data.get("sequence", 0)),
+        row_count=int(receipt_data.get("row_count", 0)),
+        file_paths=list(receipt_data.get("file_paths", [detail.relative_path for detail in file_details])),
+        file_details=file_details,
+        status="PUBLISHED",
+        published_at=str(receipt_data.get("published_at", "")),
+        payload_sha256=actual_payload_sha256,
+        request_scope=dict(scope),
+    )
 
 
 def recover_pending_publications(
@@ -908,6 +976,10 @@ def _recover_pending_publications_locked(
                 raise
             except Exception as exc:
                 raise PublishError(f"Cannot verify receipt for pending intent {batch_id}: {exc}") from exc
+            intent_scope = intent_data.get("request") if isinstance(intent_data.get("request"), dict) else {}
+            receipt_scope = receipt_data.get("request") if isinstance(receipt_data.get("request"), dict) else {}
+            if intent_scope and receipt_scope and intent_scope != receipt_scope:
+                raise PublishError(f"Intent/receipt request scope mismatch for {batch_id}")
             intent_file.unlink(missing_ok=True)
             recovered_receipts.append(PublishReceipt(
                 batch_id=batch_id,
@@ -919,6 +991,7 @@ def _recover_pending_publications_locked(
                 status="PUBLISHED",
                 published_at=receipt_data.get("published_at", ""),
                 payload_sha256=actual_payload_sha256,
+                request_scope=dict(receipt_scope or intent_scope),
             ))
             continue
 
@@ -1054,6 +1127,9 @@ def _recover_pending_publications_locked(
             "status": "PUBLISHED",
             "published_at": published_at,
         }
+        recovered_scope = intent_data.get("request") if isinstance(intent_data.get("request"), dict) else {}
+        if recovered_scope:
+            receipt_payload["request"] = recovered_scope
         tmp_receipt = staging_dir / f"tmp_rec_{uuid.uuid4().hex}.json"
         with open(tmp_receipt, "w", encoding="utf-8") as handle:
             json.dump(receipt_payload, handle, indent=2)
@@ -1073,6 +1149,7 @@ def _recover_pending_publications_locked(
             status="PUBLISHED",
             published_at=published_at,
             payload_sha256=actual_payload_sha256,
+            request_scope=dict(recovered_scope),
         ))
 
     return recovered_receipts
