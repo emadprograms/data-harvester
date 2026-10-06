@@ -2,6 +2,7 @@
 
 _Newest first. Each entry is a shipped, verified milestone._
 
+- [x] **v5.0 DuckDB-Free Tick-Only Parquet** — Phases 46–49 (shipped 2026-10-06)
 - [x] **v4.3 Final Tick-Lake Implementation and Verification** — Phases 37–43 complete; phases 44–45 waived by owner (closed 2026-10-05)
 - [x] **v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (closed 2026-10-04)
 - [x] **v4.1 Partitioned Parquet Lake Deep Testing & Hardening** — Phases 22–27 (shipped 2026-10-03)
@@ -9,6 +10,30 @@ _Newest first. Each entry is a shipped, verified milestone._
 - [x] **v3.0 Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard** — Phases 10–14 (shipped 2026-09-26)
 - [x] **v2.0 Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard** — Phases 5–9 (shipped 2026-09-25)
 - [x] **v1.0 Local DuckDB & 24/7 Live Streaming Engine** — Phases 1–4 (shipped 2026-09-25)
+
+---
+
+## v5.0 DuckDB-Free Tick-Only Parquet (Shipped: 2026-10-06)
+
+**Phases completed:** 4 phases (Phases 46–49), 4 plans, 33/33 requirements verified (100.0%)
+**Tests:** 988 automated tests passing (0 failures, 0 xfails)
+**Dataset Scale:** 105,894,626 verified historical ticks published into 7,367 Parquet files across 7,355 partitions (19 approved symbols)
+**Storage Invariant:** Zero `.duckdb` files on disk; DuckDB retained exclusively as an in-memory query engine
+**Code Reduction:** 152 files changed | +9,364 insertions / −19,779 deletions (net −10,415 lines of dead/clutter code)
+**Closeout:** verified_closeout
+**Audit Verdict:** ✅ PASSED ([.planning/milestones/v5.0-MILESTONE-AUDIT.md](milestones/v5.0-MILESTONE-AUDIT.md))
+
+**Key accomplishments:**
+
+- **Zero-Loss Data Migration to Parquet Lake:** Reconciled and published 105,894,626 legacy tick rows across 7,355 partitions into 7,367 partitioned Parquet files (`data/tick_lake/ticks/`) with two-way `EXCEPT ALL` mathematical verification and zero row discrepancies. Migration confirmed via receipt `_control/receipts/migration_72eb62fdc4d9a6e11406ddf87ea342c1.json`.
+- **Pure In-Memory DuckDB Engine:** Completely eliminated disk-backed DuckDB database files (`data/streaming.duckdb`, `data/historical.duckdb`, `data/market_data.duckdb`). Enforced by regression tests (`tests/stream/test_no_disk_db_backend.py`, `tests/test_disk_database_layer_removed.py`) that zero runtime paths open or create a disk DuckDB database. DuckDB operates purely in-memory over Parquet.
+- **Complete Purge of Bar Subsystem & Dead Harvesters:** Removed the 1-minute historical bar pipeline, all bar-era harvesters (Polygon/Massive, Yahoo, Binance), their CLI and dashboard jobs, the unused replay subsystem, and dead dependencies (`yfinance`, `polygon-api-client`), decluttering over 10,400 lines of dead code.
+- **Single-View Parquet Dashboard:** Stripped legacy database seams and historical navigation from the web dashboard; unified candle charts, live tape wall, and data integrity health checks to read directly from the Parquet lake.
+- **Bounded Schedule & Unattended Compaction:** Enforced US market hours session window (weekdays 04:00–20:00 `America/New_York`) with close-time queue drain, unattended off-hours compaction under single-lease fencing, and operational telemetry via Discord.
+- **Strict 19-Symbol Authority:** Bound all live ingestion and gap-fill backfills strictly to the 19 approved equities defined in `_control/registry.json`, filtering out-of-scope quotes at the WebSocket callback boundary.
+- **Operational Verification:** Services active and healthy under supervisor; live `/api/status` endpoint confirms healthy lake status across all 7,367 files. Terminal milestone reached for Data Harvester.
+
+**Archive:** [`milestones/v5.0-ROADMAP.md`](milestones/v5.0-ROADMAP.md) · [`milestones/v5.0-REQUIREMENTS.md`](milestones/v5.0-REQUIREMENTS.md) · [`milestones/v5.0-MILESTONE-AUDIT.md`](milestones/v5.0-MILESTONE-AUDIT.md) · [`reports/v5.0_completion_report.md`](../reports/v5.0_completion_report.md)
 
 ---
 
@@ -20,6 +45,7 @@ _Newest first. Each entry is a shipped, verified milestone._
 **Why 44–45 were waived.** Phase 44 (24-hour sustained endurance run) requires a dedicated host for a full day; Phase 45 (candidate CI log verification and closeout audit) requires authenticated hosted-CI access. Neither adds capability to the tick lake — they are release ceremony over a system that already works. The owner elected to close the milestone rather than continue a verification loop whose remaining work does not change the shipped software.
 
 **Honest reconciliation — the Phase 43 writer-CPU gate is NOT a pass.**
+
 - `reports/benchmarks/pass2_qualification_report.json` records `"overall_passed": false`.
 - The failing gate is the writer-CPU reduction target (`>= 50%` vs the legacy DuckDB baseline). Measured: **−14.4%** (Parquet lake **18.78 s** per 1M ticks vs in-memory DuckDB **16.42 s** per 1M ticks).
 - This is a real, structural cost of partitioned Parquet writes (fan-out across many small files), not a measurement error.
@@ -27,6 +53,7 @@ _Newest first. Each entry is a shipped, verified milestone._
 - PERF-01's 1M/10M scale claim was not re-run after remediation; Pass 1 and Pass 2 both executed at 200,000 rows.
 
 **What phases 37–43 did deliver:**
+
 - Fail-closed release-report validator with table-driven mutation tests; isolated run directories and production write guards (Phase 37).
 - Migration source-coverage ledger making overlapping re-runs idempotent (resolving the v4.2 duplicate-partition defect), provenance-scoped publication verification, whole-lake inventory audit, and coordinator cutover/rollback rehearsal (Phase 38).
 - Reader fail-fast on uninitialized/unavailable/corrupt roots with zero silent legacy fallback; barrier-controlled snapshot race test; subprocess-isolated portable reader contract (Phase 39).
@@ -48,6 +75,7 @@ _Newest first. Each entry is a shipped, verified milestone._
 **Status:** Phases 28–30, 32–34 and 36 complete; Phase 31 (24h endurance) deferred; Phase 35 remains.
 
 **Completed:**
+
 - **Phase 28 — CI evidence & traceability.** Hosted CI green on two candidate SHAs. Requirement matrix maps 51 archived requirement IDs to executable nodes (48 mapped, 3 gaps declared rather than assumed passing). Release report validator refuses gates with missing artifacts, stale SHAs, null metrics, skipped required tests, or an empty test selection.
 - **Phase 29 — Isolation & independent oracles.** The multiset oracle is now *proven* to detect a corrupted value, a removed duplicate, and a phantom row. The deterministic generator's contract is pinned (reproducibility, stable IDs, and the presence of ties, duplicates, nulls, late arrivals, UTC rollover, and session boundaries).
 - **Phase 36 — Contract repair and signoff documentation.** Published the **v4.2 audit report** (`docs/plans/milestone-4.2-audit-report.md`): 30 of 45 requirements complete, with the 15 incomplete named individually and explicitly excluded rather than omitted. Fixed the operations guide's flush-interval default (documented `2.0s`, actually `5.0s`) and the archived "8-column schema" error (there are nine), and documented the backend fail-closed rule that was implemented and tested but never written down. **Process finding F14:** Phase 29 had been reported complete while ISOL-01/ISOL-02 were still Pending in the matrix — the requirement matrix, not the phase status, is the authority, which is why the audit counts requirements rather than phases.
@@ -57,12 +85,15 @@ _Newest first. Each entry is a shipped, verified milestone._
 - **Phase 30 — Production-scale benchmarks.** Measured at 200k / 1M / 10M rows on a deterministic dataset. The write path scales cleanly (CPU 37.0 → 40.6 s per million ticks, peak RSS flat at 180 → 185 MB). Query latency scales with **files per symbol**, not rows: 52 ms at 40 files, 184 ms at 200, 1,288 ms at 2,000. See finding F2.
 
 **Defects found and fixed:**
+
 - **D1** — `test_chaos_port_conflict_backoff_and_recovery` slept a fixed 0.8s and asserted crash detection, but the child needs ~0.615s to fail with EADDRINUSE; detection raced the assertion and the test failed on Linux. Replaced with a deterministic bounded poll. Failing before, passing after.
 
 **Findings:**
+
 - **F2 — query latency grows with file count.** Partition pruning works and is proven (10× file reduction), but the append-only design accumulates one file per micro-batch per symbol per day, and latency tracks that count. The retained `<100 ms` gate holds at 200k rows and is breached at 1M/10M on this container. Not a production-host verdict, but the shape of the curve is host-independent and is a direct input to the Q10b compaction decision.
 
 **Deferred (cannot be executed in this environment):**
+
 - 24-hour endurance run (Q04) — deferred by user instruction
 - Historical resampling benchmarks (PERF-07) — needs the production historical database
 - Operational migration and restore rehearsal (MIGR-01/02/04) — needs the production inventory

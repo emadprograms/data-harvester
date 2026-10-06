@@ -1,41 +1,37 @@
 # Data Harvester — Local DuckDB & Live Streaming Engine
 
 ## What This Is
-A high-performance, 100% local market data harvesting and streaming engine running on macOS (Mac Mini) and Windows. It captures live market quotes from Capital.com via persistent WebSockets, storing real-time tick-by-tick quotes in an append-only partitioned Parquet tick lake (`data/tick_lake/ticks`) and canonical 1-minute historical bars in `data/historical.duckdb` with sub-millisecond dynamic OHLCV candlestick resampling, deep data integrity validation, and an interactive local web dashboard (`http://localhost:8420`).
+A high-performance, 100% local market data harvesting and streaming engine running on macOS (Mac Mini). It captures live market quotes from Capital.com via persistent WebSockets, storing real-time tick-by-tick quotes exclusively in an append-only partitioned Parquet tick lake (`data/tick_lake/ticks`), with sub-millisecond in-memory DuckDB dynamic OHLCV candlestick resampling, deep data integrity validation, unattended off-hours compaction, and an interactive local web dashboard (`http://localhost:8420`). All disk-backed `.duckdb` files have been permanently eliminated.
 
 ## Core Value
 Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
 
-## Current Milestone (v5.0) — In Progress
+## Shipped Milestone (v5.0) — Complete
 
-**v5.0: Parquet-Only Storage (DuckDB retained as query engine)** — Phases 46–49 (started 2026-10-05)
+**v5.0: DuckDB-Free Tick-Only Parquet** — Phases 46–49 (shipped 2026-10-06)
 
-**Goal:** Remove DuckDB as **storage**. No `.duckdb` files exist; every persisted market datum is a Parquet tick. DuckDB remains as the in-memory query engine reading those files.
+**Goal:** Remove DuckDB as **storage**. No `.duckdb` files exist; every persisted market datum is a Parquet tick. DuckDB remains exclusively as the in-memory query engine reading those files.
 
-**Scope decision (owner, 2026-10-05):** the larger alternative — deleting the DuckDB library and reimplementing resampling in PyArrow — was considered and **rejected**. `src/storage/reader.py` and `compaction.py` are therefore **not modified** by this milestone; `src/storage/replay.py` was deleted in Phase 47 (RMV-08).
+**Delivered:**
+- `streaming.duckdb`, `historical.duckdb`, and `market_data.duckdb` deleted; zero runtime code paths open or create a disk DuckDB file.
+- 105,894,626 legacy tick rows across 7,355 partitions migrated and mathematically reconciled (`EXCEPT ALL`) with zero discrepancies into 7,367 Parquet files in `data/tick_lake/ticks/`.
+- Ticks only — the 1-minute historical bar pipeline and harvesters removed entirely (net −10,415 LOC dead code).
+- Capital.com is the sole live source; Databento is the gap-repair source writing into the lake.
+- Symbols strictly restricted to 19 approved equities via `_control/registry.json`.
+- Ingestion restricted to 04:00–20:00 ET weekdays; unattended compaction in off-hours under single lease.
+- Single Parquet-only dashboard view (`http://localhost:8420`).
+- Terminal milestone reached; development closed per owner directive.
 
-**End state:**
-- `historical.duckdb` and `streaming.duckdb` deleted by the owner; no code path can open or create a disk-backed DuckDB database.
-- Ticks only — the 1-minute bar pipeline is removed entirely.
-- Capital.com is the sole live source; Databento is the sole gap-repair source, writing into the same lake.
-- Symbols are exactly: AAPL, ADBE, AMD, AMZN, APP, AVGO, BABA, GOOGL, META, MSFT, MU, NDAQ, NVDA, ORCL, PANW, QCOM, SHOP, TSLA, TSM.
-- Ingestion restricted to 04:00–20:00 ET; compaction unattended in the closed window.
+**Artifacts:** [.planning/milestones/v5.0-REQUIREMENTS.md](milestones/v5.0-REQUIREMENTS.md) (33 requirements verified) · [.planning/milestones/v5.0-ROADMAP.md](milestones/v5.0-ROADMAP.md) (Phases 46–49) · [.planning/milestones/v5.0-MILESTONE-AUDIT.md](milestones/v5.0-MILESTONE-AUDIT.md) · [reports/v5.0_completion_report.md](../reports/v5.0_completion_report.md)
 
-**Hard sequencing constraint:** the legacy tick migration must complete and verify **before** any `.duckdb` file is deleted — the migration tool uses DuckDB to read the legacy source.
-
-**Artifacts:** [REQUIREMENTS.md](REQUIREMENTS.md) (30 requirements) · [ROADMAP.md](ROADMAP.md) (Phases 46–49) · [STATE.md](STATE.md) · [PLAN-MILESTONE-5.0.md](../PLAN-MILESTONE-5.0.md)
-
-## Current State (Shipped v4.1)
-- **Partitioned Parquet Tick Lake (`data/tick_lake/ticks`)**: Fully decoupled append-only storage organized by Hive two-level partitioning (`symbol=<ENCODED_SYMBOL>/date=<YYYY-MM-DD>/*.parquet`). Live ticks never touch a disk-backed DuckDB database, completely eliminating write locks between ingestion and analytical readers.
-- **Micro-Batch Lake Writer (`TickLakeWriter`)**: Asynchronous worker thread writing Snappy Parquet batches (class defaults: flush every 5.0s or 5,000 rows; the streaming runner constructs it with a 2.0s flush interval and a 10,000-tick bounded queue) with backpressure, retries with exponential backoff, malformed-tick quarantine, and graceful drain.
-- **In-Memory DuckDB Lake Reader (`TickLakeReader`)**: Ephemeral private in-memory DuckDB connections per query (default `threads = 4`, `max_memory = '2GB'`) with Hive partition pruning and deterministic OHLCV resampling via `arg_min(price, (timestamp, ingest_id))` / `arg_max`.
-- **Versioned Symbol Registry (`_control/registry.json`)**: Atomic JSON registry with monotonic version tracking and cross-process file signal notifications (`.stream_reload.signal`) for dynamic symbol additions/removals without daemon restarts.
-- **Zero-Loss Migration Tooling (`tools/migrate_streaming_to_parquet.py`)**: Chunked export (default 100,000 rows/chunk), idempotent checkpointing, and rigorous two-way `EXCEPT ALL` reconciliation guaranteeing 100% data fidelity.
-- **Historical Storage (`data/historical.duckdb`)**: ~8.9M deduplicated 1-minute OHLCV bars across 40 symbols covering October 2024 to September 2026. Sub-10ms dynamic candlestick resampling via DuckDB native `time_bucket()`.
-- **Observability Command Center**: Interactive TradingView Lightweight Charts (v4.1.3) with multi-timeframe analytical resampling (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`), raw OHLCV candle inspector, CSV export, live tick tape, market session clock, and integrity auditing.
-- **Milestone v4.1 Shipped (2026-10-03, Closed: 2026-10-04)**: `Partitioned Parquet Lake Deep Testing & Hardening` (Phases 22–27) — 122 new comprehensive edge-case, stress, fuzz, backpressure, and chaos tests expanded to **746 passing offline tests** (0 failures, 0 errors) with 5 local performance gates passing (<100ms p95). All 17 requirements verified; all audit findings F01–F11 remediated, regression-tested, and offline qualified; formal audit verdict: `PASSED / QUALIFIED` ([.planning/milestones/v4.1-MILESTONE-AUDIT.md](milestones/v4.1-MILESTONE-AUDIT.md)).
-- **Milestone v4.2 Closed (2026-10-04)**: `Tick Lake Qualification & Scoped Signoff` (Phases 28–36) — Scoped signoff with 30 of 45 requirements verified; 15 requirements explicitly excluded/deferred (24h endurance, capacity monitoring, Q10a replay, Q10b compaction) and two xfails pinned for remediation in v4.3 ([.planning/milestones/v4.2-MILESTONE-AUDIT.md](milestones/v4.2-MILESTONE-AUDIT.md)).
-- **Documentation**: `README.md`, `docs/operations/tick_lake_operations_guide.md`, `docs/contracts/repo_b_tick_lake_contract.md`, `docs/windows_service_setup.md`, and `docs/plans/*` are aligned with the shipped architecture and paths.
+## Current State (Shipped v5.0)
+- **Partitioned Parquet Tick Lake (`data/tick_lake/ticks`)**: Fully decoupled append-only storage organized by Hive two-level partitioning (`symbol=<ENCODED_SYMBOL>/date=<YYYY-MM-DD>/*.parquet`). 105,894,626 legacy and live ticks stored across 7,367 files for 19 approved equities. Live ticks never touch a disk-backed DuckDB database, completely eliminating write locks between ingestion and analytical readers.
+- **Pure In-Memory DuckDB Lake Reader (`TickLakeReader`)**: Ephemeral private in-memory DuckDB connections per query (default `threads = 4`, `max_memory = '2GB'`) with Hive partition pruning and deterministic OHLCV resampling via `arg_min(price, (timestamp, ingest_id))` / `arg_max`.
+- **Micro-Batch Lake Writer (`TickLakeWriter`)**: Asynchronous worker thread writing Snappy Parquet batches with backpressure, retries with exponential backoff, malformed-tick quarantine, and graceful drain.
+- **Sole Symbol Authority (`_control/registry.json`)**: Versioned JSON registry enforcing strictly 19 approved US equities, filtering unsolicited symbols at the WebSocket callback boundary.
+- **Automated Operations & Off-Hours Compaction**: Weekday 04:00–20:00 ET session window enforcement, close-time queue drain, unattended off-hours partition consolidation, and operational alerts via Discord.
+- **Observability Command Center**: Interactive TradingView Lightweight Charts (v4.1.3), raw candle inspector, live tick tape, market session clock, and Parquet data integrity auditing on port 8420.
+- **Documentation**: `README.md`, `docs/operations/tick_lake_operations_guide.md`, `docs/contracts/repo_b_tick_lake_contract.md`, and `reports/v5.0_completion_report.md` aligned with the final Parquet-only architecture.
 
 ## Requirements
 
@@ -107,13 +103,27 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 - [x] **TEST-P25-01 … TEST-P25-03**: 30+ concurrent in-memory readers without leaks; sparse partitions, DST/leap-year resampling edges; reverse-chronological tape pagination and symbol pruning — v4.1 (shipped 2026-10-03)
 - [x] **TEST-P26-01 … TEST-P26-03**: Corrupt/partial legacy sources and schema drift; crash interruption across all migration modes; two-way `EXCEPT ALL` fuzzing with precision-mismatch detection — v4.1 (shipped 2026-10-03)
 - [x] **TEST-P27-01 … TEST-P27-02**: Multi-process soak under continuous ingestion and reads; chaos-monkey termination with supervisor self-healing — v4.1 (shipped 2026-10-03)
+- [x] **BASE-01**: Lake candle output recorded as reference baseline before code changes — v5.0 (shipped 2026-10-06)
+- [x] **STOR-01 … STOR-05**: Disk DuckDB removed from runtime; runner lake-only; symbols from registry; in-memory query helper relocated; `src/database/` deleted — v5.0 (shipped 2026-10-06)
+- [x] **DASH-01 … DASH-03**: Historical routes removed; single Parquet dashboard view; integrity reads lake — v5.0 (shipped 2026-10-06)
+- [x] **GAP-01 … GAP-02**: Databento backfill writes to Parquet lake for 19 symbols — v5.0 (shipped 2026-10-06)
+- [x] **RMV-01 … RMV-04, RMV-06 … RMV-09**: Disk DB unreferenced; 1m bar pipeline & dead harvesters deleted; frontend purged; dead dependencies removed; discord rewritten for streamer operations — v5.0 (shipped 2026-10-06)
+- [x] **SCHED-01 … SCHED-05**: America/New_York weekday 04:00–20:00 window; supervisor lifecycle; runner schedule gate; close-time drain; unattended off-hours compaction — v5.0 (shipped 2026-10-06)
+- [x] **SYMB-01**: `_control/registry.json` sole symbol authority (19 symbols) — v5.0 (shipped 2026-10-06)
+- [x] **NOTIF-01**: Discord operational alerts — v5.0 (shipped 2026-10-06)
+- [x] **CO-01 … CO-02**: Full test disposition accounting; candle query behavior verified unchanged — v5.0 (shipped 2026-10-06)
+- [x] **MIG-01 … MIG-03**: 105,894,626 legacy ticks migrated & verified with zero discrepancies; gate before deletion; idempotent re-runs — v5.0 (shipped 2026-10-06)
+- [x] **RMV-05**: Legacy `.duckdb` files deleted immediately after verification — v5.0 (shipped 2026-10-06)
+- [x] **CO-03**: Milestone closed with completion report — v5.0 (shipped 2026-10-06)
 
-_Phase-level requirement detail for v4.1 is archived at [.planning/milestones/v4.1-REQUIREMENTS.md](milestones/v4.1-REQUIREMENTS.md)._
+_Milestone requirement details are archived in [.planning/milestones/](milestones/)._
 
 ### Active
-v5.0 requirements are defined in [REQUIREMENTS.md](REQUIREMENTS.md): DuckDB-free tick-only Parquet storage; authoritative 19-symbol inventory; 04:00–20:00 ET ingestion window with unattended off-hours compaction; PyArrow-based reading and resampling.
+None. Milestone 5.0 is the terminal milestone for Data Harvester. All planned requirements are shipped, mathematically verified, and operational.
 
 ### Out of Scope
+- Historical 1-minute pre-aggregated bar storage and REST harvesters (permanently purged in v5.0)
+- Removing DuckDB library / PyArrow resampling rewrite (considered and rejected in v5.0 Option A)
 - Direct `market-rewind` frontend modifications (deferred per user instruction: focus on data harvesting, storage, and integrity dashboard)
 - Cloudflare R2 / S3 remote object storage (preserving 100% local, zero-cloud architecture)
 - Turso dual-replica synchronization and mirror database (deprecated and purged)
@@ -125,11 +135,12 @@ v5.0 requirements are defined in [REQUIREMENTS.md](REQUIREMENTS.md): DuckDB-free
 - In v2.0, storage was decoupled into separate `.duckdb` files to avoid single-writer lock contention between streaming and dashboard operations.
 - In v3.0, the dashboard transformed into an interactive Observability Command Center with TradingView charts, telemetry tape, market clocks, and background job runners.
 - In v4.0, live tick storage was migrated completely off DuckDB into an append-only, partitioned Parquet lake with atomic staging and in-memory DuckDB querying. This resolved OS-level write lock contention while the canonical 1-minute history remained in `historical.duckdb`.
-- In v4.1, the engine underwent deep hardening and edge-case stress testing: 122 new edge-case, stress, fuzz, backpressure, and chaos tests across Phases 22–27, validating crash recovery, leak-free multi-threaded readers (30+ concurrent), migration fuzzing, and self-healing supervisor processes under chaos-monkey termination. The application code required no functional changes, confirming the v4.0 lake design.
+- In v4.1, the engine underwent deep hardening and edge-case stress testing: 122 new edge-case, stress, fuzz, backpressure, and chaos tests across Phases 22–27, validating crash recovery, leak-free multi-threaded readers (30+ concurrent), migration fuzzing, and self-healing supervisor processes under chaos-monkey termination.
+- In v5.0, the final architecture was realized: complete elimination of disk-backed DuckDB databases (`streaming.duckdb`, `historical.duckdb`, `market_data.duckdb`), zero-loss migration of 105,894,626 legacy ticks into 7,367 Parquet files, total purge of bar-era pipelines (net −10,415 LOC), restricted 19-symbol authority, and automated weekday 04:00–20:00 ET schedule with unattended compaction.
 
 ## Constraints
 - **Zero Cloud Limits**: No dependence on cloud database quotas.
-- **100% Local**: All data stored locally on SSD in the Parquet lake (`data/tick_lake/`) and the DuckDB historical archive (`data/historical.duckdb`).
+- **100% Local**: All data stored locally on SSD in the Parquet lake (`data/tick_lake/`). Zero `.duckdb` files on disk.
 - **Persistent Streams**: Real-time tick capture via Capital.com exclusively.
 - **Mac Mini & Windows Portability**: Standard Python 3.12+ cross-platform execution with zero complex build chains.
 
@@ -149,6 +160,11 @@ v5.0 requirements are defined in [REQUIREMENTS.md](REQUIREMENTS.md): DuckDB-free
 | DuckDB `time_bucket()` Server-Side Resampling | Native analytical grouping across multiple timeframes (`1m` to `1D`) without Python loop overhead | ✓ Good |
 | Context-Aware Gap Range Discovery | Dynamic recorded date range targeting prevents false gap alarms on archived historical data | ✓ Good |
 | Tests-only hardening milestone (v4.1) | Freezing application code while adding 122 adversarial tests proves the lake design rather than hiding defects behind concurrent refactors | ✓ Good |
+| Option A: Parquet storage with DuckDB in-memory query engine | Eliminates file locks and storage fragmentation while preserving existing fast candle queries | ✓ Good |
+| Maximum declutter principle | Deleted bar pipelines, unused harvesters, dead dependencies (yfinance, polygon-api-client), and replay subsystem | ✓ Good |
+| Ingestion schedule window (04:00–20:00 ET weekdays) | Matches US market liquidity hours, protects hardware during nights/weekends | ✓ Good |
+| Unattended off-hours compaction | Consolidates micro-batches during quiet hours under lease lock without contention | ✓ Good |
+| Strict 19-symbol authority | Enforces canonical symbol inventory across runner, supervisor, gap-fill, and UI | ✓ Good |
 
 ## Evolution
 This document evolves at phase transitions and milestone boundaries.
@@ -167,4 +183,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-05 — Milestone v5.0 (DuckDB-Free Tick-Only Parquet) started; v4.3 closed with a documented waiver of phases 44–45.*
+*Last updated: 2026-10-06 — Milestone v5.0 (DuckDB-Free Tick-Only Parquet) shipped and archived; terminal milestone reached.*

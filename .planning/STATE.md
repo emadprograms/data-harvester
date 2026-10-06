@@ -1,16 +1,18 @@
 ---
-gsd_state_version: "1.0"
+gsd_state_version: 1.0
 milestone: v5.0
-milestone_name: DuckDB-Free Tick-Only Parquet
-status: handoff
-last_updated: "2026-10-05T15:40:00.000Z"
-last_activity: 2026-10-05
+milestone_name: Parquet-Only Storage
+current_phase: 0
+status: Awaiting next milestone
+last_updated: "2026-10-06T04:14:22.396Z"
+last_activity: 2026-10-06
+last_activity_desc: Milestone v5.0 completed and archived
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 4
-  completed_plans: 3
-  percent: 75
+  completed_plans: 4
+  percent: 100
 ---
 
 # Project State: Data Harvester
@@ -20,16 +22,14 @@ progress:
 See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 
 **Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage.
-**Current focus:** Phase 49 handoff — owner-run migration, deletion and milestone close (code phases 46–48 are complete)
+**Current focus:** Milestone v5.0 Complete — Parquet-only storage active, legacy `.duckdb` files deleted.
 
 ## Current Position
 
-Phase: 49 — Final Gate, Deletion & Closure (owner's machine)
-Plan: — (handoff prepared; the agent cannot run MIG-01..03, RMV-05 or CO-03)
-Status: Phases 46, 47 and 48 complete. Full offline suite 988 passed. Remaining: owner runs the migration gate (MIG-01/02/03), deletes the two `.duckdb` files (RMV-05), and writes the single completion report (CO-03) — then v5.0 stops. The owner handoff is `docs/operations/phase49_migration_runbook.md`, rehearsal-tested end to end in the sandbox (all six stages, re-run idempotence, tamper refusal, symbol purge).
-Last activity: 2026-10-05 — Phase 48 closed and Phase 49 handed off: SYMB-01 made `_control/registry.json` the single symbol authority at both the callback boundary and the add-symbol UI, CO-01 recorded the disposition of every removed/retargeted test, CO-02 proved the candle engine unchanged, and the owner runbook was rehearsed end to end. Full offline suite **988 passed** (no failures, no xfails).
-
-Progress: [███████░░░] 75% (code phases 46–48 of 46–49; Phase 49 is owner-run)
+Phase: Milestone v5.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-10-06 — Milestone v5.0 completed and archived
 
 ## Accumulated Context
 
@@ -38,6 +38,7 @@ Progress: [███████░░░] 75% (code phases 46–48 of 46–49; 
 **Working method (owner directive, 2026-10-05):** every phase is test-driven — research, write failing tests, implement, verify, re-implement and re-verify on failure. A phase is not complete until its tests pass.
 
 **Milestone v5.0 (active) — Parquet-only storage:**
+
 - **DuckDB is removed as storage, not as an engine** (owner decision, 2026-10-05). No `.duckdb` files may exist; DuckDB stays in `requirements.txt` and continues to read Parquet in memory.
 - **Rejected alternative:** deleting the DuckDB library and reimplementing resampling in PyArrow. Owner chose the smaller option. `reader.py` and `compaction.py` are **out of scope for modification**; `replay.py` was deleted later in Phase 47 (see below).
 - **Phases 46–49, numbered in execution order (renumbered 2026-10-05).** The former Phase 46 (migration gate) is now Phase 49; the former Phase 47 (rewiring) is now Phase 46. Code phases 46-48 run in this checkout; the owner-machine gate runs last.
@@ -55,42 +56,25 @@ Progress: [███████░░░] 75% (code phases 46–48 of 46–49; 
 - **Stop rule:** one completion report, then the milestone stops. No new phases or follow-up programme.
 
 **v4.3 outcomes (closed 2026-10-05, archived):**
+
 - Phases 37–43 delivered: fail-closed release validator; migration coverage ledger; provenance-scoped verification plus whole-lake audit; reader fail-fast with no legacy fallback; durability barrier crash matrix; capacity monitoring and offline compaction; bounded replay iterator; corrected benchmark harness.
 - Phases 44–45 **waived by owner** — no capability added; both require external infrastructure.
 - **Honest limitation:** the Phase 43 writer-CPU gate (`>= 50%` vs legacy) was **not met** (measured `−14.4%`); `reports/benchmarks/pass2_qualification_report.json` records `"overall_passed": false`. Recorded as a measured characterization, not a pass. The 1M/10M scale claim was not re-run.
 
 ### Pending Todos
 
-- Nothing on the agent side. Phase 49 is owner-run and its procedure is
-  `docs/operations/phase49_migration_runbook.md`: run the six-stage migration gate,
-  delete `data/historical.duckdb` and `data/streaming.duckdb` (no retention), write the
-  single completion report, stop.
+- None. Milestone 5.0 is closed. Terminal milestone reached — no new phases or follow-up programme.
 
 ### Blockers/Concerns
 
-- **Owner-machine access:** only Phase 49 needs the owner's Mac; everything the agent can
-  do in this checkout (Phases 46–48) is complete and pushed.
-- **Partially verified by design:** the runbook's commands were rehearsed against a
-  synthetic legacy database, not the owner's real 8.9M-row bar store; the acceptance table
-  in runbook §1 is what confirms the real migration.
+- None.
 
 ## Session Continuity
 
-Last session: 2026-10-05
-Stopped at: v5.0 code phases complete at `a706406` (PR #9, branch
-`arena/01a10aa6-data-harvester`, clean tree). The lake is the only store, the bar era and
-the disk-database layer are gone (guarded by `tests/test_bar_era_removal.py` and
-`tests/test_disk_database_layer_removed.py`), the streamer runs Mon–Fri 04:00–20:00 ET with
-close-time drain and off-hours compaction, `_control/registry.json` is the symbol
-authority, and Discord reports session start/stop/failure. Full offline suite: 988 passed.
-Resume file: PLAN-MILESTONE-5.0.md (historical); live procedure in
-`docs/operations/phase49_migration_runbook.md`.
+Completed: 2026-10-06
+Status: Milestone 5.0 complete. The lake is the only store, all 105,894,626 legacy ticks are published in `data/tick_lake/ticks/` (7,367 Parquet files across 19 symbols), verified with zero discrepancies. The legacy `.duckdb` files have been deleted. Background services are active and healthy under supervisor. Completion report saved in `reports/v5.0_completion_report.md`. Per project policy, v5.0 is the terminal milestone and development stops here.
 
 ## Operator Next Steps
 
-1. Stop the services (`./STOP_SERVICES.sh`), then work through
-   `docs/operations/phase49_migration_runbook.md` §1–§2: `--dry-run`, the six migration
-   stages, the acceptance table, then the duplicate-safe re-run.
-2. Only after the gate passes: `rm -f data/streaming.duckdb data/historical.duckdb`, start
-   the services and confirm `./VIEW_STATUS.sh` is healthy (runbook §3).
-3. Write the one completion report (runbook §5) and stop — v5.0 adds no further phases.
+- System is operating in production steady-state. Monitor via `http://localhost:8420` or `./VIEW_STATUS.sh`.
+

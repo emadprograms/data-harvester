@@ -112,6 +112,40 @@
 
 ---
 
+## Milestone: v5.0 — DuckDB-Free Tick-Only Parquet
+
+**Shipped:** 2026-10-06
+**Phases:** 4 (Phases 46–49) | **Plans:** 4 | **Requirements:** 33/33
+
+### What Was Built
+- Total removal of disk-backed DuckDB database files (`data/streaming.duckdb`, `data/historical.duckdb`, `data/market_data.duckdb`).
+- Reconciled and published 105,894,626 legacy ticks across 7,355 partitions into 7,367 Parquet files with zero discrepancies via two-way `EXCEPT ALL` mathematical verification.
+- Stateless in-memory DuckDB analytical engine querying partitioned Parquet files directly with zero disk lock contention.
+- Complete purge of the 1-minute historical bar pipeline, harvesters, dead REST providers, and dead dependencies (`yfinance`, `polygon-api-client`), reducing codebase size by over 10,400 LOC.
+- Single-view Parquet dashboard with live tape, TradingView candlestick charts, and integrity health checks reading purely from Parquet.
+- Weekdays-only 04:00–20:00 ET ingestion schedule with supervisor lifecycle states, close-time queue drain, and unattended off-hours compaction under single-lease fencing.
+- Strict 19-symbol authority enforced by `_control/registry.json`.
+
+### What Worked
+- **Test-Driven Refactoring:** Establishing golden reference baselines (`tests/storage/test_candle_baseline.py`) and strict negative guardrails (`tests/stream/test_no_disk_db_backend.py`, `tests/test_disk_database_layer_removed.py`, `tests/test_bar_era_removal.py`) ensured zero regressions while deleting thousands of lines of legacy code.
+- **Two-Way Mathematical Reconciliation:** Bidirectional `EXCEPT ALL` partition-level verification guaranteed that the 105.8M ticks in Parquet had 100% duplicate multiplicity and floating-point precision parity with the legacy store before database deletion.
+- **In-Memory DuckDB on Parquet:** Ephemeral DuckDB connections query the Parquet lake with sub-100ms multi-day latencies, completely eliminating OS-level file lock contention between writers and readers.
+
+### What Was Inefficient
+- **Algorithmic Redundancy in Migration Hashing:** `self._source_fingerprint()` was initially invoked inside the 7,355-partition publish loop rather than once per run, causing redundant disk hashing of the 15.5GB database file until terminated and bypassed. Pre-calculating global invariant fingerprints outside loop scopes is essential for high-partition migrations.
+
+### Patterns Established
+- Pure Parquet tick lake with in-memory DuckDB query engine as the sole data architecture.
+- Single JSON registry (`_control/registry.json`) as the sole cross-process symbol authority.
+- Hardened macOS launchd/supervisor lifecycle states (session window enforcement, close-time drain, off-hours compaction).
+
+### Key Lessons
+1. When performing large-scale data migrations, compute source-level checksums once and pass the memoized hash to partition publishers.
+2. In-memory query engines over partitioned columnar storage provide the query power of SQL without the write-lock bottlenecks of embedded databases.
+3. Maximum declutter (removing dead bar pipelines, unused dependencies, dormant subsystems) drastically simplifies operational maintenance and reduces cognitive overhead.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -123,6 +157,9 @@
 | v3.0 | 1 | 5 | Observability Command Center with TradingView charts, live telemetry, and automated job drawer |
 | v4.0 | 1 | 7 | Partitioned Parquet tick lake, atomic publication, in-memory DuckDB readers, zero-loss migration |
 | v4.1 | 1 | 6 | Tests-only hardening: edge cases, stress, fuzzing, chaos, multi-process soak |
+| v4.2 | 1 | 9 | Tick lake qualification, CI evidence, and scoped release signoff |
+| v4.3 | 1 | 7 | Hardening, leak-free reader contracts, offline compaction, and benchmark qualification |
+| v5.0 | 1 | 4 | Complete removal of disk DuckDB files; 105.8M tick Parquet migration; bar era purge; terminal milestone |
 
 ### Cumulative Quality
 
@@ -133,9 +170,14 @@
 | v3.0 | 182 | 100% | 7.99M bars + live tick stream |
 | v4.0 | 566 | 100% | ~8.9M bars + multi-million migrated ticks in the Parquet lake |
 | v4.1 | 688 | 100% at closeout | ~8.9M bars + continuing Parquet lake capture |
+| v4.2 | 823 | 100% offline | Lake qualification and migration rehearsal |
+| v4.3 | 1,045 | 100% offline | Durable maintenance journal, replay iterator, benchmark harness |
+| v5.0 | 988 | 100% offline | 105,894,626 verified lake ticks across 7,367 Parquet files (0 .duckdb files) |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. Zero-dependency single-file frontend delivery (vanilla JS + CDN libraries) provides high velocity and zero build drift for local developer tools.
 2. Embedded-database concurrency is a process-ownership problem, not a retry problem: decoupling writers from readers via immutable, atomically published files is the durable fix.
 3. Verify documentation against shipped code at every closeout — paths, filenames, env knobs, and data types drift otherwise.
+4. Eliminate clutter aggressively: preserving unused legacy storage formats or dead endpoints creates maintenance drag and confusion.
+
