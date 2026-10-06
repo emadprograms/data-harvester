@@ -174,45 +174,83 @@ def _rewrite_table(table: pa.Table) -> tuple[pa.Table, List[Dict[str, Any]]]:
     quarantine: List[Dict[str, Any]] = []
     source_rows = table.to_pylist()
     for row in source_rows:
-        bid = row.get("bid")
-        ask = row.get("ask")
-        if _is_present(bid) and _is_present(ask):
-            kept.append(
-                {
-                    "timestamp": row["timestamp"],
-                    "symbol": row["symbol"],
-                    "bid_price": float(bid),
-                    "ask_price": float(ask),
-                    "source": row.get("source"),
-                    "session": row.get("session"),
-                    "ingest_id": row.get("ingest_id"),
-                }
-            )
+        src = str(row.get("source") or "").upper()
+        if src == "DATABENTO":
+            p = row.get("price")
+            if _is_present(p) and float(p) > 0:
+                kept.append(
+                    {
+                        "timestamp": row["timestamp"],
+                        "symbol": row["symbol"],
+                        "bid_price": float(p),
+                        "ask_price": float(p),
+                        "source": "DATABENTO",
+                        "session": row.get("session"),
+                        "ingest_id": row.get("ingest_id"),
+                    }
+                )
+            else:
+                quarantine.append(
+                    {
+                        "timestamp": row.get("timestamp"),
+                        "symbol": row.get("symbol"),
+                        "ingest_id": row.get("ingest_id"),
+                        "bid": row.get("bid"),
+                        "ask": row.get("ask"),
+                        "price": p,
+                    }
+                )
         else:
-            quarantine.append(
-                {
-                    "timestamp": row.get("timestamp"),
-                    "symbol": row.get("symbol"),
-                    "ingest_id": row.get("ingest_id"),
-                    "bid": bid,
-                    "ask": ask,
-                    "price": row.get("price"),
-                }
-            )
+            bid = row.get("bid")
+            ask = row.get("ask")
+            if _is_present(bid) and _is_present(ask) and float(bid) > 0 and float(ask) > 0:
+                kept.append(
+                    {
+                        "timestamp": row["timestamp"],
+                        "symbol": row["symbol"],
+                        "bid_price": float(bid),
+                        "ask_price": float(ask),
+                        "source": row.get("source"),
+                        "session": row.get("session"),
+                        "ingest_id": row.get("ingest_id"),
+                    }
+                )
+            else:
+                quarantine.append(
+                    {
+                        "timestamp": row.get("timestamp"),
+                        "symbol": row.get("symbol"),
+                        "ingest_id": row.get("ingest_id"),
+                        "bid": bid,
+                        "ask": ask,
+                        "price": row.get("price"),
+                    }
+                )
     if len(kept) + len(quarantine) != table.num_rows:
         raise QuoteRewriteError("kept plus quarantined does not equal the old row count")
-    for index, row in enumerate(kept):
-        original = table.to_pylist()[index] if False else None
-        _ = original
     original_rows = source_rows
-    original_kept = [row for row in original_rows if _is_present(row.get("bid")) and _is_present(row.get("ask"))]
+    original_kept = []
+    for r in original_rows:
+        if str(r.get("source") or "").upper() == "DATABENTO":
+            if _is_present(r.get("price")) and float(r.get("price")) > 0:
+                original_kept.append(r)
+        else:
+            if _is_present(r.get("bid")) and _is_present(r.get("ask")) and float(r.get("bid")) > 0 and float(r.get("ask")) > 0:
+                original_kept.append(r)
     if len(original_kept) != len(kept):
-        raise QuoteRewriteError("kept row count mismatch against source bid/ask")
+        raise QuoteRewriteError("kept row count mismatch against source records")
     for new_row, old_row in zip(kept, original_kept):
-        if float(new_row["bid_price"]) != float(old_row["bid"]):
-            raise QuoteRewriteError("bid_price does not equal the old bid")
-        if float(new_row["ask_price"]) != float(old_row["ask"]):
-            raise QuoteRewriteError("ask_price does not equal the old ask")
+        if str(old_row.get("source") or "").upper() == "DATABENTO":
+            expected_price = float(old_row["price"])
+            if float(new_row["bid_price"]) != expected_price:
+                raise QuoteRewriteError("bid_price does not equal Databento trade price")
+            if float(new_row["ask_price"]) != expected_price:
+                raise QuoteRewriteError("ask_price does not equal Databento trade price")
+        else:
+            if float(new_row["bid_price"]) != float(old_row["bid"]):
+                raise QuoteRewriteError("bid_price does not equal the old bid")
+            if float(new_row["ask_price"]) != float(old_row["ask"]):
+                raise QuoteRewriteError("ask_price does not equal the old ask")
         if "price" in new_row:
             raise QuoteRewriteError("refusing to copy price into a v2 row")
     out = ticks_to_table_v2(kept, validate=True) if kept else ticks_to_table_v2([], validate=False)

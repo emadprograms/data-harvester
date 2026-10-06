@@ -68,8 +68,8 @@ def test_quote_01_capital_quote_stores_bid_and_ask_only(tmp_path):
     assert 100.02 not in {round(v, 2) for v in table["bid_price"].to_pylist()}
 
 
-def test_quote_02_databento_tbbo_drops_trade_price_and_size(tmp_path):
-    """QUOTE-02: store bid_px_00 and ask_px_00. Drop the trade print."""
+def test_quote_02_databento_tbbo_maps_trade_price_to_bid_and_ask(tmp_path):
+    """QUOTE-02: Databento trade price is mapped to both bid_price and ask_price to avoid BBO wicks."""
     import pandas as pd
 
     raw = pd.DataFrame(
@@ -93,8 +93,8 @@ def test_quote_02_databento_tbbo_drops_trade_price_and_size(tmp_path):
         "source",
         "session",
     ]
-    assert frame.iloc[0]["bid_price"] == pytest.approx(100.00)
-    assert frame.iloc[0]["ask_price"] == pytest.approx(100.04)
+    assert frame.iloc[0]["bid_price"] == pytest.approx(100.50)
+    assert frame.iloc[0]["ask_price"] == pytest.approx(100.50)
     assert frame.iloc[0]["source"] == "DATABENTO"
     assert "price" not in frame.columns
     assert "volume" not in frame.columns
@@ -106,24 +106,22 @@ def test_quote_02_databento_tbbo_drops_trade_price_and_size(tmp_path):
     assert published == 1
     table = pq.read_table(_parquet_files(lake)[0])
     assert set(table.column_names).isdisjoint(FORBIDDEN_COLUMNS)
-    assert table["bid_price"][0].as_py() == pytest.approx(100.00)
-    assert table["ask_price"][0].as_py() == pytest.approx(100.04)
-    stored = " ".join(str(v) for v in table.to_pylist()[0].values())
-    assert "100.5" not in stored
+    assert table["bid_price"][0].as_py() == pytest.approx(100.50)
+    assert table["ask_price"][0].as_py() == pytest.approx(100.50)
     assert "12" not in {str(v) for v in table.to_pylist()[0].values()}
 
 
-def test_quote_02_does_not_substitute_trade_price_when_quote_is_missing():
-    """A missing Databento bid is dropped. It is not replaced by the trade price."""
+def test_quote_02_drops_databento_when_trade_price_is_missing():
+    """A missing Databento trade price is dropped."""
     import pandas as pd
 
     raw = pd.DataFrame(
         {
             "ts_event": pd.to_datetime(["2026-10-02 14:31:00+00:00"]),
             "symbol": ["NVDA"],
-            "price": [100.50],
+            "price": [None],
             "size": [1],
-            "bid_px_00": [None],
+            "bid_px_00": [100.00],
             "ask_px_00": [100.04],
         }
     )

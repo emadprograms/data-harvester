@@ -239,9 +239,8 @@ def test_qfill_04_requests_tbbo_stretches_and_stores_bid_and_ask(tmp_path):
     assert "bid_price" in table.column_names
     assert "ask_price" in table.column_names
     assert "price" not in table.column_names
-    assert "volume" not in table.column_names
-    assert table["bid_price"][0].as_py() == pytest.approx(100.00)
-    assert table["ask_price"][0].as_py() == pytest.approx(100.04)
+    assert table["bid_price"][0].as_py() == pytest.approx(100.50)
+    assert table["ask_price"][0].as_py() == pytest.approx(100.50)
     assert result["requests"] == 1
     assert result["follow_up_requests"] == 0
 

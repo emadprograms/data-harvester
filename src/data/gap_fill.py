@@ -957,6 +957,15 @@ def fill_named_day(
                     )
                     break
                 except Exception as exc:
+                    status = getattr(exc, "http_status", None) or getattr(exc, "status_code", None)
+                    is_transient = (
+                        (isinstance(status, int) and status >= 500)
+                        or "BentoServerError" in type(exc).__name__
+                        or "504" in str(exc)
+                        or "Gateway" in str(exc)
+                    )
+                    if not is_transient:
+                        raise
                     last_get_range_exc = exc
                     if attempt < 2:
                         time.sleep(2.0 * (attempt + 1))

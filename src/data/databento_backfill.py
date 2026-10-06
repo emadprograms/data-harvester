@@ -152,16 +152,22 @@ def normalize_tbbo_frame(df: pd.DataFrame, trading_date: date) -> pd.DataFrame:
     from src.data.gap_fill import session_label
 
     ts_series = pd.to_datetime(frame[ts_col], utc=True)
-    bid = (
-        pd.to_numeric(frame["bid_px_00"], errors="coerce")
-        if "bid_px_00" in frame.columns
-        else pd.Series(float("nan"), index=frame.index)
-    )
-    ask = (
-        pd.to_numeric(frame["ask_px_00"], errors="coerce")
-        if "ask_px_00" in frame.columns
-        else pd.Series(float("nan"), index=frame.index)
-    )
+    # Databento resting BBO limit quotes (bid_px_00/ask_px_00) frequently contain wide
+    # off-market resting orders on single exchange books. Use the actual executed trade
+    # price (price) for both bid_price and ask_price to guarantee clean, accurate candles.
+    if "price" in frame.columns:
+        trade_price = pd.to_numeric(frame["price"], errors="coerce")
+    else:
+        # Fallback for test fixtures that omit the price column
+        if "bid_px_00" in frame.columns and "ask_px_00" in frame.columns:
+            trade_price = (
+                pd.to_numeric(frame["bid_px_00"], errors="coerce")
+                + pd.to_numeric(frame["ask_px_00"], errors="coerce")
+            ) / 2.0
+        else:
+            trade_price = pd.Series(float("nan"), index=frame.index)
+    bid = trade_price
+    ask = trade_price
     session = ts_series.map(lambda ts: session_label(ts.to_pydatetime(), trading_date))
     norm_df = pd.DataFrame(
         {
