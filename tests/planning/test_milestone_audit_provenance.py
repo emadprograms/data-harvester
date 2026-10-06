@@ -60,6 +60,17 @@ def _commit_exists(sha: str) -> bool:
     return result.returncode == 0
 
 
+def _is_shallow_clone() -> bool:
+    """True when history is truncated, so ancestor revisions are simply not present."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-shallow-repository"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
 def test_audit_records_a_full_candidate_and_its_history():
     frontmatter = _frontmatter()
     candidate = re.search(r"^candidate_sha:\s*(\S+)\s*$", frontmatter, re.MULTILINE)
@@ -76,6 +87,13 @@ def test_audit_records_a_full_candidate_and_its_history():
 
 def test_audit_only_calls_a_revision_absent_when_it_really_is():
     """An absence claim about a revision this checkout can resolve is a false claim."""
+    if _is_shallow_clone():
+        # Every ancestor looks absent in a truncated history, so this check would pass
+        # vacuously. Skip rather than imply the claim was verified.
+        pytest.skip(
+            "shallow clone: history is truncated, so an absence claim about an ancestor "
+            "cannot be disproved. Check the repository out with full history."
+        )
     offenders = []
     for line in AUDIT_PATH.read_text(encoding="utf-8").splitlines():
         if not ABSENCE_CLAIM.search(line):
@@ -99,6 +117,14 @@ def test_reaudit_findings_are_recorded_with_the_revision_that_closed_them():
     assert re.fullmatch(r"[0-9a-f]{7,40}", fix_sha.group(1)), (
         f"fix_sha must be a commit revision, got {fix_sha.group(1)!r}"
     )
+    if _is_shallow_clone():
+        # A truncated history cannot resolve any ancestor, so resolvability is not
+        # decidable here. Skip loudly rather than passing as if it were verified; CI
+        # checks out full history so this branch is not the normal path.
+        pytest.skip(
+            "shallow clone: history is truncated, so a recorded revision cannot be "
+            "resolved. Check the repository out with full history to verify provenance."
+        )
     if _commit_exists(fix_sha.group(1)):
         return
     if _commit_exists(fix_sha.group(1)[:7]):
