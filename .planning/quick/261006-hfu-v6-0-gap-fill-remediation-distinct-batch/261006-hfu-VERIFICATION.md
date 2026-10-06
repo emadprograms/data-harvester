@@ -50,6 +50,10 @@ The commands above are the plan's literal commands. They were executed in this e
 
 `gsd-tools check verify-command-paths` over the plan: 4 commands, 0 blocker, 0 warning.
 
+### CI
+
+The repository workflow (`Offline tests`, `python -m pytest tests -m 'not live and not performance' -q -rf`) previously failed at collection on every run because `beautifulsoup4` was undeclared in `requirements.txt`; `bs4` is imported by six dashboard/streaming test modules. With that one declaration added, the workflow completes successfully on this branch (first green run in the recorded history, `main` included), and the same suite reproduces locally in a clean venv installed from `requirements.txt`: 1,046 passed, 14 deselected.
+
 ## Prior-finding closure
 
 | ID | Prior status on `3c35a577` | Now |

@@ -74,6 +74,10 @@ status: complete
 
 Baseline failure signatures retained: P1 → `BatchCollisionError: Destination file ticks/symbol=NVDA/date=2026-10-02/batch_gap_fill_000000.parquet already exists with differing content`; P2 → `a second paid request happened: [('2026-10-02T14:01:00','2026-10-02T14:06:00'), ('2026-10-02T14:02:00','2026-10-02T14:06:00')]`.
 
+## CI unblock (folded in)
+
+The repository's `Offline tests` workflow had failed on **every** run, `main` included (12/12 at the time of writing): six dashboard/streaming test modules import `bs4`, but `requirements.txt` never declared `beautifulsoup4`, so the suite aborted with 6 collection errors before running anything. Added the one missing declaration and verified in a clean venv created from the edited `requirements.txt`: **1,046 passed, 14 deselected**. The workflow now completes successfully on this branch. Nothing else was missing — every other test import (`duckdb`, `pandas`, `pyarrow`, `pytest`, `pytz`, `requests`, `psutil`, `websockets`, `databento`, `tzdata`, `python-dotenv`) was already declared.
+
 ## Observations and deferred items
 
 - **`.gitignore` traps `git add` on these paths.** The bare `data` entry matches the `tests/data` and `src/data` directories, so `git add tests/data/...` prints "paths are ignored" and exits 1 even though the explicitly named files are tracked and staged. Tracked files commit normally; an untracked new file under `src/data/` or `tests/data/` would need `-f`. Not fixed here (out of scope for this task) — worth `/gsd-quick` later.
