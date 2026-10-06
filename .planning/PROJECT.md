@@ -128,23 +128,15 @@ The v5.0 stop rule is lifted by the owner on 2026-10-06. Research for this miles
 - [x] **RMV-05**: Legacy `.duckdb` files deleted immediately after verification — v5.0 (shipped 2026-10-06)
 - [x] **CO-03**: Milestone closed with completion report — v5.0 (shipped 2026-10-06)
 
+- [x] **QUOTE-01 … QUOTE-03**: New quotes store `bid_price` and `ask_price` only (Capital.com & Databento); inspection candles use `bid_price`, volume histogram removed — v6.0 (shipped 2026-10-06)
+- [x] **QFILL-01 … QFILL-05**: Computer-offline gap fill for named days requests all-symbol silence only; holds lock; skips weekends/holidays — v6.0 (shipped 2026-10-06)
+- [x] **DOCS-01**: README, operations guide, and Repo B contract updated for schema v2 and gap fill — v6.0 (shipped 2026-10-06)
+- [x] **REWRITE-01 … REWRITE-05**: Offline schema rewrite tool with backup verification, resume, and receipts (verified in fixtures; production lake owner-run) — v6.0 (shipped 2026-10-06)
+
 _Milestone requirement details are archived in [.planning/milestones/](milestones/)._
 
 ### Active
-- [ ] **QUOTE-01**: A new Capital.com quote stores the feed bid in `bid_price` and the feed ask in `ask_price`, and does not store a midpoint, a `price` column, a `volume` column, or a size.
-- [ ] **QUOTE-02**: A new Databento row stores `bid_px_00` and `ask_px_00` in those same columns, and does not store the trade price or the trade size.
-- [ ] **QUOTE-03**: The inspection chart builds candles from `bid_price` and does not draw a volume series.
-- [ ] **REWRITE-01**: The operator can rewrite the existing lake so every kept row's `bid_price` equals the previously stored bid and `ask_price` equals the previously stored ask.
-- [ ] **REWRITE-02**: The rewrite does not copy the old midpoint or the old trade price into `bid_price`.
-- [ ] **REWRITE-03**: A row missing bid or ask is quarantined and counted, not filled in from `price`.
-- [ ] **REWRITE-04**: The rewrite refuses to start without room for a second copy, holds the writer lock, and can resume after a stop.
-- [ ] **REWRITE-05**: Receipts match the new files, and `lake.json` becomes schema version 2 only after every file passes.
-- [ ] **QFILL-01**: The operator can request one day and receive only the stretches where every registry symbol was silent.
-- [ ] **QFILL-02**: Pre-market and post-market silence counts at 15 minutes. Regular-hours silence counts at 2 minutes. A stretch that crosses 09:30 or 16:00 ET is split.
-- [ ] **QFILL-03**: Weekends, full NYSE holidays, and time after an early close are not requested.
-- [ ] **QFILL-04**: Databento is asked only for those stretches. Returned bid and ask are stored as `bid_price` and `ask_price`. Fewer Databento rows than Capital.com rows is accepted.
-- [ ] **QFILL-05**: Gap fill does not run while the live writer owns the lake.
-- [ ] **DOCS-01**: The README, the operations guide, and the Repo B contract describe the new columns, the rewrite, and the gap-fill rule.
+None. Milestone v6.0 complete (checkout complete; production lake rewrite owner-run).
 
 ### Out of Scope
 - Bid quantity and ask quantity (owner, 2026-10-06). They were never stored, so the rewrite cannot recover them.
