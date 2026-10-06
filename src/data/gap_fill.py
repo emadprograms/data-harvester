@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -58,6 +59,9 @@ NYSE_EXCEPTIONAL_FULL_CLOSURES = frozenset(
 
 COVERAGE_FILENAME = "gap_fill_coverage.json"
 COVERAGE_VERSION = 2
+# Same alphabet LakePublisher._safe_batch_id enforces. Validated here before any batch
+# identity is used to build a path, so a hand-edited ledger cannot probe outside the lake.
+BATCH_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,180}")
 PENDING_FIELDS = ("date", "dataset", "schema", "symbols", "start", "end", "batch_id")
 GAP_FILL_WRITER_ID = "gap_fill"
 
@@ -365,7 +369,13 @@ def _load_state(root: Path) -> dict:
         raise GapFillRecoveryError("Coverage ledger has an unsupported shape")
     if not isinstance(raw_intervals, list) or not isinstance(raw_pending, list):
         raise GapFillRecoveryError("Coverage ledger intervals/pending must be lists")
-    completed = [item for item in raw_intervals if isinstance(item, dict)]
+    # A non-object entry cannot be read as coverage, and dropping it silently would make the
+    # interval look like a hole again — the exact re-purchase this ledger exists to prevent.
+    if any(not isinstance(item, dict) for item in raw_intervals):
+        raise GapFillRecoveryError(
+            f"Coverage ledger {path} has a non-object interval entry; inspect it, or delete "
+            "the ledger to rebuild coverage from verified publication receipts"
+        )
     outstanding: List[dict] = []
     for item in raw_pending:
         if not isinstance(item, dict):
@@ -373,8 +383,26 @@ def _load_state(root: Path) -> dict:
         missing = [field for field in PENDING_FIELDS if item.get(field) in (None, "", [])]
         if missing:
             raise GapFillRecoveryError(f"Pending interval is missing {', '.join(missing)}")
+        batch_id = str(item["batch_id"])
+        if not BATCH_ID_PATTERN.fullmatch(batch_id) or batch_id in {".", ".."}:
+            raise GapFillRecoveryError(f"Pending interval has an unusable batch id {batch_id!r}")
+        try:
+            start = _parse_coverage_time(str(item["start"]))
+            end = _parse_coverage_time(str(item["end"]))
+        except (TypeError, ValueError) as exc:
+            raise GapFillRecoveryError(
+                f"Pending interval {batch_id} has unreadable bounds: {exc}"
+            ) from exc
+        if end <= start:
+            raise GapFillRecoveryError(
+                f"Pending interval {batch_id} has non-increasing bounds {start} -> {end}"
+            )
+        if start.date().isoformat() != str(item["date"]):
+            raise GapFillRecoveryError(
+                f"Pending interval {batch_id} is not on its own date {item['date']}"
+            )
         outstanding.append(item)
-    return {"version": COVERAGE_VERSION, "intervals": completed, "pending": outstanding}
+    return {"version": COVERAGE_VERSION, "intervals": list(raw_intervals), "pending": outstanding}
 
 
 def _save_state(root: Path, intervals: List[dict], pending: List[dict]) -> None:
@@ -486,6 +514,10 @@ def _scope_receipts(root: Path, scope_key: Tuple, known: Set[str]) -> List[Any]:
     for path in sorted(receipts_dir.glob("*.json")):
         if path.stem in known:
             continue
+        # Receipts are only ever written under a safe batch id. Skip a stray file that could
+        # not be one, so junk in the receipts directory cannot block the fill.
+        if not BATCH_ID_PATTERN.fullmatch(path.stem) or path.stem in {".", ".."}:
+            continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -554,13 +586,17 @@ def _reconcile_recovery_state(
             remaining.append(record)
             continue
         batch_id = str(record["batch_id"])
+        intent_path = root / "_control" / "intent" / f"{batch_id}.json"
         receipt = _verified_receipt(root, batch_id)
-        if receipt is None and (root / "_control" / "intent" / f"{batch_id}.json").is_file():
+        if receipt is None and intent_path.is_file():
             recover_pending_publications(root, batch_ids={batch_id}, ownership_lock=lock)
             receipt = _verified_receipt(root, batch_id)
             if receipt is None:
                 raise GapFillRecoveryError(
-                    f"Publication intent for {batch_id} is not recoverable; refusing to download"
+                    f"Publication intent {intent_path} is not recoverable, so interval "
+                    f"{batch_id} cannot be completed or safely retried. Inspect it: if the "
+                    "batch never reached the lake, remove the intent so the interval can be "
+                    "requested again."
                 )
         if receipt is None:
             retries.append(record)
