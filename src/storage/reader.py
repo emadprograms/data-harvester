@@ -31,6 +31,78 @@ from src.storage.config import (
 from src.storage.schema import LAKE_SCHEMA_V1
 
 
+_V2_QUOTE_SELECT = """
+    SELECT
+        timestamp,
+        symbol,
+        bid_price,
+        ask_price,
+        bid_price AS chart_price,
+        bid_price AS price,
+        CAST(NULL AS DOUBLE) AS volume,
+        bid_price AS bid,
+        ask_price AS ask,
+        source,
+        session,
+        ingest_id
+    FROM read_parquet(?, hive_partitioning=false)
+"""
+
+_V1_QUOTE_SELECT = """
+    SELECT
+        timestamp,
+        symbol,
+        bid AS bid_price,
+        ask AS ask_price,
+        price AS chart_price,
+        price,
+        volume,
+        bid,
+        ask,
+        source,
+        session,
+        ingest_id
+    FROM read_parquet(?, hive_partitioning=false)
+"""
+
+
+def quote_scan(files: List[Path]) -> tuple[str, List[List[str]], str, str]:
+    """Build a scan that can read schema v1 files, schema v2 files, or both.
+
+    A v1-only scan is the raw Parquet read, so existing candle SQL stays on
+    ``price``. A v2 scan exposes ``bid_price``. A mixed scan keeps each row's
+    own chart source: the old ``price`` for v1, ``bid_price`` for v2.
+    """
+    v1_paths: List[str] = []
+    v2_paths: List[str] = []
+    for path in files:
+        names = pq.read_schema(path).names
+        if "bid_price" in names:
+            v2_paths.append(str(path))
+        else:
+            v1_paths.append(str(path))
+    if not v2_paths:
+        return (
+            "read_parquet(?, hive_partitioning=false)",
+            [v1_paths],
+            "price",
+            "sum(coalesce(volume, 1.0))",
+        )
+    if not v1_paths:
+        return (
+            f"({_V2_QUOTE_SELECT})",
+            [v2_paths],
+            "bid_price",
+            "sum(volume)",
+        )
+    return (
+        f"({_V2_QUOTE_SELECT} UNION ALL {_V1_QUOTE_SELECT})",
+        [v2_paths, v1_paths],
+        "chart_price",
+        "sum(volume)",
+    )
+
+
 class LakeReaderError(StorageConfigError):
     """Base error for lake reader operations."""
     pass
@@ -221,7 +293,8 @@ class TickLakeReader:
 
         compatible_versions = data.get("compatible_versions", [1])
         schema_version = data.get("schema_version", 1)
-        if 1 not in compatible_versions and schema_version != 1:
+        supported = {1, 2}
+        if schema_version not in supported and not supported.intersection(compatible_versions or []):
             raise LakeIncompatibleSchemaError(f"Incompatible schema version: {schema_version}")
 
     def _check_maintenance(self) -> None:
@@ -366,7 +439,7 @@ class TickLakeReader:
         where_sql = " AND ".join(where_clauses)
         limit_sql = f"LIMIT {int(limit)}" if limit is not None else ""
 
-        file_paths = [str(f) for f in files]
+        from_sql, file_params, price_expr, volume_expr = quote_scan(files)
 
         con = self.connect()
         try:
@@ -374,19 +447,19 @@ class TickLakeReader:
                 SELECT
                     time_bucket(INTERVAL '{interval_str}', timestamp) AS time,
                     symbol,
-                    arg_min(price, (timestamp, ingest_id)) AS open,
-                    max(price) AS high,
-                    min(price) AS low,
-                    arg_max(price, (timestamp, ingest_id)) AS close,
-                    sum(coalesce(volume, 1.0)) AS volume,
+                    arg_min({price_expr}, (timestamp, ingest_id)) AS open,
+                    max({price_expr}) AS high,
+                    min({price_expr}) AS low,
+                    arg_max({price_expr}, (timestamp, ingest_id)) AS close,
+                    {volume_expr} AS volume,
                     count(*) AS tick_count
-                FROM read_parquet(?, hive_partitioning=false)
+                FROM {from_sql}
                 WHERE {where_sql}
                 GROUP BY time, symbol
                 ORDER BY time ASC, symbol ASC
                 {limit_sql}
             """
-            rows = con.execute(query, [file_paths] + params).fetchall()
+            rows = con.execute(query, file_params + params).fetchall()
 
             candles: List[Dict[str, Any]] = []
             for r in rows:
@@ -507,17 +580,17 @@ class TickLakeReader:
         if not files:
             return base_resp
 
-        file_paths = [str(f) for f in files]
+        from_sql, file_params, price_expr, volume_expr = quote_scan(files)
         con = self.connect()
 
         try:
             if date and session_start_epoch is not None and session_end_epoch is not None:
                 # Count day and session ticks
-                counts_query = """
+                counts_query = f"""
                     SELECT 
                         count(*) as day_total_ticks,
                         count(CASE WHEN timestamp >= ?::TIMESTAMP AND timestamp < ?::TIMESTAMP THEN 1 END) as session_total_ticks
-                    FROM read_parquet(?, hive_partitioning=false)
+                    FROM {from_sql}
                     WHERE symbol = ?
                       AND timestamp >= ?::TIMESTAMP
                       AND timestamp < ?::TIMESTAMP
@@ -525,7 +598,7 @@ class TickLakeReader:
                 c_row = con.execute(counts_query, [
                     s_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f"),
                     e_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f"),
-                    file_paths,
+                    *file_params,
                     symbol,
                     day_start_utc.strftime("%Y-%m-%d %H:%M:%S.%f"),
                     day_end_utc.strftime("%Y-%m-%d %H:%M:%S.%f"),
@@ -538,19 +611,19 @@ class TickLakeReader:
                     SELECT 
                         epoch(timezone('America/New_York', bucket)) as time_sec,
                         strftime(bucket, '%Y-%m-%d %H:%M:%S') as time_str,
-                        arg_min(price, (timestamp, ingest_id)) as open,
-                        max(price) as high,
-                        min(price) as low,
-                        arg_max(price, (timestamp, ingest_id)) as close,
-                        sum(coalesce(volume, 1.0)) as volume,
+                        arg_min({price_expr}, (timestamp, ingest_id)) as open,
+                        max({price_expr}) as high,
+                        min({price_expr}) as low,
+                        arg_max({price_expr}, (timestamp, ingest_id)) as close,
+                        {volume_expr} as volume,
                         arg_min(coalesce(source, 'CAPITAL'), (timestamp, ingest_id)) as source,
                         arg_min(coalesce(session, 'REG'), (timestamp, ingest_id)) as session,
                         count(*) as tick_count
                     FROM (
                         SELECT 
                             time_bucket(INTERVAL '{interval_str}', timezone('America/New_York', timezone('UTC', timestamp::TIMESTAMP))::TIMESTAMP) as bucket,
-                            timestamp, price, volume, source, session, ingest_id
-                        FROM read_parquet(?, hive_partitioning=false)
+                            timestamp, {price_expr}, volume, source, session, ingest_id
+                        FROM {from_sql}
                         WHERE symbol = ?
                           AND timestamp >= ?::TIMESTAMP
                           AND timestamp < ?::TIMESTAMP
@@ -560,7 +633,7 @@ class TickLakeReader:
                     LIMIT ?
                 """
                 params = [
-                    file_paths,
+                    *file_params,
                     symbol,
                     s_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f"),
                     e_dt_utc.strftime("%Y-%m-%d %H:%M:%S.%f"),
@@ -568,7 +641,7 @@ class TickLakeReader:
                 ]
             else:
                 where_clauses = ["symbol = ?"]
-                params = [file_paths, symbol]
+                params = [*file_params, symbol]
                 if start:
                     where_clauses.append("timestamp >= ?::TIMESTAMP")
                     params.append(start.strip())
@@ -581,19 +654,19 @@ class TickLakeReader:
                     SELECT 
                         epoch(timezone('America/New_York', bucket)) as time_sec,
                         strftime(bucket, '%Y-%m-%d %H:%M:%S') as time_str,
-                        arg_min(price, (timestamp, ingest_id)) as open,
-                        max(price) as high,
-                        min(price) as low,
-                        arg_max(price, (timestamp, ingest_id)) as close,
-                        sum(coalesce(volume, 1.0)) as volume,
+                        arg_min({price_expr}, (timestamp, ingest_id)) as open,
+                        max({price_expr}) as high,
+                        min({price_expr}) as low,
+                        arg_max({price_expr}, (timestamp, ingest_id)) as close,
+                        {volume_expr} as volume,
                         arg_min(coalesce(source, 'CAPITAL'), (timestamp, ingest_id)) as source,
                         arg_min(coalesce(session, 'REG'), (timestamp, ingest_id)) as session,
                         count(*) as tick_count
                     FROM (
                         SELECT 
                             time_bucket(INTERVAL '{interval_str}', timezone('America/New_York', timezone('UTC', timestamp::TIMESTAMP))::TIMESTAMP) as bucket,
-                            timestamp, price, volume, source, session, ingest_id
-                        FROM read_parquet(?, hive_partitioning=false)
+                            timestamp, {price_expr}, volume, source, session, ingest_id
+                        FROM {from_sql}
                         WHERE {where_sql}
                     )
                     GROUP BY bucket
@@ -765,9 +838,9 @@ class TickLakeReader:
         if not files:
             return []
 
-        file_paths = [str(f) for f in files]
+        from_sql, file_params, _price_expr, _volume_expr = quote_scan(files)
         where_clauses: List[str] = []
-        params: List[Any] = [file_paths]
+        params: List[Any] = list(file_params)
 
         if symbol:
             where_clauses.append("symbol = ?")
@@ -785,7 +858,7 @@ class TickLakeReader:
             SELECT 
                 strftime(timestamp, '%Y-%m-%d %H:%M:%S.%f') as time_str,
                 symbol, price, coalesce(volume, 1.0) as volume, bid, ask, source, session, ingest_id
-            FROM read_parquet(?, hive_partitioning=false)
+            FROM {from_sql}
             {where_sql}
             ORDER BY timestamp {dir_sql}, ingest_id {dir_sql}
             LIMIT ? OFFSET ?
@@ -856,9 +929,9 @@ class TickLakeReader:
             if total_rows_estimate >= needed_rows and len(target_files) >= 1:
                 break
 
-        file_paths = [str(f) for f in target_files]
+        from_sql, file_params, _price_expr, _volume_expr = quote_scan(target_files)
         where_clauses: List[str] = []
-        params: List[Any] = [file_paths]
+        params: List[Any] = list(file_params)
 
         if symbol:
             where_clauses.append("symbol = ?")
@@ -871,7 +944,7 @@ class TickLakeReader:
                 symbol, price, coalesce(volume, 1.0) as volume, bid, ask,
                 case when bid is not null and ask is not null then (ask - bid) else null end as spread,
                 source, session, ingest_id
-            FROM read_parquet(?, hive_partitioning=false)
+            FROM {from_sql}
             {where_sql}
             ORDER BY timestamp DESC, ingest_id DESC
             LIMIT ? OFFSET ?
@@ -1195,7 +1268,7 @@ class TickLakeReader:
         if not files:
             return empty_resp
 
-        file_paths = [str(f) for f in files]
+        from_sql, file_params, _price_expr, _volume_expr = quote_scan(files)
         start_time_bucket = "04:00:00" if include_extended else "09:30:00"
         end_time_bucket = "19:59:59" if include_extended else "15:59:59"
 
@@ -1205,7 +1278,7 @@ class TickLakeReader:
             f"CAST(timezone('America/New_York', timezone('UTC', timestamp::TIMESTAMP)) AS TIME) >= TIME '{start_time_bucket}'",
             f"CAST(timezone('America/New_York', timezone('UTC', timestamp::TIMESTAMP)) AS TIME) <= TIME '{end_time_bucket}'",
         ]
-        params: List[Any] = [file_paths, min_d.isoformat(), max_d.isoformat()]
+        params: List[Any] = [*file_params, min_d.isoformat(), max_d.isoformat()]
 
         if not is_all:
             where_clauses.append("symbol = ?")
@@ -1218,7 +1291,7 @@ class TickLakeReader:
                 strftime(time_bucket(INTERVAL '1 minute', timezone('America/New_York', timezone('UTC', timestamp::TIMESTAMP))::TIMESTAMP), '%H:%M') as m,
                 symbol,
                 count(*) as tick_count
-            FROM read_parquet(?, hive_partitioning=false)
+            FROM {from_sql}
             WHERE {where_sql}
             GROUP BY 1, 2, 3
             ORDER BY 1, 2, 3

@@ -41,7 +41,10 @@ from src.storage.registry import (
 )
 from src.storage.schema import (
     LAKE_SCHEMA_V1,
+    LAKE_SCHEMA_V2,
+    validate_published_table,
     validate_table_v1,
+    validate_table_v2,
 )
 
 
@@ -57,6 +60,35 @@ STATE_ABORTED = "ABORTED"
 
 DEFAULT_DRAIN_TIMEOUT = 15.0
 DEFAULT_MIN_FILE_SIZE_BYTES = 1024 * 1024  # 1 MiB
+
+
+def _schema_kinds(paths: List[Path]) -> set:
+    kinds = set()
+    for path in paths:
+        names = pq.read_schema(path).names
+        kinds.add("v2" if "bid_price" in names else "v1")
+    return kinds
+
+
+def _partition_schema_kind(paths: List[Path]) -> str:
+    """Return v1 or v2. A mixed partition is left for the rewrite tool."""
+    kinds = _schema_kinds(paths)
+    if len(kinds) != 1:
+        raise CompactionError(
+            "Refusing to compact a partition that mixes schema v1 and schema v2 files. "
+            "Run the lake rewrite before compacting that partition."
+        )
+    return kinds.pop()
+
+
+def _compaction_columns(kind: str) -> tuple:
+    if kind == "v2":
+        columns = "timestamp, symbol, bid_price, ask_price, source, session, ingest_id"
+        order = "timestamp ASC, ingest_id ASC, bid_price ASC, ask_price ASC, source ASC, session ASC"
+        return columns, order, LAKE_SCHEMA_V2, validate_table_v2
+    columns = "timestamp, symbol, price, volume, bid, ask, source, session, ingest_id"
+    order = "timestamp ASC, ingest_id ASC, price ASC, volume ASC, bid ASC, ask ASC, source ASC, session ASC"
+    return columns, order, LAKE_SCHEMA_V1, validate_table_v1
 
 
 class CompactionError(Exception):
@@ -451,7 +483,10 @@ class LakeCompactor:
 
         # Validate PyArrow table schema
         staged_table = pq.ParquetFile(staged_path).read()
-        validate_table_v1(staged_table)
+        kind = _partition_schema_kind(input_paths)
+        columns, _order, _schema, validate_kind = _compaction_columns(kind)
+        validate_kind(staged_table)
+        validate_published_table(staged_table)
 
         con = duckdb.connect(":memory:")
         try:
@@ -472,18 +507,18 @@ class LakeCompactor:
                 )
 
             # 2. DuckDB bidirectional EXCEPT ALL (checks exact values, floats, duplicate multiplicity)
-            diff_query = """
+            diff_query = f"""
                 SELECT count(*) FROM (
-                    (SELECT timestamp, symbol, price, volume, bid, ask, source, session, ingest_id
+                    (SELECT {columns}
                      FROM read_parquet(?, hive_partitioning=false)
                      EXCEPT ALL
-                     SELECT timestamp, symbol, price, volume, bid, ask, source, session, ingest_id
+                     SELECT {columns}
                      FROM read_parquet(?, hive_partitioning=false))
                     UNION ALL
-                    (SELECT timestamp, symbol, price, volume, bid, ask, source, session, ingest_id
+                    (SELECT {columns}
                      FROM read_parquet(?, hive_partitioning=false)
                      EXCEPT ALL
-                     SELECT timestamp, symbol, price, volume, bid, ask, source, session, ingest_id
+                     SELECT {columns}
                      FROM read_parquet(?, hive_partitioning=false))
                 )
             """
@@ -498,7 +533,8 @@ class LakeCompactor:
                 )
 
             # 3. Payload fingerprint verification
-            in_tables = [pq.ParquetFile(p).read().cast(LAKE_SCHEMA_V1) for p in input_paths]
+            _columns, _order, logical_schema, _validate_kind = _compaction_columns(kind)
+            in_tables = [pq.ParquetFile(p).read().cast(logical_schema) for p in input_paths]
             in_table = pa.concat_tables(in_tables)
             if _payload_fingerprint(in_table) != _payload_fingerprint(staged_table):
                 raise EquivalenceVerificationError("Logical payload multiset fingerprint mismatch between inputs and staged file")
@@ -588,14 +624,19 @@ class LakeCompactor:
             receipt_lineage_entries: Dict[str, Dict[str, Any]] = {}
             all_input_files: Set[str] = set()
 
+            skipped_mixed: List[str] = []
             for cand in candidates:
                 sym = cand["symbol"]
                 dt = cand["date"]
                 part_rel = cand["partition_dir"]
                 input_rels = cand["files"]
-                all_input_files.update(input_rels)
-
                 input_paths = [self.root / rel for rel in input_rels]
+                if len(_schema_kinds(input_paths)) != 1:
+                    # New v2 quotes can land beside old v1 files before the rewrite.
+                    # Leave that partition untouched instead of aborting the run.
+                    skipped_mixed.append(part_rel)
+                    continue
+                all_input_files.update(input_rels)
                 part_staging_dir = staging_base / part_rel
                 part_staging_dir.mkdir(parents=True, exist_ok=True)
 
@@ -617,16 +658,18 @@ class LakeCompactor:
                 try:
                     input_str_paths = [str(p.resolve()) for p in input_paths]
                     # Deterministic total order: timestamp, ingest_id, and all columns for stability
-                    sorted_arrow = con.execute("""
-                        SELECT timestamp, symbol, price, volume, bid, ask, source, session, ingest_id
+                    kind = _partition_schema_kind(input_paths)
+                    columns, order, logical_schema, validate_kind = _compaction_columns(kind)
+                    sorted_arrow = con.execute(f"""
+                        SELECT {columns}
                         FROM read_parquet(?, hive_partitioning=false)
-                        ORDER BY timestamp ASC, ingest_id ASC, price ASC, volume ASC, bid ASC, ask ASC, source ASC, session ASC
+                        ORDER BY {order}
                     """, [input_str_paths]).to_arrow_table()
-                    sorted_arrow = sorted_arrow.cast(LAKE_SCHEMA_V1)
+                    sorted_arrow = sorted_arrow.cast(logical_schema)
                 finally:
                     con.close()
 
-                validate_table_v1(sorted_arrow)
+                validate_kind(sorted_arrow)
                 pq.write_table(
                     sorted_arrow,
                     staged_path,
@@ -789,6 +832,7 @@ class LakeCompactor:
                 "compacted_partitions": len(staged_partitions),
                 "consolidated_files": len(all_input_files),
                 "staged_partitions": staged_partitions,
+                "skipped_mixed_partitions": skipped_mixed,
             }
 
         finally:

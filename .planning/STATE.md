@@ -1,12 +1,10 @@
 ---
-gsd_state_version: 1.0
-milestone: v5.0
-milestone_name: Parquet-Only Storage
-current_phase: 0
-status: Awaiting next milestone
-last_updated: "2026-10-06T04:14:22.396Z"
+gsd_state_version: "1.0"
+milestone: v6.0
+milestone_name: Bid and Ask Prices
+status: idle
+last_updated: "2026-10-06T12:00:00.000Z"
 last_activity: 2026-10-06
-last_activity_desc: Milestone v5.0 completed and archived
 progress:
   total_phases: 4
   completed_phases: 4
@@ -22,14 +20,14 @@ progress:
 See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 
 **Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage.
-**Current focus:** Milestone v5.0 Complete — Parquet-only storage active, legacy `.duckdb` files deleted.
+**Current focus:** v6.0 checkout complete. Production lake rewrite remains owner-run.
 
 ## Current Position
 
-Phase: Milestone v5.0 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-10-06 — Milestone v5.0 completed and archived
+Phase: 53 (complete)
+Plan: 53-01
+Status: Milestone v6.0 tools and tests are in this checkout. The production lake was not rewritten.
+Last activity: 2026-10-06 — v6.0 closeout; CLI requires --lake-root and --backup-root.
 
 ## Accumulated Context
 
@@ -53,7 +51,17 @@ Last activity: 2026-10-06 — Milestone v5.0 completed and archived
 - **Schedule: weekdays only (owner, 2026-10-05):** Mon-Fri, 04:00-20:00 ET. No exchange calendar - holidays simply produce no ticks.
 - **Governing principle - maximum declutter (owner, 2026-10-05):** reduce repo clutter as much as possible. Where a choice exists between keeping something "just in case" and removing it, remove it. The dashboard becomes a single Parquet-only view; the ~2 years of bar history is permanently dropped rather than retained; unused subsystems are deleted rather than left dormant.
 - **No retention period for the legacy databases:** `historical.duckdb` and `streaming.duckdb` are deleted immediately after Phase 49 verification. The owner accepted permanent, irrecoverable loss of the bar history.
-- **Stop rule:** one completion report, then the milestone stops. No new phases or follow-up programme.
+- **Stop rule lifted (owner, 2026-10-06):** v5.0 is no longer terminal. v6.0 is the active milestone.
+
+**Milestone v6.0 (active) — Bid and Ask Prices:**
+
+- A row stores `bid_price` and `ask_price` only, plus `timestamp`, `symbol`, `source`, `session`, and `ingest_id`. No midpoint, no `price`, no `volume`, no sizes.
+- Capital.com maps `bid` and `ofr` on every quote change. Databento `tbbo` maps `bid_px_00` and `ask_px_00` when a trade happens. Fewer Databento rows is accepted.
+- The inspection chart uses `bid_price`. The volume histogram is removed.
+- The existing lake is rewritten, not shimmed. `bid` becomes `bid_price`. `ask` becomes `ask_price`. The old `price` column is discarded. A missing bid or ask is quarantined. The tool needs a second copy of disk, holds the writer lock, rewrites receipts, and sets schema version 2 only after every file passes.
+- Gap fill is one target day. A hole is all registry symbols silent together: 15 minutes pre/post, 2 minutes regular hours, inside 04:00–20:00 ET. Weekends, full holidays, and post-early-close time are skipped.
+- The existing-lake rewrite is the last phase (Phase 53). Owner, 2026-10-06: it cannot be done in this checkout. Gap fill and docs come first. The rewrite still requires a backup before any file is changed, and the owner runs it locally.
+- Research was skipped. The owner locked this design in conversation before the milestone was opened.
 
 **v4.3 outcomes (closed 2026-10-05, archived):**
 
@@ -63,7 +71,7 @@ Last activity: 2026-10-06 — Milestone v5.0 completed and archived
 
 ### Pending Todos
 
-- None. Milestone 5.0 is closed. Terminal milestone reached — no new phases or follow-up programme.
+- None. v6.0 requirements are in `.planning/REQUIREMENTS.md`.
 
 ### Blockers/Concerns
 
@@ -72,9 +80,9 @@ Last activity: 2026-10-06 — Milestone v5.0 completed and archived
 ## Session Continuity
 
 Completed: 2026-10-06
-Status: Milestone 5.0 complete. The lake is the only store, all 105,894,626 legacy ticks are published in `data/tick_lake/ticks/` (7,367 Parquet files across 19 symbols), verified with zero discrepancies. The legacy `.duckdb` files have been deleted. Background services are active and healthy under supervisor. Completion report saved in `reports/v5.0_completion_report.md`. Per project policy, v5.0 is the terminal milestone and development stops here.
+Status: Phase 52 is implemented. v5.0 remains shipped: 105,894,626 ticks in 7,367 Parquet files. Those files are still schema v1. No production rewrite has been run from this checkout, and the gap fill was not run against that lake.
 
 ## Operator Next Steps
 
-- System is operating in production steady-state. Monitor via `http://localhost:8420` or `./VIEW_STATUS.sh`.
-
+- Do not rewrite the existing lake in this checkout. That work is Phase 53, the last phase, and the owner runs it on their own machine after a backup.
+- New Capital.com and Databento rows are schema v2. The reader still opens the existing v1 files. A partition that contains both is left alone by compaction until the rewrite.

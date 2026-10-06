@@ -6,6 +6,18 @@ A high-performance, 100% local market data harvesting and streaming engine runni
 ## Core Value
 Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
 
+## Current Milestone: v6.0 Bid and Ask Prices (checkout complete)
+
+**Goal:** Store only the bid price and the ask price, rewrite the existing lake to that shape, and fill computer-offline holes from Databento without a midpoint or a volume column.
+
+**Target features:**
+- New writes store `bid_price` and `ask_price` only. Capital.com maps `bid` and `ofr`. Databento maps `bid_px_00` and `ask_px_00`. No midpoint, no `price`, no `volume`, no sizes.
+- The inspection chart draws candles from `bid_price`. The volume histogram is removed.
+- The existing lake is rewritten in place: stored `bid` becomes `bid_price`, stored `ask` becomes `ask_price`. The old midpoint and trade price are not copied. Missing bid or ask is quarantined, not invented.
+- Gap fill takes one day. A hole counts only when every registry symbol is silent together: 15 minutes in the pre-market and post-market, 2 minutes in regular hours, inside 04:00–20:00 ET. Weekends, full holidays, and time after an early close are skipped.
+
+The v5.0 stop rule is lifted by the owner on 2026-10-06. Research for this milestone was skipped: the column set, the rewrite rule, and the gap rule were locked in conversation.
+
 ## Shipped Milestone (v5.0) — Complete
 
 **v5.0: DuckDB-Free Tick-Only Parquet** — Phases 46–49 (shipped 2026-10-06)
@@ -119,9 +131,26 @@ Zero-cloud, zero-quota persistent market data ingestion and storage: capture rea
 _Milestone requirement details are archived in [.planning/milestones/](milestones/)._
 
 ### Active
-None. Milestone 5.0 is the terminal milestone for Data Harvester. All planned requirements are shipped, mathematically verified, and operational.
+- [ ] **QUOTE-01**: A new Capital.com quote stores the feed bid in `bid_price` and the feed ask in `ask_price`, and does not store a midpoint, a `price` column, a `volume` column, or a size.
+- [ ] **QUOTE-02**: A new Databento row stores `bid_px_00` and `ask_px_00` in those same columns, and does not store the trade price or the trade size.
+- [ ] **QUOTE-03**: The inspection chart builds candles from `bid_price` and does not draw a volume series.
+- [ ] **REWRITE-01**: The operator can rewrite the existing lake so every kept row's `bid_price` equals the previously stored bid and `ask_price` equals the previously stored ask.
+- [ ] **REWRITE-02**: The rewrite does not copy the old midpoint or the old trade price into `bid_price`.
+- [ ] **REWRITE-03**: A row missing bid or ask is quarantined and counted, not filled in from `price`.
+- [ ] **REWRITE-04**: The rewrite refuses to start without room for a second copy, holds the writer lock, and can resume after a stop.
+- [ ] **REWRITE-05**: Receipts match the new files, and `lake.json` becomes schema version 2 only after every file passes.
+- [ ] **QFILL-01**: The operator can request one day and receive only the stretches where every registry symbol was silent.
+- [ ] **QFILL-02**: Pre-market and post-market silence counts at 15 minutes. Regular-hours silence counts at 2 minutes. A stretch that crosses 09:30 or 16:00 ET is split.
+- [ ] **QFILL-03**: Weekends, full NYSE holidays, and time after an early close are not requested.
+- [ ] **QFILL-04**: Databento is asked only for those stretches. Returned bid and ask are stored as `bid_price` and `ask_price`. Fewer Databento rows than Capital.com rows is accepted.
+- [ ] **QFILL-05**: Gap fill does not run while the live writer owns the lake.
+- [ ] **DOCS-01**: The README, the operations guide, and the Repo B contract describe the new columns, the rewrite, and the gap-fill rule.
 
 ### Out of Scope
+- Bid quantity and ask quantity (owner, 2026-10-06). They were never stored, so the rewrite cannot recover them.
+- A `volume` column, and any attempt to scale Databento size onto Capital.com size (owner, 2026-10-06).
+- A stored midpoint (owner, 2026-10-06). The inspection chart uses the bid.
+- Switching Databento from `tbbo` to `mbp-1`, or making the two feeds emit the same number of rows (owner, 2026-10-06).
 - Historical 1-minute pre-aggregated bar storage and REST harvesters (permanently purged in v5.0)
 - Removing DuckDB library / PyArrow resampling rewrite (considered and rejected in v5.0 Option A)
 - Direct `market-rewind` frontend modifications (deferred per user instruction: focus on data harvesting, storage, and integrity dashboard)
@@ -137,6 +166,7 @@ None. Milestone 5.0 is the terminal milestone for Data Harvester. All planned re
 - In v4.0, live tick storage was migrated completely off DuckDB into an append-only, partitioned Parquet lake with atomic staging and in-memory DuckDB querying. This resolved OS-level write lock contention while the canonical 1-minute history remained in `historical.duckdb`.
 - In v4.1, the engine underwent deep hardening and edge-case stress testing: 122 new edge-case, stress, fuzz, backpressure, and chaos tests across Phases 22–27, validating crash recovery, leak-free multi-threaded readers (30+ concurrent), migration fuzzing, and self-healing supervisor processes under chaos-monkey termination.
 - In v5.0, the final architecture was realized: complete elimination of disk-backed DuckDB databases (`streaming.duckdb`, `historical.duckdb`, `market_data.duckdb`), zero-loss migration of 105,894,626 legacy ticks into 7,367 Parquet files, total purge of bar-era pipelines (net −10,415 LOC), restricted 19-symbol authority, and automated weekday 04:00–20:00 ET schedule with unattended compaction.
+- On 2026-10-06 the owner reopened development as v6.0. The lake must store bid price and ask price only. The existing 7,367 files must be rewritten, not left on schema v1. Databento gap fill must detect computer-offline stretches, not per-symbol quiet periods.
 
 ## Constraints
 - **Zero Cloud Limits**: No dependence on cloud database quotas.
@@ -165,6 +195,8 @@ None. Milestone 5.0 is the terminal milestone for Data Harvester. All planned re
 | Ingestion schedule window (04:00–20:00 ET weekdays) | Matches US market liquidity hours, protects hardware during nights/weekends | ✓ Good |
 | Unattended off-hours compaction | Consolidates micro-batches during quiet hours under lease lock without contention | ✓ Good |
 | Strict 19-symbol authority | Enforces canonical symbol inventory across runner, supervisor, gap-fill, and UI | ✓ Good |
+| v6.0 stores bid price and ask price only | The chart is for inspection. A midpoint was redundant. Volume was not comparable across feeds, and sizes were never stored | ✓ Good |
+| Existing-lake rewrite is the last phase | Tool and fixture tests shipped in Phase 53. Production rewrite stays owner-run. | ✓ Good (fixture only) |
 
 ## Evolution
 This document evolves at phase transitions and milestone boundaries.
@@ -183,4 +215,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-06 — Milestone v5.0 (DuckDB-Free Tick-Only Parquet) shipped and archived; terminal milestone reached.*
+*Last updated: 2026-10-06 — Milestone v6.0 checkout complete. Production lake rewrite remains owner-run.*

@@ -25,7 +25,17 @@ from src.storage.config import (
     StorageConfigError,
     encode_symbol,
 )
-from src.storage.schema import LAKE_SCHEMA_V1, ticks_to_table, validate_schema_v1, validate_table_v1
+from src.storage.schema import (
+    LAKE_SCHEMA_V1,
+    SCHEMA_V2_COLUMNS,
+    record_is_quote_v2,
+    ticks_to_table,
+    ticks_to_table_v2,
+    validate_published_table,
+    validate_schema_v1,
+    validate_schema_v2,
+    validate_table_v1,
+)
 
 
 class LakeOwnershipError(StorageConfigError):
@@ -86,15 +96,31 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _canonical_row(row: Dict[str, Any]) -> List[Any]:
+_V1_FLOAT_COLUMNS = {"price", "volume", "bid", "ask"}
+_V2_FLOAT_COLUMNS = {"bid_price", "ask_price"}
+
+
+def _fingerprint_contract(rows_or_table: Any) -> Tuple[int, List[str], set]:
+    """Keep the schema v1 hash unchanged. Schema v2 rows hash their own columns."""
+    if isinstance(rows_or_table, pa.Table):
+        if "bid_price" in rows_or_table.schema.names:
+            return 2, list(SCHEMA_V2_COLUMNS), _V2_FLOAT_COLUMNS
+        return 1, list(LAKE_SCHEMA_V1.names), _V1_FLOAT_COLUMNS
+    rows = list(rows_or_table)
+    if rows and isinstance(rows[0], dict) and ("bid_price" in rows[0] or "ask_price" in rows[0]):
+        return 2, list(SCHEMA_V2_COLUMNS), _V2_FLOAT_COLUMNS
+    return 1, list(LAKE_SCHEMA_V1.names), _V1_FLOAT_COLUMNS
+
+
+def _canonical_row(row: Dict[str, Any], columns: List[str], float_columns: set) -> List[Any]:
     canonical = []
-    for column in LAKE_SCHEMA_V1.names:
+    for column in columns:
         value = row.get(column)
         if column == "timestamp" and value is not None:
             if value.tzinfo is not None:
                 value = value.astimezone(timezone.utc).replace(tzinfo=None)
             canonical.append(value.isoformat(timespec="microseconds"))
-        elif column in {"price", "volume", "bid", "ask"} and value is not None:
+        elif column in float_columns and value is not None:
             canonical.append(float(value).hex())
         else:
             canonical.append(value)
@@ -103,21 +129,34 @@ def _canonical_row(row: Dict[str, Any]) -> List[Any]:
 
 def _payload_fingerprint(rows_or_table: Any) -> str:
     """Hash canonical logical rows as a multiset; retain duplicate multiplicity."""
+    version, columns, float_columns = _fingerprint_contract(rows_or_table)
     if isinstance(rows_or_table, pa.Table):
         rows = rows_or_table.to_pylist()
     else:
         rows = list(rows_or_table)
     canonical_rows = [
-        json.dumps(_canonical_row(row), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        json.dumps(
+            _canonical_row(row, columns, float_columns),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
         for row in rows
     ]
     canonical_rows.sort()
     payload = json.dumps(
-        {"schema_version": 1, "columns": LAKE_SCHEMA_V1.names, "rows": canonical_rows},
+        {"schema_version": version, "columns": columns, "rows": canonical_rows},
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _batch_is_quote_v2(records: List[Any]) -> bool:
+    flags = [record_is_quote_v2(record) for record in records]
+    if any(flags) and not all(flags):
+        raise PublishError("Refusing a batch that mixes schema v1 and schema v2 rows")
+    return bool(flags) and all(flags)
 
 
 def _safe_batch_id(batch_id: str) -> str:
@@ -173,7 +212,7 @@ def _verify_receipt_files(root: Path, receipt_data: Dict[str, Any]) -> Tuple[Lis
                     compacted_target = (root / compacted_rel).resolve() if compacted_rel else None
                     if compacted_target and compacted_target.is_file():
                         table = pq.ParquetFile(compacted_target).read()
-                        validate_table_v1(table)
+                        validate_published_table(table)
                         details.append(FilePublicationReceipt(
                             relative_path=rel_path,
                             symbol=str(raw["symbol"]),
@@ -191,7 +230,7 @@ def _verify_receipt_files(root: Path, receipt_data: Dict[str, Any]) -> Tuple[Lis
                 raise PublishError(f"Receipt checksum/size mismatch for {rel_path}")
             # Read the physical file schema without Hive partition columns appended by read_table().
             table = pq.ParquetFile(target).read()
-            validate_table_v1(table)
+            validate_published_table(table)
             count = table.num_rows
             if count != int(raw["row_count"]):
                 raise PublishError(f"Receipt row count mismatch for {rel_path}")
@@ -471,9 +510,13 @@ class LakePublisher:
         batch_id = _safe_batch_id(batch_id)
         if isinstance(records_or_table, pa.Table):
             table = records_or_table
-            validate_table_v1(table)
+            validate_published_table(table)
         else:
-            table = ticks_to_table(records_or_table, validate=True)
+            records = list(records_or_table)
+            if records and _batch_is_quote_v2(records):
+                table = ticks_to_table_v2(records, validate=True)
+            else:
+                table = ticks_to_table(records, validate=True)
 
         total_row_count = table.num_rows
         payload_sha256 = _payload_fingerprint(table)
@@ -619,7 +662,10 @@ class LakePublisher:
                 parquet_file = pq.ParquetFile(staging_full_path)
                 if parquet_file.metadata.num_rows != sorted_table.num_rows:
                     raise PublishError(f"Staged Parquet row count mismatch for {staging_full_path}")
-                validate_schema_v1(parquet_file.schema_arrow)
+                if "bid_price" in parquet_file.schema_arrow.names:
+                    validate_schema_v2(parquet_file.schema_arrow)
+                else:
+                    validate_schema_v1(parquet_file.schema_arrow)
 
                 staged_targets.append({
                     "relative_path": relative_path,

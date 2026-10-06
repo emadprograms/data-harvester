@@ -41,6 +41,14 @@ from src.storage.schema import (
     validate_table_v1,
     ticks_to_table,
     table_to_ticks,
+    QuoteV2,
+    SCHEMA_V2_VERSION,
+    SCHEMA_V2_COLUMNS,
+    LAKE_SCHEMA_V2,
+    validate_schema_v2,
+    validate_table_v2,
+    validate_published_table,
+    ticks_to_table_v2,
 )
 
 from src.storage.publication import (
@@ -148,6 +156,14 @@ __all__ = [
     "validate_table_v1",
     "ticks_to_table",
     "table_to_ticks",
+    "QuoteV2",
+    "SCHEMA_V2_VERSION",
+    "SCHEMA_V2_COLUMNS",
+    "LAKE_SCHEMA_V2",
+    "validate_schema_v2",
+    "validate_table_v2",
+    "validate_published_table",
+    "ticks_to_table_v2",
     # Publication & Recovery
     "PublishError",
     "LakeOwnershipError",

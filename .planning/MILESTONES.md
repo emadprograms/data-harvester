@@ -2,6 +2,7 @@
 
 _Newest first. Each entry is a shipped, verified milestone._
 
+- [x] **v6.0 Bid and Ask Prices** — Phases 50–53 (checkout shipped 2026-10-06; production lake rewrite remains owner-run)
 - [x] **v5.0 DuckDB-Free Tick-Only Parquet** — Phases 46–49 (shipped 2026-10-06)
 - [x] **v4.3 Final Tick-Lake Implementation and Verification** — Phases 37–43 complete; phases 44–45 waived by owner (closed 2026-10-05)
 - [x] **v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (closed 2026-10-04)
@@ -10,6 +11,23 @@ _Newest first. Each entry is a shipped, verified milestone._
 - [x] **v3.0 Observability Command Center, Interactive Financial Charts & Live Telemetry Dashboard** — Phases 10–14 (shipped 2026-09-26)
 - [x] **v2.0 Dedicated Dual-DuckDB Storage, Capital.com Tick Streamer & Data Integrity Web Dashboard** — Phases 5–9 (shipped 2026-09-25)
 - [x] **v1.0 Local DuckDB & 24/7 Live Streaming Engine** — Phases 1–4 (shipped 2026-09-25)
+
+---
+
+## v6.0 Bid and Ask Prices (Checkout shipped: 2026-10-06)
+
+**Phases completed:** 4 phases (Phases 50–53)  
+**Tests in this checkout:** Phase 50–53 suites 28 passed. Production lake not rewritten.  
+**Closeout:** checkout complete; owner still runs `python -m src.storage.quote_rewrite --lake-root … --backup-root …` against the real lake.
+
+**Key accomplishments:**
+
+- New Capital.com and Databento rows store `bid_price` and `ask_price` only.
+- Gap fill requests only all-symbol silence inside 04:00–20:00 ET.
+- Public docs pin that rule and still tell operators not to treat `price` as the quote.
+- Offline rewrite tool copies a fixture lake, maps `bid`/`ask`, quarantines holes, updates receipts, and sets schema v2 only after every file passes.
+
+**Archive:** [`milestones/v6.0-ROADMAP.md`](milestones/v6.0-ROADMAP.md) · [`milestones/v6.0-REQUIREMENTS.md`](milestones/v6.0-REQUIREMENTS.md) · [`milestones/v6.0-MILESTONE-AUDIT.md`](milestones/v6.0-MILESTONE-AUDIT.md) · [`reports/v6.0_completion_report.md`](../reports/v6.0_completion_report.md)
 
 ---
 

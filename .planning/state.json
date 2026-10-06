@@ -1,33 +1,12 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v5.0 \u2014 Parquet-Only Storage (DuckDB retained as query engine)",
-  "phases": [
-    {
-      "number": "46",
-      "name": "Rewire Off the Disk Databases",
-      "status": "complete"
-    },
-    {
-      "number": "47",
-      "name": "Remove Bar Subsystem & Dead Providers",
-      "status": "complete"
-    },
-    {
-      "number": "48",
-      "name": "Schedule, Compaction, Notifications & Test Disposition",
-      "status": "complete"
-    },
-    {
-      "number": "49",
-      "name": "Final Gate, Deletion & Closure (owner machine)",
-      "status": "pending"
-    }
-  ],
+  "milestone": "v6.0",
+  "phases": ["50", "51", "52", "53"],
   "next": {
-    "command": "phase-49-runbook",
-    "label": "Owner-run: migrate the legacy ticks, verify, delete the two .duckdb files, close",
-    "reason": "Phases 46-48 are complete; Phase 49 runs on the owner's machine (docs/operations/phase49_migration_runbook.md)"
+    "command": null,
+    "label": "Idle",
+    "reason": "v6.0 checkout work is complete. The owner runs the production rewrite locally with explicit --lake-root and --backup-root."
   },
-  "updated_at": "2026-10-05T15:45:00.000Z"
+  "updated_at": "2026-10-06T19:00:00.000Z"
 }

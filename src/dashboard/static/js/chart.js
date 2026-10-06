@@ -353,7 +353,7 @@ function initStreamingChart() {
     },
     rightPriceScale: {
       borderColor: '#334155',
-      scaleMargins: { top: 0.1, bottom: 0.25 }
+      scaleMargins: { top: 0.1, bottom: 0.08 }
     }
   });
 
@@ -372,11 +372,7 @@ function initStreamingChart() {
     wickDownColor: '#f43f5e'
   });
 
-  streamingVolumeSeries = tvStreamingChart.addHistogramSeries({
-    priceFormat: { type: 'volume' },
-    priceScaleId: '',
-    scaleMargins: { top: 0.82, bottom: 0 }
-  });
+  streamingVolumeSeries = null;
 
   gapShadingPlugin = new GapShadingPlugin();
   if (streamingCandleSeries && typeof streamingCandleSeries.attachPrimitive === 'function') {
@@ -487,9 +483,8 @@ async function loadStreamingChart(targetDate = null, targetHours = null) {
       ticksEl.innerText = `${tickCount.toLocaleString()} ticks in database`;
     }
 
-    if (streamingCandleSeries && streamingVolumeSeries && tvStreamingChart) {
+    if (streamingCandleSeries && tvStreamingChart) {
       let chartCandles = [];
-      let chartVolumes = [];
 
       const startEpoch = data.session_start_epoch;
       const endEpoch = data.session_end_epoch;
@@ -509,11 +504,6 @@ async function loadStreamingChart(targetDate = null, targetHours = null) {
               low: c.low,
               close: c.close
             });
-            chartVolumes.push({
-              time: t,
-              value: c.volume || 0,
-              color: (c.close >= c.open) ? 'rgba(99, 102, 241, 0.4)' : 'rgba(244, 63, 94, 0.4)'
-            });
           } else {
             // Whitespace item ({ time: t } without OHLC) renders physical empty gap on time axis
             chartCandles.push({ time: t });
@@ -527,16 +517,9 @@ async function loadStreamingChart(targetDate = null, targetHours = null) {
           low: c.low,
           close: c.close
         }));
-
-        chartVolumes = loadedStreamingCandles.map(c => ({
-          time: c.time,
-          value: c.volume || 0,
-          color: (c.close >= c.open) ? 'rgba(99, 102, 241, 0.4)' : 'rgba(244, 63, 94, 0.4)'
-        }));
       }
 
       streamingCandleSeries.setData(chartCandles);
-      streamingVolumeSeries.setData(chartVolumes);
 
       if (gapShadingPlugin && typeof gapShadingPlugin.setGaps === 'function') {
         gapShadingPlugin.setGaps(data.gaps || [], chartCandles);

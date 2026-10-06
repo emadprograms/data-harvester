@@ -197,9 +197,11 @@ def load_lake_metadata(root: Path, check_maintenance: bool = True) -> LakeMetada
         raise IncompatibleSchemaError(f"Unsupported lake format: {data.get('format')}")
 
     compatible_versions = data.get("compatible_versions", [1])
-    if 1 not in compatible_versions and data.get("schema_version") != 1:
+    schema_version = data.get("schema_version")
+    supported = {1, 2}
+    if schema_version not in supported and not supported.intersection(compatible_versions or []):
         raise IncompatibleSchemaError(
-            f"Incompatible schema version: {data.get('schema_version')}"
+            f"Incompatible schema version: {schema_version}"
         )
 
     return LakeMetadata.from_dict(data)

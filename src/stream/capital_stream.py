@@ -17,6 +17,31 @@ STREAMING_URL = "wss://api-streaming-capital.backend-capital.com/connect"
 MAX_EPICS_PER_SUB = 40
 
 
+def quote_tick_from_capital_payload(payload):
+    """Map one Capital.com quote to bid_price and ask_price. No midpoint and no size."""
+    if not isinstance(payload, dict):
+        return None
+    epic = payload.get("epic")
+    bid = payload.get("bid")
+    ofr = payload.get("ofr")
+    ts_ms = payload.get("timestamp")
+    if not epic or bid is None or ofr is None or not ts_ms:
+        return None
+    try:
+        bid_price = float(bid)
+        ask_price = float(ofr)
+        timestamp = datetime.fromtimestamp(float(ts_ms) / 1000.0, tz=timezone.utc)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+    return {
+        "epic": epic,
+        "bid_price": bid_price,
+        "ask_price": ask_price,
+        "timestamp": timestamp,
+        "source": "CAPITAL",
+    }
+
+
 class CapitalStreamer:
     """Consumes real-time market data quotes from Capital.com WebSockets."""
     def __init__(self, epics=None, on_tick_callback=None):
@@ -151,24 +176,8 @@ class CapitalStreamer:
                             dest = data.get("destination")
 
                             if dest == "quote":
-                                payload = data.get("payload", {})
-                                epic = payload.get("epic")
-                                bid = payload.get("bid")
-                                ofr = payload.get("ofr")
-                                ts_ms = payload.get("timestamp")
-
-                                if epic and bid is not None and ofr is not None and ts_ms:
-                                    mid_price = (float(bid) + float(ofr)) / 2.0
-                                    dt_utc = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
-
-                                    tick = {
-                                        "epic": epic,
-                                        "price": mid_price,
-                                        "bid": float(bid),
-                                        "ask": float(ofr),
-                                        "timestamp": dt_utc
-                                    }
-
+                                tick = quote_tick_from_capital_payload(data.get("payload", {}))
+                                if tick is not None:
                                     if self.on_tick_callback:
                                         try:
                                             if asyncio.iscoroutinefunction(self.on_tick_callback):

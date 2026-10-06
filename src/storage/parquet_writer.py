@@ -30,7 +30,7 @@ from src.storage.publication import (
     PublishReceipt,
     recover_pending_publications,
 )
-from src.storage.schema import QuoteTick, validate_table_v1
+from src.storage.schema import QuoteTick, QuoteV2, validate_table_v1
 
 logger = logging.getLogger("parquet_writer")
 
@@ -168,6 +168,11 @@ class TickLakeWriter:
         if tick is None:
             return False, None
 
+        if isinstance(tick, QuoteV2) or (
+            isinstance(tick, dict) and ("bid_price" in tick or "ask_price" in tick)
+        ):
+            return self._normalize_quote_v2(tick)
+
         if isinstance(tick, QuoteTick):
             ts = tick.timestamp
             symbol = tick.symbol
@@ -286,6 +291,80 @@ class TickLakeWriter:
             volume=v,
             bid=b,
             ask=a,
+            source=str(source) if source else "CAPITAL",
+            session=str(session) if session else "REG",
+            ingest_id=ingest_id,
+        )
+
+    def _normalize_quote_v2(self, tick: Any) -> Tuple[bool, Optional[QuoteV2]]:
+        """Accept a new bid/ask quote. Price, volume, and size are ignored."""
+        if isinstance(tick, QuoteV2):
+            ts = tick.timestamp
+            symbol = tick.symbol
+            bid = tick.bid_price
+            ask = tick.ask_price
+            source = tick.source
+            session = tick.session
+            ingest_id = tick.ingest_id
+        elif isinstance(tick, dict):
+            ts = tick.get("timestamp")
+            symbol = tick.get("symbol") or tick.get("epic")
+            bid = tick.get("bid_price")
+            ask = tick.get("ask_price")
+            source = tick.get("source", "CAPITAL")
+            session = tick.get("session", "REG")
+            ingest_id = tick.get("ingest_id", "")
+        else:
+            return False, None
+
+        if not symbol or not isinstance(symbol, str):
+            return False, None
+        try:
+            encode_symbol(symbol)
+        except Exception:
+            return False, None
+
+        def _positive(value: Any) -> Optional[float]:
+            if value is None:
+                return None
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return None
+            if math.isnan(number) or math.isinf(number) or number <= 0.0:
+                return None
+            return number
+
+        bid_price = _positive(bid)
+        ask_price = _positive(ask)
+        if bid_price is None or ask_price is None:
+            return False, None
+
+        if ts is None:
+            ts_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+        elif isinstance(ts, str):
+            try:
+                ts_dt = datetime.fromisoformat(ts)
+                if ts_dt.tzinfo is not None:
+                    ts_dt = ts_dt.astimezone(timezone.utc).replace(tzinfo=None)
+            except Exception:
+                return False, None
+        elif isinstance(ts, datetime):
+            ts_dt = ts.astimezone(timezone.utc).replace(tzinfo=None) if ts.tzinfo is not None else ts
+        else:
+            return False, None
+
+        if not ingest_id:
+            self._seq_counter += 1
+            ingest_id = f"{self.writer_id}_{self._run_id}_{self._seq_counter:08d}"
+        else:
+            ingest_id = str(ingest_id)
+
+        return True, QuoteV2(
+            timestamp=ts_dt,
+            symbol=symbol,
+            bid_price=bid_price,
+            ask_price=ask_price,
             source=str(source) if source else "CAPITAL",
             session=str(session) if session else "REG",
             ingest_id=ingest_id,
