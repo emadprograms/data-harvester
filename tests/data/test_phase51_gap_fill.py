@@ -900,9 +900,11 @@ def test_qfill_04_empty_success_publishes_recoverable_zero_row_batch(tmp_path):
     existing = _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP])
     client = _RecordingClient([])
 
+    before = existing.read_bytes()
     first = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
     assert first["requests"] == 1
     assert first["rows"] == 0
+    assert existing.read_bytes() == before
 
     receipts = _gfill_receipts(lake)
     assert len(receipts) == 1
@@ -980,6 +982,48 @@ def test_qfill_04_failed_request_stays_retryable_on_original_bounds(tmp_path):
     third = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
     assert third["requests"] == 0
     assert len(client.calls) == 2
+
+
+def test_qfill_04_estimate_covers_retries_and_fresh_gaps(tmp_path):
+    """The cost estimate covers the complete queue: a retry and a fresh gap."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP, SECOND_GAP])
+    client = _RecordingClient(
+        [(_utc(NORMAL_DAY, 10, 1), "NVDA"), (_utc(NORMAL_DAY, 10, 11), "NVDA")],
+        costs=0.6,
+    )
+
+    client.failures_remaining["get_range"] = 1
+    with pytest.raises(OSError):
+        fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    assert _request_windows(client) == [("2026-10-02T14:01:00", "2026-10-02T14:06:00")]
+
+    with pytest.raises(GapFillBudgetExceeded):
+        fill_named_day(
+            NORMAL_DAY,
+            client=client,
+            lake_root=lake,
+            symbols=SYMBOLS,
+            remaining_budget=1.0,
+        )
+
+    assert [call["start"] for call in client.cost_calls] == [
+        "2026-10-02T14:01:00",
+        "2026-10-02T14:11:00",
+    ], "the retry must be estimated alongside the freshly selected gap"
+    assert len(client.calls) == 1, "refusal must happen before any download"
+
+    client.failures_remaining["get_range"] = 0
+    filled = fill_named_day(
+        NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS, remaining_budget=2.0
+    )
+    assert filled["requests"] == 2
+    assert _request_windows(client)[1:] == [
+        ("2026-10-02T14:01:00", "2026-10-02T14:06:00"),
+        ("2026-10-02T14:11:00", "2026-10-02T14:16:00"),
+    ]
+    assert _coverage_state(lake)["pending"] == []
 
 
 def test_qfill_04_invalid_recovery_evidence_refuses_before_cost_or_download(tmp_path, monkeypatch):
