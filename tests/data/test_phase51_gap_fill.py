@@ -458,7 +458,12 @@ def test_qfill_04_sparse_success_is_not_requested_again(tmp_path):
 
 
 def test_qfill_04_crash_between_publish_and_coverage_does_not_duplicate(tmp_path):
-    """A durable publish without a ledger commit replays the same batch identity."""
+    """A lost ledger is rebuilt from the receipt: no re-download, no duplicate rows.
+
+    This keeps the original deleted-ledger reproduction and strengthens it: row count
+    alone used to pass while the restart still issued a second paid request, so the
+    request count, the rebuilt bounds, and the byte-identical v1 file are asserted too.
+    """
     import pandas as pd
 
     lake = tmp_path / "lake"
@@ -466,6 +471,7 @@ def test_qfill_04_crash_between_publish_and_coverage_does_not_duplicate(tmp_path
     gap_start = _et(NORMAL_DAY, 10, 1)
     gap_end = _et(NORMAL_DAY, 10, 6)
     existing = _write_occupied_day(lake, NORMAL_DAY, gap_start, gap_end)
+    before = existing.read_bytes()
     raw = pd.DataFrame(
         {
             "ts_event": pd.to_datetime(["2026-10-02 14:01:00+00:00"]),
@@ -476,11 +482,18 @@ def test_qfill_04_crash_between_publish_and_coverage_does_not_duplicate(tmp_path
     )
     client = _Client(raw)
     fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    assert len(client.timeseries.calls) == 1
     coverage = lake / "_control" / COVERAGE_FILENAME
     assert coverage.is_file()
     coverage.unlink()
 
-    fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    second = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+
+    assert len(client.timeseries.calls) == 1, "a deleted ledger must not buy the interval again"
+    assert second["requests"] == 0
+    assert json.loads(coverage.read_text(encoding="utf-8"))["intervals"][0]["start"].startswith(
+        "2026-10-02T10:01:00"
+    )
     v2_files = [
         path
         for path in (lake / "ticks").glob("symbol=*/date=*/*.parquet")
@@ -494,6 +507,7 @@ def test_qfill_04_crash_between_publish_and_coverage_does_not_duplicate(tmp_path
         for row in pq.read_table(path).to_pylist()
     ]
     assert len(ingest_ids) == 1
+    assert existing.read_bytes() == before
 
 
 def test_f4_estimates_selected_intervals_and_refuses_over_budget(tmp_path):

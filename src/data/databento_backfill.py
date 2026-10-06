@@ -201,6 +201,7 @@ def publish_ticks_to_lake(
     writer_id: str = "databento_backfill",
     sequence: int = 0,
     ownership_lock: Optional[Any] = None,
+    request_scope: Optional[Dict[str, Any]] = None,
 ) -> int:
     """
     Publishes normalized ticks into the Parquet tick lake — the only store.
@@ -208,8 +209,10 @@ def publish_ticks_to_lake(
     Goes through the product writer, so an in-progress maintenance window or a
     competing publisher makes this raise rather than write a partial day.
     A stable batch_id replays an existing receipt instead of appending a copy.
+    A named empty response still publishes, as a zero-row receipt, so a caller
+    that treats "empty" as coverage has durable evidence to recover from.
     """
-    if df.empty:
+    if df.empty and not batch_id:
         return 0
 
     from src.storage.config import resolve_tick_lake_root
@@ -230,7 +233,12 @@ def publish_ticks_to_lake(
             file_namespace=batch_file_namespace(batch_id),
             ownership_lock=ownership_lock,
         ) as publisher:
-            publisher.publish_batch(records, batch_id=batch_id, sequence=sequence)
+            publisher.publish_batch(
+                records,
+                batch_id=batch_id,
+                sequence=sequence,
+                request_scope=request_scope,
+            )
         return len(records)
 
     writer = TickLakeWriter(root=root, writer_id=writer_id)

@@ -44,6 +44,10 @@ class GapFillEstimateError(RuntimeError):
     """Cost estimation for the actual request intervals failed."""
 
 
+class GapFillRecoveryError(RuntimeError):
+    """Recovery evidence exists but cannot be verified. Refuse before spending."""
+
+
 # Exceptional NYSE full closures in the supported historical range that are
 # not produced by the recurring holiday calendar.
 NYSE_EXCEPTIONAL_FULL_CLOSURES = frozenset(
@@ -53,6 +57,9 @@ NYSE_EXCEPTIONAL_FULL_CLOSURES = frozenset(
 )
 
 COVERAGE_FILENAME = "gap_fill_coverage.json"
+COVERAGE_VERSION = 2
+PENDING_FIELDS = ("date", "dataset", "schema", "symbols", "start", "end", "batch_id")
+GAP_FILL_WRITER_ID = "gap_fill"
 
 
 def _et(day: date, hour: int, minute: int = 0) -> datetime:
@@ -300,14 +307,98 @@ def _coverage_path(root: Path) -> Path:
     return root / "_control" / COVERAGE_FILENAME
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist a directory entry after an atomic replace."""
+    if sys.platform == "win32":
+        return
+    try:
+        descriptor = os.open(str(path), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
 def _atomic_write_json(path: Path, payload: Any) -> None:
+    """Flush, fsync, atomically replace, then fsync the parent directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp, path)
+    _fsync_directory(path.parent)
+
+
+def _empty_state() -> dict:
+    return {"version": COVERAGE_VERSION, "intervals": [], "pending": []}
+
+
+def _load_state(root: Path) -> dict:
+    """Strict read of the coverage ledger, pending intervals included.
+
+    Legacy shapes (a bare interval list, or a dict without a version) stay readable as
+    completed coverage. An unreadable or malformed ledger raises instead of being read
+    as "no coverage": a silent reset would buy the same intervals twice.
+    """
+    path = _coverage_path(root)
+    if not path.is_file():
+        return _empty_state()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise GapFillRecoveryError(
+            f"Cannot read gap-fill coverage ledger {path}: {exc}"
+        ) from exc
+    if isinstance(data, list):
+        raw_intervals, raw_pending = data, []
+    elif isinstance(data, dict):
+        raw_intervals = data.get("intervals", [])
+        raw_pending = data.get("pending") or []
+    else:
+        raise GapFillRecoveryError("Coverage ledger has an unsupported shape")
+    if not isinstance(raw_intervals, list) or not isinstance(raw_pending, list):
+        raise GapFillRecoveryError("Coverage ledger intervals/pending must be lists")
+    completed = [item for item in raw_intervals if isinstance(item, dict)]
+    outstanding: List[dict] = []
+    for item in raw_pending:
+        if not isinstance(item, dict):
+            raise GapFillRecoveryError("Pending intervals must be objects")
+        missing = [field for field in PENDING_FIELDS if item.get(field) in (None, "", [])]
+        if missing:
+            raise GapFillRecoveryError(f"Pending interval is missing {', '.join(missing)}")
+        outstanding.append(item)
+    return {"version": COVERAGE_VERSION, "intervals": completed, "pending": outstanding}
+
+
+def _save_state(root: Path, intervals: List[dict], pending: List[dict]) -> None:
+    _atomic_write_json(
+        _coverage_path(root),
+        {"version": COVERAGE_VERSION, "intervals": intervals, "pending": pending},
+    )
+
+
+def _upsert(records: List[dict], record: dict) -> List[dict]:
+    batch_id = str(record.get("batch_id"))
+    return [item for item in records if str(item.get("batch_id")) != batch_id] + [record]
+
+
+def _drop_batch(records: List[dict], batch_id: str) -> List[dict]:
+    return [item for item in records if str(item.get("batch_id")) != batch_id]
 
 
 def _load_coverage(root: Path) -> List[dict]:
+    """Completed intervals only, read leniently for occupancy scans.
+
+    `_load_state` is the strict path used before any request; this one must not break
+    an occupancy scan over a malformed ledger, and pending intervals are never coverage.
+    """
     path = _coverage_path(root)
     if not path.is_file():
         return []
@@ -319,6 +410,179 @@ def _load_coverage(root: Path) -> List[dict]:
     if not isinstance(intervals, list):
         return []
     return [item for item in intervals if isinstance(item, dict)]
+
+
+def _scope_key(record: Any) -> Tuple[str, str, str, Tuple[str, ...]]:
+    """Identity of a request scope: day, dataset, schema, and the symbol set."""
+    if not isinstance(record, dict):
+        record = {}
+    return (
+        str(record.get("date", "")),
+        str(record.get("dataset", "")),
+        str(record.get("schema", "")),
+        tuple(_symbol_key(record.get("symbols") or [])),
+    )
+
+
+def _request_scope(
+    trading_date: date,
+    symbols: Sequence[str],
+    dataset: str,
+    schema: str,
+    start: datetime,
+    end: datetime,
+    batch_id: str,
+) -> dict:
+    return {
+        "date": trading_date.isoformat(),
+        "dataset": dataset,
+        "schema": schema,
+        "symbols": _symbol_key(symbols),
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "batch_id": batch_id,
+    }
+
+
+def _interval_from_scope(scope: dict) -> dict:
+    return {
+        "date": scope["date"],
+        "dataset": scope["dataset"],
+        "schema": scope["schema"],
+        "symbols": list(scope.get("symbols") or []),
+        "start": scope["start"],
+        "end": scope["end"],
+        "batch_id": scope["batch_id"],
+    }
+
+
+def _minute_set(start: datetime, end: datetime) -> Set[datetime]:
+    minutes: Set[datetime] = set()
+    cursor = start
+    while cursor < end:
+        minutes.add(cursor)
+        cursor += timedelta(minutes=1)
+    return minutes
+
+
+def _verified_receipt(root: Path, batch_id: str) -> Optional[Any]:
+    """Verified receipt for one batch, or None when nothing was published."""
+    from src.storage.publication import PublishError, verify_published_receipt
+
+    try:
+        return verify_published_receipt(root, batch_id)
+    except PublishError as exc:
+        raise GapFillRecoveryError(
+            f"Publication receipt for {batch_id} failed verification: {exc}"
+        ) from exc
+
+
+def _scope_receipts(root: Path, scope_key: Tuple, known: Set[str]) -> List[Any]:
+    """Verified receipts in this scope whose coverage entry is missing."""
+    receipts_dir = root / "_control" / "receipts"
+    if not receipts_dir.is_dir():
+        return []
+    found: List[Any] = []
+    for path in sorted(receipts_dir.glob("*.json")):
+        if path.stem in known:
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        scope = data.get("request") if isinstance(data, dict) else None
+        if not isinstance(scope, dict) or _scope_key(scope) != scope_key:
+            continue
+        receipt = _verified_receipt(root, path.stem)
+        if receipt is not None:
+            found.append(receipt)
+    return found
+
+
+def _assert_receipt_matches(record: dict, receipt: Any) -> None:
+    """A receipt is evidence only for the pending interval it names."""
+    if str(record.get("writer_id", GAP_FILL_WRITER_ID)) != str(receipt.writer_id):
+        raise GapFillRecoveryError(
+            f"Receipt writer {receipt.writer_id!r} does not match interval {receipt.batch_id}"
+        )
+    if int(record.get("sequence", 0)) != int(receipt.sequence):
+        raise GapFillRecoveryError(
+            f"Receipt sequence {receipt.sequence} does not match interval {receipt.batch_id}"
+        )
+    scope = receipt.request_scope
+    if not scope:
+        return
+    if _scope_key(scope) != _scope_key(record):
+        raise GapFillRecoveryError(f"Receipt scope does not match interval {receipt.batch_id}")
+    if (
+        str(scope.get("start")) != str(record.get("start"))
+        or str(scope.get("end")) != str(record.get("end"))
+    ):
+        raise GapFillRecoveryError(f"Receipt bounds do not match interval {receipt.batch_id}")
+
+
+def _reconcile_recovery_state(
+    root: Path,
+    lock: LakePublisherLock,
+    trading_date: date,
+    symbols: Sequence[str],
+    dataset: str,
+    schema: str,
+) -> Tuple[List[dict], int]:
+    """Complete matching pending intervals from verified publication evidence.
+
+    Runs under the fill lock and strictly before occupancy scanning, cost estimation, or
+    any download. Returns the intervals that must still be retried on their original
+    bounds, and how many intervals were recovered without spending anything.
+    """
+    from src.storage.publication import recover_pending_publications
+
+    state = _load_state(root)
+    scope_key = _scope_key(
+        _request_scope(trading_date, symbols, dataset, schema,
+                       _et(trading_date, 0, 0), _et(trading_date, 0, 0), "scope")
+    )
+    intervals = state["intervals"]
+    known = {str(item.get("batch_id")) for item in intervals}
+    remaining: List[dict] = []
+    retries: List[dict] = []
+    recovered = 0
+    changed = False
+
+    for record in state["pending"]:
+        if _scope_key(record) != scope_key:
+            remaining.append(record)
+            continue
+        batch_id = str(record["batch_id"])
+        receipt = _verified_receipt(root, batch_id)
+        if receipt is None and (root / "_control" / "intent" / f"{batch_id}.json").is_file():
+            recover_pending_publications(root, batch_ids={batch_id}, ownership_lock=lock)
+            receipt = _verified_receipt(root, batch_id)
+            if receipt is None:
+                raise GapFillRecoveryError(
+                    f"Publication intent for {batch_id} is not recoverable; refusing to download"
+                )
+        if receipt is None:
+            retries.append(record)
+            remaining.append(record)
+            continue
+        _assert_receipt_matches(record, receipt)
+        intervals = _upsert(intervals, _interval_from_scope(record))
+        known.add(batch_id)
+        recovered += 1
+        changed = True
+
+    for receipt in _scope_receipts(root, scope_key, known):
+        if not receipt.request_scope:
+            continue
+        intervals = _upsert(intervals, _interval_from_scope(receipt.request_scope))
+        known.add(receipt.batch_id)
+        recovered += 1
+        changed = True
+
+    if changed:
+        _save_state(root, intervals, remaining)
+    return retries, recovered
 
 
 def _symbol_key(symbols: Sequence[str]) -> List[str]:
@@ -378,6 +642,15 @@ def _interval_identity(
     return f"gfill_{digest}"
 
 
+def _record_pending(root: Path, scope: dict) -> None:
+    """Make one interval durable before its download, on its original bounds."""
+    state = _load_state(root)
+    record = dict(scope)
+    record["writer_id"] = GAP_FILL_WRITER_ID
+    record["sequence"] = 0
+    _save_state(root, state["intervals"], _upsert(state["pending"], record))
+
+
 def _record_coverage(
     root: Path,
     trading_date: date,
@@ -388,6 +661,8 @@ def _record_coverage(
     end: datetime,
     batch_id: str,
 ) -> None:
+    """Move one interval from pending to completed coverage in a single write."""
+    state = _load_state(root)
     record = {
         "date": trading_date.isoformat(),
         "dataset": dataset,
@@ -397,13 +672,11 @@ def _record_coverage(
         "end": end.isoformat(),
         "batch_id": batch_id,
     }
-    intervals = [
-        item
-        for item in _load_coverage(root)
-        if item.get("batch_id") != batch_id
-    ]
-    intervals.append(record)
-    _atomic_write_json(_coverage_path(root), {"intervals": intervals})
+    _save_state(
+        root,
+        _upsert(state["intervals"], record),
+        _drop_batch(state["pending"], batch_id),
+    )
 
 
 def fill_named_day(
@@ -418,9 +691,12 @@ def fill_named_day(
 ) -> dict:
     """Request tbbo only for all-symbol silence on one named day, then append v2 rows.
 
-    Existing files are not rewritten. A smaller Databento result is not a reason
-    to ask again. Successful interval coverage is recorded after a durable
-    publish or a successful empty response.
+    Existing files are not rewritten. A smaller Databento result is not a reason to ask
+    again. Before anything is requested, pending intervals are reconciled against
+    verified publication receipts, so a crash between publication and the coverage
+    write never buys the same data twice. Each interval is persisted as pending on its
+    original bounds before its download, and completed coverage is committed after a
+    durable publish (or a recoverable empty publication).
     """
     if lake_root is None:
         from src.storage.config import resolve_tick_lake_root
@@ -446,13 +722,43 @@ def fill_named_day(
             publish_ticks_to_lake,
         )
 
+        # Recovery first: complete or retry interrupted intervals before scanning, so a
+        # shortened interval can never be selected in place of the original request.
+        retries, _recovered = _reconcile_recovery_state(
+            root, lock, trading_date, symbols, dataset, schema
+        )
+
         if occupied_minutes is None:
             occupied = occupied_minutes_in_lake(root, symbols, trading_date)
         else:
             occupied = set(occupied_minutes)
         occupied |= _coverage_minutes(root, trading_date, symbols, dataset, schema)
+        for record in retries:
+            occupied |= _minute_set(
+                _parse_coverage_time(str(record["start"])),
+                _parse_coverage_time(str(record["end"])),
+            )
         stretches = silence_stretches(trading_date, occupied, symbols)
-        if not stretches:
+
+        queue: List[Tuple[datetime, datetime, str, bool]] = [
+            (
+                _parse_coverage_time(str(record["start"])),
+                _parse_coverage_time(str(record["end"])),
+                str(record["batch_id"]),
+                True,
+            )
+            for record in retries
+        ]
+        queue += [
+            (
+                start,
+                end,
+                _interval_identity(trading_date, symbols, dataset, schema, start, end),
+                False,
+            )
+            for start, end in stretches
+        ]
+        if not queue:
             return empty
 
         estimated_cost = 0.0
@@ -467,7 +773,7 @@ def fill_named_day(
                         schema=schema,
                         dataset=dataset,
                     )
-                    for start, end in stretches
+                    for start, end, _batch_id, _retry in queue
                 )
             except Exception as exc:
                 raise GapFillEstimateError(
@@ -475,13 +781,17 @@ def fill_named_day(
                 ) from exc
             if estimated_cost > remaining_budget:
                 raise GapFillBudgetExceeded(
-                    f"Estimated ${estimated_cost:.4f} for {len(stretches)} interval(s) "
+                    f"Estimated ${estimated_cost:.4f} for {len(queue)} interval(s) "
                     f"exceeds remaining budget ${remaining_budget:.4f}"
                 )
 
         written = 0
-        for start, end in stretches:
-            batch_id = _interval_identity(trading_date, symbols, dataset, schema, start, end)
+        requested: List[Tuple[str, str]] = []
+        for start, end, batch_id, _retry in queue:
+            request_scope = _request_scope(
+                trading_date, symbols, dataset, schema, start, end, batch_id
+            )
+            _record_pending(root, request_scope)
             data = client.timeseries.get_range(
                 dataset=dataset,
                 symbols=list(symbols),
@@ -489,24 +799,23 @@ def fill_named_day(
                 start=start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
                 end=end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
             )
+            requested.append((start.isoformat(), end.isoformat()))
             frame = normalize_tbbo_frame(data.to_df(), trading_date)
-            if frame.empty:
-                _record_coverage(root, trading_date, symbols, dataset, schema, start, end, batch_id)
-                continue
             written += publish_ticks_to_lake(
                 frame,
                 lake_root=root,
                 batch_id=batch_id,
-                writer_id="gap_fill",
+                writer_id=GAP_FILL_WRITER_ID,
                 sequence=0,
                 ownership_lock=lock,
+                request_scope=request_scope,
             )
             _record_coverage(root, trading_date, symbols, dataset, schema, start, end, batch_id)
         return {
-            "requests": len(stretches),
+            "requests": len(requested),
             "follow_up_requests": 0,
             "rows": written,
-            "stretches": [(start.isoformat(), end.isoformat()) for start, end in stretches],
+            "stretches": requested,
             "estimated_cost": estimated_cost,
         }
     finally:
