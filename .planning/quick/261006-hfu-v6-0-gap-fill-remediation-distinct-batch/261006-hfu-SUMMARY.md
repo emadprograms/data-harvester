@@ -69,8 +69,9 @@ status: complete
 |---|---|---|
 | `tests/data/test_phase51_gap_fill.py` | 7 failed | 50 passed |
 | `tests/data/test_databento.py` | 3 failed | 11 passed |
-| Four focused suites | 10 failed / 44 passed | 61 passed |
+| Four focused suites (plan gate) | 10 failed / 44 passed | **71 passed** |
 | Full offline suite (`-m 'not live and not performance'`) | not re-measured | **1,061 passed, 14 deselected** |
+| Milestone-focused suites (report table) | 99 passed | **134 passed** |
 
 Baseline failure signatures retained: P1 → `BatchCollisionError: Destination file ticks/symbol=NVDA/date=2026-10-02/batch_gap_fill_000000.parquet already exists with differing content`; P2 → `a second paid request happened: [('2026-10-02T14:01:00','2026-10-02T14:06:00'), ('2026-10-02T14:02:00','2026-10-02T14:06:00')]`.
 

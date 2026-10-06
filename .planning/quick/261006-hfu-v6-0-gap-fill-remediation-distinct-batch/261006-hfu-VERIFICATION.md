@@ -39,7 +39,7 @@ behavior_unverified: 0
 DISCORD_WEBHOOK_URL='' .venv/bin/python -m pytest \
   tests/data/test_phase51_gap_fill.py tests/data/test_databento.py \
   tests/storage/test_atomic_publication.py tests/storage/test_v6_recovery_and_mixed_snapshot.py -q
-# -> 55 passed
+# -> 71 passed
 
 # complete offline suite (plan gate)
 DISCORD_WEBHOOK_URL='' .venv/bin/python -m pytest -m 'not live and not performance' -q
