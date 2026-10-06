@@ -285,6 +285,91 @@ def test_rewrite_requires_explicit_lake_root():
         rewrite_quote_lake()
 
 
+def test_rewrite_04_holds_lock_during_backup_so_concurrent_publish_cannot_omit_files(tmp_path):
+    """F8: backup runs under exclusive ownership; a concurrent publish cannot sneak in."""
+    lake = tmp_path / "lake"
+    backup = tmp_path / "backup"
+    init_tick_lake(lake)
+    _publish_v1(lake, [_v1_row("NVDA", 14, 100.0, 100.04, 100.5, "i1")], "batch_one")
+
+    def copy_then_publish(src, dst, dirs_exist_ok=True):
+        import shutil
+
+        shutil.copytree(src, dst, dirs_exist_ok=dirs_exist_ok)
+        _publish_v1(Path(src), [_v1_row("AAPL", 14, 10.0, 10.04, 9.0, "sneak")], "batch_sneak")
+
+    with pytest.raises(QuoteRewriteError, match="copy"):
+        rewrite_quote_lake(
+            lake_root=lake,
+            backup_root=backup,
+            free_bytes=10**12,
+            copy_impl=copy_then_publish,
+        )
+    live = _parquet_files(lake)
+    assert len(live) == 1
+    assert "price" in pq.ParquetFile(live[0]).schema_arrow.names
+
+
+def test_rewrite_04_stale_backup_marker_does_not_skip_copy(tmp_path):
+    """A leftover BACKUP_COMPLETE marker is not treated as a copy of this lake."""
+    lake = tmp_path / "lake"
+    backup = tmp_path / "backup"
+    init_tick_lake(lake)
+    _publish_v1(lake, [_v1_row("NVDA", 14, 100.0, 100.04, 100.5, "i1")], "batch_mark")
+    backup.mkdir()
+    (backup / "BACKUP_COMPLETE").write_text("ok\n", encoding="utf-8")
+
+    report = rewrite_quote_lake(lake_root=lake, backup_root=backup, free_bytes=10**12)
+    assert report["kept_rows"] == 1
+    marker = json.loads((backup / "BACKUP_COMPLETE").read_text(encoding="utf-8"))
+    assert marker["lake_root"] == str(lake.resolve())
+    assert marker["run_id"] == report["run_id"]
+    assert marker["files"]
+    for rel, meta in marker["files"].items():
+        backup_file = backup / rel
+        assert backup_file.is_file()
+        assert backup_file.stat().st_size == meta["size"]
+        assert _sha256_file(backup_file) == meta["sha256"]
+
+
+def test_rewrite_03_resume_keeps_quarantine_totals(tmp_path):
+    """F9: resume reconstructs quarantined/kept counts from the durable journal."""
+    lake = tmp_path / "lake"
+    backup = tmp_path / "backup"
+    init_tick_lake(lake)
+    first_rel = "ticks/symbol=NVDA/date=2026-10-02/batch_first.parquet"
+    second_rel = "ticks/symbol=AAPL/date=2026-10-02/batch_second.parquet"
+    first_rows = [
+        _v1_row("NVDA", 14, bid=100.00, ask=100.04, price=100.50, ingest="ok"),
+        _v1_row("NVDA", 15, bid=None, ask=100.10, price=999.99, ingest="bad_bid"),
+    ]
+    second_rows = [_v1_row("AAPL", 14, bid=10.00, ask=10.04, price=50.00, ingest="a1")]
+    first_path = _write_v1_parquet_with_nulls(lake, first_rows, first_rel)
+    second_path = _write_v1_parquet_with_nulls(lake, second_rows, second_rel)
+    _write_receipt(lake, first_rel, first_path, first_rows, "batch_first")
+    _write_receipt(lake, second_rel, second_path, second_rows, "batch_second")
+
+    seen: list[str] = []
+
+    def stop_after_first(relative: str) -> None:
+        seen.append(relative)
+        if len(seen) == 1:
+            raise RuntimeError("stopped")
+
+    with pytest.raises(RuntimeError, match="stopped"):
+        rewrite_quote_lake(
+            lake_root=lake,
+            backup_root=backup,
+            free_bytes=10**12,
+            after_file=stop_after_first,
+        )
+
+    report = rewrite_quote_lake(lake_root=lake, backup_root=backup, free_bytes=10**12)
+    assert report["quarantined_rows"] == 1
+    assert report["kept_rows"] == 2
+    assert any(item["ingest_id"] == "bad_bid" for item in report["quarantine"])
+
+
 def test_cli_requires_lake_root_and_backup_root():
     parser = build_parser()
     with pytest.raises(SystemExit):
