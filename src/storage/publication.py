@@ -34,7 +34,6 @@ from src.storage.schema import (
     validate_published_table,
     validate_schema_v1,
     validate_schema_v2,
-    validate_table_v1,
 )
 
 
@@ -957,7 +956,7 @@ def _recover_pending_publications_locked(
                     break
                 # Avoid Hive partition discovery; receipt verification is against file contents only.
                 table = pq.ParquetFile(candidate).read()
-                validate_table_v1(table)
+                validate_published_table(table)
                 if table.num_rows != expected_rows:
                     all_targets_ready = False
                     break

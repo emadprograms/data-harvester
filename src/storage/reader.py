@@ -28,7 +28,7 @@ from src.storage.config import (
     encode_symbol,
     resolve_tick_lake_root,
 )
-from src.storage.schema import LAKE_SCHEMA_V1
+from src.storage.schema import LAKE_SCHEMA_MIXED
 
 
 _V2_QUOTE_SELECT = """
@@ -1586,8 +1586,12 @@ class TickLakeReader:
             )
 
         if not files:
-            return ds.dataset([], schema=LAKE_SCHEMA_V1, format="parquet")
-        return ds.dataset([str(f) for f in sorted(set(files))], format="parquet")
+            return ds.dataset([], schema=LAKE_SCHEMA_MIXED, format="parquet")
+        return ds.dataset(
+            [str(f) for f in sorted(set(files))],
+            schema=LAKE_SCHEMA_MIXED,
+            format="parquet",
+        )
 
     def get_lake_health_report(self) -> Dict[str, Any]:
         """Computes active files count, total size, row count, status."""
