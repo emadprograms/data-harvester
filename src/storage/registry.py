@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 import uuid
 
 from src.storage.config import resolve_tick_lake_root, StorageConfigError
@@ -677,4 +677,106 @@ def cleanup_orphaned_registry_staging_files(
 
 # Backward-compatibility alias
 cleanup_orphaned_staging_files = cleanup_orphaned_registry_staging_files
+
+
+# --------------------------------------------------------------------------
+# Registry seeding CLI
+# --------------------------------------------------------------------------
+# The registry is the single symbol authority, but nothing in the product ever
+# *populated* it: the dashboard adds symbols one at a time, the migration tool
+# moved data without moving symbol knowledge, and the tests seeded it directly.
+# A lake could therefore come out of a migration with an authority that lists
+# nothing, and a live streamer that silently subscribes to nothing
+# (INCIDENT-2026-10-06). This is the missing seeding step.
+
+def seed_registry(
+    root: Union[str, Path],
+    symbols: Optional[Sequence[str]] = None,
+    capital_ticker_from_symbol: bool = True,
+    asset_class: Optional[str] = "EQUITY",
+) -> Dict[str, Any]:
+    """Idempotently add `symbols` (default: the approved ticket) to a registry.
+
+    Returns a summary dict: {"root", "seeded", "already_present", "active_total"}.
+    Existing symbols are left untouched — seeding never deactivates anything.
+    """
+    if symbols is None:
+        from src.config import APPROVED_EQUITY_SYMBOLS
+        symbols = list(APPROVED_EQUITY_SYMBOLS)
+
+    reg = SymbolRegistry(root=root)
+    if not reg.path.exists():
+        init_registry(root)
+
+    seeded: List[str] = []
+    present: List[str] = []
+    for raw in symbols:
+        sym = str(raw).strip().upper()
+        if not sym:
+            continue
+        if reg.get_symbol(sym) is not None:
+            present.append(sym)
+            continue
+        reg.add_symbol(
+            symbol=sym,
+            display_name=sym,
+            capital_ticker=sym if capital_ticker_from_symbol else None,
+            asset_class=asset_class,
+        )
+        seeded.append(sym)
+
+    active_total = len(reg.get_active_symbols())
+    return {
+        "root": str(reg.root),
+        "registry_path": str(reg.path),
+        "seeded": seeded,
+        "already_present": present,
+        "active_total": active_total,
+    }
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    """``python -m src.storage.registry`` — inspect or seed a lake registry."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Tick lake symbol registry utility")
+    parser.add_argument("--root", default=None,
+                        help="Lake root (default: resolved TICK_LAKE_ROOT)")
+    parser.add_argument("--seed", nargs="?", const="approved", default=None,
+                        help="Seed the registry: 'approved' (default) or a comma-separated list")
+    parser.add_argument("--list", action="store_true", help="List registry contents")
+    args = parser.parse_args(argv)
+
+    from src.storage.config import resolve_tick_lake_root
+    root = Path(args.root).resolve() if args.root else resolve_tick_lake_root()
+
+    if args.seed is not None:
+        if args.seed.strip().lower() in ("approved", "config", "default"):
+            symbols = None
+        else:
+            symbols = [s for s in args.seed.split(",") if s.strip()]
+        summary = seed_registry(root, symbols=symbols)
+        print(f"registry : {summary['registry_path']}")
+        print(f"seeded   : {len(summary['seeded'])} symbol(s) {summary['seeded']}")
+        print(f"present  : {len(summary['already_present'])} symbol(s)")
+        print(f"active   : {summary['active_total']} symbol(s)")
+        return 0 if summary["active_total"] > 0 else 1
+
+    reg = SymbolRegistry(root=root)
+    if not reg.path.exists():
+        print(f"registry : {reg.path} (MISSING — the streamer will fail closed)")
+        return 1
+    entries = reg.get_symbols()
+    active = reg.get_active_symbols()
+    print(f"registry : {reg.path}")
+    print(f"version  : {reg.version}")
+    print(f"symbols  : {len(entries)} total, {len(active)} active")
+    for entry in entries:
+        flag = "active" if entry.active and entry.status == STATUS_ACTIVE else entry.status
+        print(f"  - {entry.symbol:<10} {flag}")
+    return 0 if active else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 

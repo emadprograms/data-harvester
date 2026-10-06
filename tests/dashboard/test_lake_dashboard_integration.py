@@ -9,6 +9,7 @@ Validates:
 """
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import socket
 import threading
@@ -59,7 +60,9 @@ def lake_dashboard_server(tmp_path, monkeypatch):
         json.dump({
             "status": "RUNNING",
             "writer_id": "w_dash_01",
-            "pid": 54321,
+            # A live PID — see INCIDENT-2026-10-06: a fabricated PID used to read
+            # as "alive" because the status string was trusted blindly.
+            "pid": os.getpid(),
             "total_rows_written": 25,
             "batches_published": 1,
             "total_quarantined": 0,

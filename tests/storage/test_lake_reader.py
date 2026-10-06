@@ -14,6 +14,7 @@ Validates:
 """
 from datetime import date, datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import pytest
@@ -553,7 +554,9 @@ def test_stream_status_reads_writer_status_file(tmp_path):
     payload = {
         "status": "RUNNING",
         "writer_id": "writer_worker_01",
-        "pid": 98765,
+        # A live PID: liveness now requires the process to exist, so the fixture
+        # must not point at a fabricated one (INCIDENT-2026-10-06).
+        "pid": os.getpid(),
         "total_rows_written": 12500,
         "batches_published": 45,
         "total_quarantined": 0,

@@ -169,6 +169,11 @@ class MigrationConfig:
     force: bool = False
     compression: str = "snappy"
     migration_id: Optional[str] = None
+    # Carry the migrated symbol set into the lake registry (the single symbol
+    # authority). Without this, a migrated lake can hold ticks while its
+    # authority lists nothing, and the streamer subscribes to nothing
+    # (INCIDENT-2026-10-06). Disable with --no-seed-registry.
+    seed_registry: bool = True
 
     def __post_init__(self):
         if self.source_db is not None:
@@ -185,6 +190,7 @@ class MigrationConfig:
         self.force = bool(self.force)
         if self.migration_id is not None:
             self.migration_id = str(self.migration_id).lower()
+        self.seed_registry = bool(self.seed_registry)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -201,6 +207,7 @@ class MigrationConfig:
             "force": self.force,
             "compression": self.compression,
             "migration_id": self.migration_id,
+            "seed_registry": self.seed_registry,
         }
 
     @classmethod
@@ -218,6 +225,7 @@ class MigrationConfig:
             resume=data.get("resume", False),
             force=data.get("force", False),
             compression=data.get("compression", "snappy"),
+            seed_registry=data.get("seed_registry", True),
             migration_id=data.get("migration_id"),
         )
 
@@ -2640,6 +2648,55 @@ class MigrationOrchestrator:
                 self._cleanup_published_files(state)
                 return [receipt]
 
+    def _seed_registry_after_publish(self) -> None:
+        """Carry the migrated symbol set into the lake registry.
+
+        The registry is the single symbol authority for streaming admission, but
+        migration used to move *data* only: the lake came out of the gate holding
+        ticks and an authority that listed nothing. The streamer then subscribed
+        to nothing and idled "green" (INCIDENT-2026-10-06). Seeding here keeps
+        the symbols that were just migrated.
+        """
+        if not getattr(self.config, "seed_registry", True):
+            logger.info("Registry seeding disabled (--no-seed-registry).")
+            return
+        symbols: List[str] = []
+        try:
+            if self.plan_file.is_file():
+                plan = MigrationPlan.load(self.plan_file)
+                # partitions are stored as dicts once the plan round-trips through JSON
+                symbols = sorted({
+                    (part.get("symbol") if isinstance(part, dict) else getattr(part, "symbol", None))
+                    for part in plan.partitions
+                } - {None, ""})
+        except Exception as exc:  # never fail the migration over a seed
+            logger.warning("Could not read the plan to seed the registry: %s", exc)
+        if not symbols:
+            symbols = sorted({str(s).strip().upper() for s in (self.config.symbols or []) if str(s).strip()})
+        if not symbols:
+            logger.warning(
+                "No symbols could be derived from the plan; seed the registry by hand: "
+                "python -m src.storage.registry --root %s --seed approved", self.lake_root
+            )
+            return
+        try:
+            from src.storage.registry import seed_registry
+            summary = seed_registry(self.lake_root, symbols=symbols)
+            logger.info(
+                "Registry seeded: %d added, %d already present, %d active total (%s)",
+                len(summary["seeded"]), len(summary["already_present"]),
+                summary["active_total"], summary["registry_path"],
+            )
+            if summary["active_total"] == 0:
+                logger.error("Registry still has no active symbols after seeding — check %s",
+                             summary["registry_path"])
+        except Exception as exc:
+            logger.error(
+                "Registry seeding failed (%s). The streamer will refuse to start until "
+                "the registry is seeded: python -m src.storage.registry --root %s --seed approved",
+                exc, self.lake_root,
+            )
+
     def run(self) -> int:
         """Run a selected lifecycle stage; dry-run is strictly read-only."""
         try:
@@ -2653,6 +2710,8 @@ class MigrationOrchestrator:
                     return 1
             elif self.config.mode == "publish":
                 self.publish()
+                if not self.config.dry_run:
+                    self._seed_registry_after_publish()
             elif self.config.mode in ("audit-lake", "audit"):
                 report = self.audit_lake()
                 if report["status"] != "PASSED":
@@ -2669,6 +2728,8 @@ class MigrationOrchestrator:
                 if result.status not in {"PASSED", "DRY_RUN"}:
                     return 1
                 self.publish()
+                if not self.config.dry_run:
+                    self._seed_registry_after_publish()
             else:
                 raise ValueError(f"Unknown mode: {self.config.mode}")
             return 0
@@ -2874,6 +2935,19 @@ def parse_args(args: Optional[Sequence[str]] = None) -> MigrationConfig:
         help="Parquet compression codec (default: snappy)",
     )
     parser.add_argument("--migration-id", type=str, default=None, help="Optional explicit 32-hex migration UUID")
+    parser.add_argument(
+        "--seed-registry",
+        dest="seed_registry",
+        action="store_true",
+        default=True,
+        help="Seed the lake registry with the migrated symbols after publish (default: on)",
+    )
+    parser.add_argument(
+        "--no-seed-registry",
+        dest="seed_registry",
+        action="store_false",
+        help="Do not touch the lake registry (the streamer will refuse to start on an empty one)",
+    )
 
     parsed = parser.parse_args(args)
     return MigrationConfig(
@@ -2890,6 +2964,7 @@ def parse_args(args: Optional[Sequence[str]] = None) -> MigrationConfig:
         force=parsed.force,
         compression=parsed.compression,
         migration_id=parsed.migration_id,
+        seed_registry=parsed.seed_registry,
     )
 
 

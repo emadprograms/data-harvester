@@ -25,6 +25,12 @@ from src.storage.registry import (
 )
 
 
+# A writer that is alive but has published nothing for this long is degraded, not
+# healthy. Override with NO_PROGRESS_SECONDS when a lake legitimately writes less
+# often (INCIDENT-2026-10-06: an idle streamer read as healthy indefinitely).
+_NO_PROGRESS_SECONDS = float(os.getenv("NO_PROGRESS_SECONDS") or 900.0)
+
+
 def _unscoped_symbols_allowed() -> bool:
     """Test/debug seam. Production keeps the 19-equity ticket as the authority."""
     return os.getenv("ALLOW_UNSCOPED_SYMBOLS", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -215,9 +221,33 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 stream = reader.get_stream_status()
             except Exception as exc:
                 stream = {"status": "UNKNOWN", "error": str(exc)}
+
+            # Lake files on disk say nothing about whether ingestion is happening
+            # (INCIDENT-2026-10-06: HEALTHY was reported while zero rows flowed).
+            # A dead or absent writer is a degradation, stated explicitly.
+            reasons = []
+            if not lake.get("healthy"):
+                reasons.append("lake unhealthy")
+            if not stream.get("is_alive"):
+                reasons.append(
+                    "stream writer not running"
+                    if not stream.get("stale_status_file")
+                    else "writer process is dead but its status file still says RUNNING"
+                )
+            else:
+                # Alive but not publishing: the writer's status file says RUNNING
+                # while nothing lands on disk (INCIDENT-2026-10-06 — an idle
+                # streamer with an empty subscription set looked perfectly green).
+                age = lake.get("seconds_since_newest_write")
+                if isinstance(age, (int, float)) and age > _NO_PROGRESS_SECONDS:
+                    reasons.append(
+                        f"no ticks written for {int(age)}s while the writer is running"
+                    )
+            status = "HEALTHY" if not reasons else "DEGRADED"
             self._send_json({
-                "status": "HEALTHY" if lake.get("healthy") else "DEGRADED",
-                "healthy": bool(lake.get("healthy")),
+                "status": status,
+                "healthy": status == "HEALTHY",
+                "reasons": reasons,
                 "lake": lake,
                 "stream": stream,
             })
@@ -252,6 +282,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             target_symbol = query.get("symbol", [None])[0]
             now_utc = datetime.now(timezone.utc)
 
+            registry_empty = False
             if target_symbol:
                 symbols = [target_symbol]
             else:
@@ -260,6 +291,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 if registry is not None:
                     try:
                         symbols = [entry.symbol for entry in registry.get_active_symbols()][:5]
+                        registry_empty = not symbols
                     except Exception as exc:
                         logger.warning(f"Integrity symbol lookup failed: {exc}")
 
@@ -268,8 +300,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 for sym in symbols
             ]
 
+            # An empty registry means nothing is ingested and nothing can be audited;
+            # reporting a pass would be a false negative (INCIDENT-2026-10-06).
             self._send_json({
                 "overall_passed": bool(quiet_results) and all(q.get("passed", False) for q in quiet_results),
+                "registry_empty": registry_empty,
                 "timestamp": now_utc.strftime('%Y-%m-%d %H:%M:%S UTC'),
                 "symbols_audited": symbols,
                 "quiet_intervals": quiet_results,

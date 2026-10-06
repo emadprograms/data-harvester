@@ -93,6 +93,7 @@ from src.storage.registry import (
     init_registry,
     load_registry,
     get_registry_path,
+    seed_registry,
     touch_stream_reload_signal,
     get_symbol_registry,
     cleanup_orphaned_registry_staging_files,
