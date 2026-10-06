@@ -183,6 +183,17 @@ def _stable_tbbo_ingest_id(record: Dict[str, Any]) -> str:
     return "dbtbbo_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
+def batch_file_namespace(batch_id: str) -> str:
+    """Deterministic filename namespace for one named batch.
+
+    Named gap-fill batches all publish at sequence zero, so without a namespace
+    every interval for the same symbol and UTC day would target one filename and
+    the second publication would raise BatchCollisionError. The digest is 40 hex
+    characters, inside LakePublisher's 1-64 character safe-alphabet rule.
+    """
+    return "db_" + hashlib.sha256(batch_id.encode("utf-8")).hexdigest()[:40]
+
+
 def publish_ticks_to_lake(
     df: pd.DataFrame,
     lake_root: Optional[Any] = None,
@@ -216,6 +227,7 @@ def publish_ticks_to_lake(
         with LakePublisher(
             root=root,
             writer_id=writer_id,
+            file_namespace=batch_file_namespace(batch_id),
             ownership_lock=ownership_lock,
         ) as publisher:
             publisher.publish_batch(records, batch_id=batch_id, sequence=sequence)

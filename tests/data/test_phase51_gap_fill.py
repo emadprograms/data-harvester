@@ -762,10 +762,7 @@ def test_qfill_04_two_intervals_publish_distinct_files(tmp_path):
     assert len(receipts) == 2
     stored = [json.loads(path.read_text(encoding="utf-8")) for path in receipts]
     assert len({record["batch_id"] for record in stored}) == 2
-    for record in stored:
-        assert record["request"]["batch_id"] == record["batch_id"]
-        assert record["request"]["date"] == NORMAL_DAY.isoformat()
-    assert {record["request"]["start"][11:16] for record in stored} == {"10:01", "10:11"}
+    assert all(record["row_count"] == 1 for record in stored)
 
     assert existing.read_bytes() == before
 
@@ -801,6 +798,32 @@ def _interrupt_coverage_commit(monkeypatch, lake: Path) -> _CoverageCommitFault:
         gap_fill_module, "_atomic_write_json", real_write
     )
     return fault
+
+
+def test_qfill_04_receipts_carry_the_original_request_scope(tmp_path):
+    """A receipt names the scope and bounds that produced it, not just a hash."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP, SECOND_GAP])
+    client = _RecordingClient(
+        [
+            (_utc(NORMAL_DAY, 10, 1), "NVDA"),
+            (_utc(NORMAL_DAY, 10, 11), "NVDA"),
+        ]
+    )
+
+    fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+
+    stored = [json.loads(path.read_text(encoding="utf-8")) for path in _gfill_receipts(lake)]
+    assert len(stored) == 2
+    for record in stored:
+        assert record["request"]["batch_id"] == record["batch_id"]
+        assert record["request"]["date"] == NORMAL_DAY.isoformat()
+        assert record["request"]["dataset"] == "DBEQ.BASIC"
+        assert record["request"]["schema"] == "tbbo"
+        assert record["request"]["symbols"] == sorted(SYMBOLS)
+    assert {record["request"]["start"][11:16] for record in stored} == {"10:01", "10:11"}
+    assert {record["request"]["end"][11:16] for record in stored} == {"10:06", "10:16"}
 
 
 def test_qfill_04_sparse_receipt_recovery_avoids_second_download(tmp_path, monkeypatch):
