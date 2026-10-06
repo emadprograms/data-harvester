@@ -340,6 +340,60 @@ def test_qfill_05_refuses_when_live_writer_holds_the_lock(tmp_path):
     assert client.timeseries.calls == []
 
 
+def test_qfill_05_holds_lock_through_download_and_publish(tmp_path):
+    """Gap fill keeps the publisher lock across get_range so a live writer cannot sneak in."""
+    import pandas as pd
+
+    from src.storage.publication import LakeMaintenanceInProgressError, LakeOwnershipError
+
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    gap_start = _et(NORMAL_DAY, 10, 1)
+    gap_end = _et(NORMAL_DAY, 10, 6)
+    _write_occupied_day(lake, NORMAL_DAY, gap_start, gap_end)
+
+    class _LockedRange:
+        def __init__(self, frame):
+            self._frame = frame
+
+        def to_df(self):
+            return self._frame
+
+    class _LockedTimeseries:
+        def __init__(self, frame, lake_root: Path):
+            self.calls = []
+            self._frame = frame
+            self._lake = lake_root
+
+        def get_range(self, **kwargs):
+            self.calls.append(kwargs)
+            intruder = LakePublisherLock(root=self._lake, writer_id="live_writer")
+            with pytest.raises((LakeOwnershipError, LakeMaintenanceInProgressError)):
+                intruder.acquire(blocking=False)
+            return _LockedRange(self._frame)
+
+    class _LockedClient:
+        def __init__(self, frame, lake_root: Path):
+            self.timeseries = _LockedTimeseries(frame, lake_root)
+
+    raw = pd.DataFrame(
+        {
+            "ts_event": pd.to_datetime(["2026-10-02 14:01:00+00:00"]),
+            "symbol": ["NVDA"],
+            "bid_px_00": [100.00],
+            "ask_px_00": [100.04],
+        }
+    )
+    client = _LockedClient(raw, lake)
+    result = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    assert result["requests"] == 1
+    assert result["rows"] == 1
+    # Lock is released after the fill so a later writer can acquire it.
+    later = LakePublisherLock(root=lake, writer_id="live_writer")
+    later.acquire(blocking=False)
+    later.release()
+
+
 def test_qfill_03_excludes_january_9_2025_day_of_mourning(tmp_path):
     """QFILL-03: 2025-01-09 is a full NYSE closure and must not be requested."""
     closed = date(2025, 1, 9)

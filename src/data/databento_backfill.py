@@ -283,6 +283,7 @@ def publish_ticks_to_lake(
     batch_id: Optional[str] = None,
     writer_id: str = "databento_backfill",
     sequence: int = 0,
+    ownership_lock: Optional[Any] = None,
 ) -> int:
     """
     Publishes normalized ticks into the Parquet tick lake — the only store.
@@ -306,7 +307,11 @@ def publish_ticks_to_lake(
             record["ingest_id"] = _stable_tbbo_ingest_id(record)
 
     if batch_id:
-        with LakePublisher(root=root, writer_id=writer_id) as publisher:
+        with LakePublisher(
+            root=root,
+            writer_id=writer_id,
+            ownership_lock=ownership_lock,
+        ) as publisher:
             publisher.publish_batch(records, batch_id=batch_id, sequence=sequence)
         return len(records)
 

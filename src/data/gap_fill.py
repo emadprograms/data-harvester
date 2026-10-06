@@ -218,12 +218,17 @@ def session_label(ts: datetime, trading_date: date) -> str:
     return "POST"
 
 
-def refuse_if_lake_locked(lake_root: Path) -> None:
-    lock = LakePublisherLock(root=lake_root, writer_id="gap_fill_probe")
+def _acquire_gap_fill_lock(lake_root: Path) -> LakePublisherLock:
+    lock = LakePublisherLock(root=lake_root, writer_id="gap_fill")
     try:
         lock.acquire(blocking=False)
     except (LakeOwnershipError, LakeMaintenanceInProgressError) as exc:
         raise GapFillRefused("Gap fill refused because the live writer holds the lake lock") from exc
+    return lock
+
+
+def refuse_if_lake_locked(lake_root: Path) -> None:
+    lock = _acquire_gap_fill_lock(lake_root)
     lock.release()
 
 
@@ -423,7 +428,7 @@ def fill_named_day(
         root = resolve_tick_lake_root()
     else:
         root = Path(lake_root)
-    refuse_if_lake_locked(root)
+    lock = _acquire_gap_fill_lock(root)
     empty = {
         "requests": 0,
         "follow_up_requests": 0,
@@ -431,77 +436,81 @@ def fill_named_day(
         "stretches": [],
         "estimated_cost": 0.0,
     }
-    if not symbols or trading_date.weekday() >= 5 or is_full_nyse_holiday(trading_date):
-        return empty
+    try:
+        if not symbols or trading_date.weekday() >= 5 or is_full_nyse_holiday(trading_date):
+            return empty
 
-    from src.data.databento_backfill import (
-        estimate_interval_cost,
-        normalize_tbbo_frame,
-        publish_ticks_to_lake,
-    )
+        from src.data.databento_backfill import (
+            estimate_interval_cost,
+            normalize_tbbo_frame,
+            publish_ticks_to_lake,
+        )
 
-    if occupied_minutes is None:
-        occupied = occupied_minutes_in_lake(root, symbols, trading_date)
-    else:
-        occupied = set(occupied_minutes)
-    occupied |= _coverage_minutes(root, trading_date, symbols, dataset, schema)
-    stretches = silence_stretches(trading_date, occupied, symbols)
-    if not stretches:
-        return empty
+        if occupied_minutes is None:
+            occupied = occupied_minutes_in_lake(root, symbols, trading_date)
+        else:
+            occupied = set(occupied_minutes)
+        occupied |= _coverage_minutes(root, trading_date, symbols, dataset, schema)
+        stretches = silence_stretches(trading_date, occupied, symbols)
+        if not stretches:
+            return empty
 
-    estimated_cost = 0.0
-    if remaining_budget is not None:
-        try:
-            estimated_cost = sum(
-                estimate_interval_cost(
-                    client,
-                    list(symbols),
-                    start,
-                    end,
-                    schema=schema,
-                    dataset=dataset,
+        estimated_cost = 0.0
+        if remaining_budget is not None:
+            try:
+                estimated_cost = sum(
+                    estimate_interval_cost(
+                        client,
+                        list(symbols),
+                        start,
+                        end,
+                        schema=schema,
+                        dataset=dataset,
+                    )
+                    for start, end in stretches
                 )
-                for start, end in stretches
-            )
-        except Exception as exc:
-            raise GapFillEstimateError(
-                f"Cost estimate failed for {trading_date.isoformat()}: {exc}"
-            ) from exc
-        if estimated_cost > remaining_budget:
-            raise GapFillBudgetExceeded(
-                f"Estimated ${estimated_cost:.4f} for {len(stretches)} interval(s) "
-                f"exceeds remaining budget ${remaining_budget:.4f}"
-            )
+            except Exception as exc:
+                raise GapFillEstimateError(
+                    f"Cost estimate failed for {trading_date.isoformat()}: {exc}"
+                ) from exc
+            if estimated_cost > remaining_budget:
+                raise GapFillBudgetExceeded(
+                    f"Estimated ${estimated_cost:.4f} for {len(stretches)} interval(s) "
+                    f"exceeds remaining budget ${remaining_budget:.4f}"
+                )
 
-    written = 0
-    for start, end in stretches:
-        batch_id = _interval_identity(trading_date, symbols, dataset, schema, start, end)
-        data = client.timeseries.get_range(
-            dataset=dataset,
-            symbols=list(symbols),
-            schema=schema,
-            start=start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
-            end=end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
-        )
-        frame = normalize_tbbo_frame(data.to_df(), trading_date)
-        if frame.empty:
+        written = 0
+        for start, end in stretches:
+            batch_id = _interval_identity(trading_date, symbols, dataset, schema, start, end)
+            data = client.timeseries.get_range(
+                dataset=dataset,
+                symbols=list(symbols),
+                schema=schema,
+                start=start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+                end=end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+            )
+            frame = normalize_tbbo_frame(data.to_df(), trading_date)
+            if frame.empty:
+                _record_coverage(root, trading_date, symbols, dataset, schema, start, end, batch_id)
+                continue
+            written += publish_ticks_to_lake(
+                frame,
+                lake_root=root,
+                batch_id=batch_id,
+                writer_id="gap_fill",
+                sequence=0,
+                ownership_lock=lock,
+            )
             _record_coverage(root, trading_date, symbols, dataset, schema, start, end, batch_id)
-            continue
-        written += publish_ticks_to_lake(
-            frame,
-            lake_root=root,
-            batch_id=batch_id,
-            writer_id="gap_fill",
-            sequence=0,
-        )
-        _record_coverage(root, trading_date, symbols, dataset, schema, start, end, batch_id)
-    return {
-        "requests": len(stretches),
-        "follow_up_requests": 0,
-        "rows": written,
-        "stretches": [(start.isoformat(), end.isoformat()) for start, end in stretches],
-        "estimated_cost": estimated_cost,
-    }
+        return {
+            "requests": len(stretches),
+            "follow_up_requests": 0,
+            "rows": written,
+            "stretches": [(start.isoformat(), end.isoformat()) for start, end in stretches],
+            "estimated_cost": estimated_cost,
+        }
+    finally:
+        lock.release()
 
 
 def build_parser() -> argparse.ArgumentParser:

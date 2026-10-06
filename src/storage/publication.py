@@ -470,6 +470,7 @@ class LakePublisher:
         writer_id: str = "writer_1",
         compression: str = "snappy",
         file_namespace: Optional[str] = None,
+        ownership_lock: Optional[LakePublisherLock] = None,
     ):
         self.root = Path(root).resolve()
         self.writer_id = writer_id
@@ -488,15 +489,25 @@ class LakePublisher:
         self.staging_dir = self.root / "_staging"
         self.receipts_dir = self.control_dir / "receipts"
         self.intent_dir = self.control_dir / "intent"
-        self.lock = LakePublisherLock(root=self.root, writer_id=self.writer_id)
-        self.lock.acquire()
+        if ownership_lock is not None:
+            if not ownership_lock._is_locked or ownership_lock.root != self.root:
+                raise LakeOwnershipError(
+                    "Publication requires the active publisher lock for the same lake root"
+                )
+            self.lock = ownership_lock
+            self._owns_lock = False
+        else:
+            self.lock = LakePublisherLock(root=self.root, writer_id=self.writer_id)
+            self.lock.acquire()
+            self._owns_lock = True
         try:
             self.control_dir.mkdir(parents=True, exist_ok=True)
             self.staging_dir.mkdir(parents=True, exist_ok=True)
             self.receipts_dir.mkdir(parents=True, exist_ok=True)
             self.intent_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
-            self.lock.release()
+            if self._owns_lock:
+                self.lock.release()
             raise
 
     def publish_batch(
@@ -795,8 +806,10 @@ class LakePublisher:
             raise
 
     def close(self) -> None:
-        """Release single-writer ownership lock."""
-        self.lock.release()
+        """Release single-writer ownership lock when this publisher acquired it."""
+        if getattr(self, "_owns_lock", True):
+            self.lock.release()
+            self._owns_lock = False
 
     def __enter__(self) -> "LakePublisher":
         return self
