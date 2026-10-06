@@ -10,8 +10,71 @@
 - ✅ **v4.2 Tick Lake Qualification & Scoped Signoff** — Phases 28–36 (closed 2026-10-04)
 - ✅ **v4.3 Final Tick-Lake Implementation and Verification** — Phases 37–43 (44–45 waived; closed 2026-10-05)
 - ✅ **v5.0 DuckDB-Free Tick-Only Parquet** — Phases 46–49 (shipped 2026-10-06)
+- 🚧 **v6.0 Bid and Ask Prices** — Phases 50–53 (started 2026-10-06)
 
 ## Phases
+
+### v6.0 Bid and Ask Prices (In Progress)
+
+**Phase numbering continues from v5.0.** v5.0 ended at Phase 49. v6.0 starts at Phase 50.
+
+- [ ] **Phase 50: Quote schema and live capture** - Store bid price and ask price only
+- [ ] **Phase 51: Rewrite the existing lake** - Convert the 7,367 schema v1 files
+- [ ] **Phase 52: Computer-offline gap fill** - Fill all-symbol silence from Databento
+- [ ] **Phase 53: Contract and operator docs** - Describe the new row and the rewrite
+
+### Phase 50: Quote schema and live capture
+**Goal**: New rows store `bid_price` and `ask_price` only, and the inspection chart reads the bid.
+**Depends on**: Nothing (first phase of v6.0)
+**Requirements**: QUOTE-01, QUOTE-02, QUOTE-03
+**Success Criteria** (what must be TRUE):
+  1. A Capital.com quote of bid 100.00 and ask 100.04 is stored as `bid_price` 100.00 and `ask_price` 100.04, with no midpoint and no volume.
+  2. A Databento `tbbo` record stores `bid_px_00` and `ask_px_00` in those columns and drops the trade price and the trade size.
+  3. The dashboard candle for that symbol uses `bid_price`, and the volume histogram is gone.
+**Plans**: 1 plan
+
+Plans:
+- [ ] 50-01: Change schema v2, the live writer, the reader, and the chart together, with failing tests first.
+
+### Phase 51: Rewrite the existing lake
+**Goal**: The operator can convert the lake already on disk without inventing a bid from the old midpoint.
+**Depends on**: Phase 50
+**Requirements**: REWRITE-01, REWRITE-02, REWRITE-03, REWRITE-04, REWRITE-05
+**Success Criteria** (what must be TRUE):
+  1. On a copy of a schema v1 lake, every kept row's `bid_price` equals the old `bid` and `ask_price` equals the old `ask`.
+  2. A file is not swapped until the row count and the value check pass. A stopped run resumes without rewriting finished files.
+  3. A row with a null bid or ask is listed in the quarantine report and is not given the old `price` value.
+  4. The tool refuses to start if a second copy will not fit. After the full check, receipts match the new bytes, `lake.json` says schema version 2, and the retired v1 bytes are deleted.
+**Plans**: 1 plan
+
+Plans:
+- [ ] 51-01: Offline rewrite tool, receipt update, resume, and a fixture-lake test. The production lake is not rewritten from this checkout.
+
+### Phase 52: Computer-offline gap fill
+**Goal**: Naming one day fetches only the stretches where every symbol was silent, and writes bid and ask.
+**Depends on**: Phase 50
+**Requirements**: QFILL-01, QFILL-02, QFILL-03, QFILL-04, QFILL-05
+**Success Criteria** (what must be TRUE):
+  1. A 5-minute stretch in regular hours where every symbol is silent is requested, and a minute where one symbol has a tick is not.
+  2. A 10-minute all-symbol silence in the pre-market is not requested. A 15-minute one is. A stretch crossing 09:30 or 16:00 ET is split.
+  3. A weekend, a full NYSE holiday, and the time after an early close are not requested.
+  4. Returned Databento bid and ask are stored as `bid_price` and `ask_price`. The command refuses to start if the live writer holds the lock.
+**Plans**: 1 plan
+
+Plans:
+- [ ] 52-01: Replace the backward whole-day backfill with the all-symbol silence rule and schema v2 writes.
+
+### Phase 53: Contract and operator docs
+**Goal**: A downstream reader can follow the new columns without reading the old contract.
+**Depends on**: Phases 50, 51, 52
+**Requirements**: DOCS-01
+**Success Criteria** (what must be TRUE):
+  1. The README, the operations guide, and the Repo B contract name `bid_price` and `ask_price`, describe the rewrite, and describe the gap-fill rule.
+  2. Those documents no longer tell a consumer to read `price` or `volume` as the stored quote.
+**Plans**: 1 plan
+
+Plans:
+- [ ] 53-01: Update the three documents and the tests that pin their wording.
 
 ### Completed Milestones
 
@@ -140,7 +203,21 @@ See: [.planning/milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 ## Milestone Backlog
 
-v4.3 backlog items are archived with that milestone. Active backlog for v5.0:
+v5.0 backlog is closed with that milestone. Active backlog for v6.0:
+
+| Candidate | Disposition | Phase |
+|-----------|-------------|-------|
+| Store `bid_price` and `ask_price` only; drop midpoint, `price`, `volume`, and sizes | **Required** | 50 |
+| Inspection chart reads `bid_price`; volume histogram removed | **Required** | 50 |
+| Rewrite the existing 7,367 schema v1 files; do not invent a bid from `price` | **Required** | 51 |
+| Quarantine null bid or ask; update receipts; schema version 2 only at the end | **Required** | 51 |
+| Gap fill one day on all-symbol silence (15 min pre/post, 2 min regular) | **Required** | 52 |
+| Skip weekends, full holidays, and post-early-close time | **Required** | 52 |
+| README, operations guide, and Repo B contract | **Required** | 53 |
+| Bid quantity and ask quantity | **Out of scope** (owner dropped; never stored) | — |
+| Databento `mbp-1` or matching row counts across feeds | **Out of scope** (owner accepted the difference) | — |
+
+v4.3 and v5.0 backlog items are archived with those milestones. Historical v5.0 backlog:
 
 | Candidate | Disposition | Phase |
 |-----------|-------------|-------|

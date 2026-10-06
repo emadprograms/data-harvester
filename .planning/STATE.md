@@ -1,18 +1,16 @@
 ---
-gsd_state_version: 1.0
-milestone: v5.0
-milestone_name: Parquet-Only Storage
-current_phase: 0
-status: Awaiting next milestone
-last_updated: "2026-10-06T04:14:22.396Z"
+gsd_state_version: "1.0"
+milestone: v6.0
+milestone_name: Bid and Ask Prices
+status: planning
+last_updated: "2026-10-06T07:12:17.926Z"
 last_activity: 2026-10-06
-last_activity_desc: Milestone v5.0 completed and archived
 progress:
   total_phases: 4
-  completed_phases: 4
+  completed_phases: 0
   total_plans: 4
-  completed_plans: 4
-  percent: 100
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State: Data Harvester
@@ -22,14 +20,14 @@ progress:
 See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 
 **Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage.
-**Current focus:** Milestone v5.0 Complete — Parquet-only storage active, legacy `.duckdb` files deleted.
+**Current focus:** Milestone v6.0 Bid and Ask Prices — roadmap written, Phase 50 not started.
 
 ## Current Position
 
-Phase: Milestone v5.0 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-10-06 — Milestone v5.0 completed and archived
+Phase: 50 (not started)
+Plan: 50-01
+Status: Roadmap approved from the locked owner design
+Last activity: 2026-10-06 — Milestone v6.0 roadmap written (Phases 50–53)
 
 ## Accumulated Context
 
@@ -53,7 +51,16 @@ Last activity: 2026-10-06 — Milestone v5.0 completed and archived
 - **Schedule: weekdays only (owner, 2026-10-05):** Mon-Fri, 04:00-20:00 ET. No exchange calendar - holidays simply produce no ticks.
 - **Governing principle - maximum declutter (owner, 2026-10-05):** reduce repo clutter as much as possible. Where a choice exists between keeping something "just in case" and removing it, remove it. The dashboard becomes a single Parquet-only view; the ~2 years of bar history is permanently dropped rather than retained; unused subsystems are deleted rather than left dormant.
 - **No retention period for the legacy databases:** `historical.duckdb` and `streaming.duckdb` are deleted immediately after Phase 49 verification. The owner accepted permanent, irrecoverable loss of the bar history.
-- **Stop rule:** one completion report, then the milestone stops. No new phases or follow-up programme.
+- **Stop rule lifted (owner, 2026-10-06):** v5.0 is no longer terminal. v6.0 is the active milestone.
+
+**Milestone v6.0 (active) — Bid and Ask Prices:**
+
+- A row stores `bid_price` and `ask_price` only, plus `timestamp`, `symbol`, `source`, `session`, and `ingest_id`. No midpoint, no `price`, no `volume`, no sizes.
+- Capital.com maps `bid` and `ofr` on every quote change. Databento `tbbo` maps `bid_px_00` and `ask_px_00` when a trade happens. Fewer Databento rows is accepted.
+- The inspection chart uses `bid_price`. The volume histogram is removed.
+- The existing lake is rewritten, not shimmed. `bid` becomes `bid_price`. `ask` becomes `ask_price`. The old `price` column is discarded. A missing bid or ask is quarantined. The tool needs a second copy of disk, holds the writer lock, rewrites receipts, and sets schema version 2 only after every file passes.
+- Gap fill is one target day. A hole is all registry symbols silent together: 15 minutes pre/post, 2 minutes regular hours, inside 04:00–20:00 ET. Weekends, full holidays, and post-early-close time are skipped.
+- Research was skipped. The owner locked this design in conversation before the milestone was opened.
 
 **v4.3 outcomes (closed 2026-10-05, archived):**
 
@@ -63,7 +70,7 @@ Last activity: 2026-10-06 — Milestone v5.0 completed and archived
 
 ### Pending Todos
 
-- None. Milestone 5.0 is closed. Terminal milestone reached — no new phases or follow-up programme.
+- None. v6.0 requirements are in `.planning/REQUIREMENTS.md`.
 
 ### Blockers/Concerns
 
@@ -72,9 +79,9 @@ Last activity: 2026-10-06 — Milestone v5.0 completed and archived
 ## Session Continuity
 
 Completed: 2026-10-06
-Status: Milestone 5.0 complete. The lake is the only store, all 105,894,626 legacy ticks are published in `data/tick_lake/ticks/` (7,367 Parquet files across 19 symbols), verified with zero discrepancies. The legacy `.duckdb` files have been deleted. Background services are active and healthy under supervisor. Completion report saved in `reports/v5.0_completion_report.md`. Per project policy, v5.0 is the terminal milestone and development stops here.
+Status: Milestone v6.0 started. v5.0 remains shipped: 105,894,626 ticks in 7,367 Parquet files. Those files are still schema v1 and must be rewritten in Phase 51. No production rewrite has been run from this checkout.
 
 ## Operator Next Steps
 
-- System is operating in production steady-state. Monitor via `http://localhost:8420` or `./VIEW_STATUS.sh`.
-
+- Do not run a schema rewrite until Phase 51's tool exists and has been tested on a copy.
+- Live services can keep running on schema v1 until that tool is ready. New writes will not match the new columns until Phase 50 lands.
