@@ -837,7 +837,7 @@ def fill_named_day(
     lake_root: Any,
     symbols: Sequence[str],
     occupied_minutes: Optional[Iterable[datetime]] = None,
-    dataset: str = "DBEQ.BASIC",
+    dataset: str = "XNAS.ITCH",
     remaining_budget: Optional[float] = None,
     schema: str = "tbbo",
 ) -> dict:
@@ -1001,7 +1001,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--date", required=True, help="Trading date YYYY-MM-DD")
     parser.add_argument("--lake-root", default=None, help="Lake root. Defaults to the resolved tick lake.")
     parser.add_argument("--max-budget", type=float, default=None, help="Refuse if interval estimates exceed this USD amount.")
-    parser.add_argument("--dataset", default="DBEQ.BASIC")
+    parser.add_argument("--dataset", default="XNAS.ITCH")
     return parser
 
 

@@ -369,25 +369,25 @@ function renderMasterPulseView(data, container) {
 
     if (isExtended) {
       html += `
-        <!-- Phase markers: Pre 04:00, Open 09:30, Close 16:00, Post 20:00 -->
-        <div class="flex justify-between text-[9px] font-mono text-slate-400 px-0.5">
-          <span class="text-amber-400 font-semibold">Pre 04:00</span>
-          <span class="text-emerald-400 font-bold">Open 09:30</span>
-          <span class="text-slate-400">12:00</span>
-          <span class="text-indigo-400 font-bold">Close 16:00</span>
-          <span class="text-rose-400 font-semibold">Post 20:00</span>
+        <!-- Phase markers: Pre 04:00, Open 09:30, Close 16:00, Post 20:00 (true offsets on 960m timeline) -->
+        <div class="relative w-full h-4 text-[9px] font-mono text-slate-400 mt-1">
+          <span class="absolute left-0 text-amber-400 font-semibold">Pre 04:00</span>
+          <span class="absolute left-[34.38%] -translate-x-1/2 text-emerald-400 font-bold whitespace-nowrap">Open 09:30</span>
+          <span class="absolute left-[50.0%] -translate-x-1/2 text-slate-400 whitespace-nowrap">12:00</span>
+          <span class="absolute left-[75.0%] -translate-x-1/2 text-indigo-400 font-bold whitespace-nowrap">Close 16:00</span>
+          <span class="absolute right-0 text-rose-400 font-semibold">Post 20:00</span>
         </div>
       `;
     } else {
       html += `
-        <!-- Time markers (Regular market session) -->
-        <div class="flex justify-between text-[9px] font-mono text-slate-400 px-0.5">
-          <span>09:30 ET</span>
-          <span>11:00</span>
-          <span>12:30</span>
-          <span>14:00</span>
-          <span>15:30</span>
-          <span>16:00 ET</span>
+        <!-- Time markers (Regular market session: 390m timeline) -->
+        <div class="relative w-full h-4 text-[9px] font-mono text-slate-400 mt-1">
+          <span class="absolute left-0 text-emerald-400 font-bold">09:30 ET</span>
+          <span class="absolute left-[23.08%] -translate-x-1/2 whitespace-nowrap">11:00</span>
+          <span class="absolute left-[46.15%] -translate-x-1/2 whitespace-nowrap">12:30</span>
+          <span class="absolute left-[69.23%] -translate-x-1/2 whitespace-nowrap">14:00</span>
+          <span class="absolute left-[92.31%] -translate-x-1/2 whitespace-nowrap">15:30</span>
+          <span class="absolute right-0 text-indigo-400 font-bold">16:00 ET</span>
         </div>
       `;
     }

@@ -93,8 +93,8 @@ def test_quote_02_databento_tbbo_maps_trade_price_to_bid_and_ask(tmp_path):
         "source",
         "session",
     ]
-    assert frame.iloc[0]["bid_price"] == pytest.approx(100.50)
-    assert frame.iloc[0]["ask_price"] == pytest.approx(100.50)
+    assert frame.iloc[0]["bid_price"] == pytest.approx(100.00)
+    assert frame.iloc[0]["ask_price"] == pytest.approx(100.04)
     assert frame.iloc[0]["source"] == "DATABENTO"
     assert "price" not in frame.columns
     assert "volume" not in frame.columns
@@ -106,13 +106,13 @@ def test_quote_02_databento_tbbo_maps_trade_price_to_bid_and_ask(tmp_path):
     assert published == 1
     table = pq.read_table(_parquet_files(lake)[0])
     assert set(table.column_names).isdisjoint(FORBIDDEN_COLUMNS)
-    assert table["bid_price"][0].as_py() == pytest.approx(100.50)
-    assert table["ask_price"][0].as_py() == pytest.approx(100.50)
+    assert table["bid_price"][0].as_py() == pytest.approx(100.00)
+    assert table["ask_price"][0].as_py() == pytest.approx(100.04)
     assert "12" not in {str(v) for v in table.to_pylist()[0].values()}
 
 
-def test_quote_02_drops_databento_when_trade_price_is_missing():
-    """A missing Databento trade price is dropped."""
+def test_quote_02_drops_databento_when_quotes_and_trade_price_missing():
+    """A row with missing quotes and missing trade price is dropped."""
     import pandas as pd
 
     raw = pd.DataFrame(
@@ -121,8 +121,8 @@ def test_quote_02_drops_databento_when_trade_price_is_missing():
             "symbol": ["NVDA"],
             "price": [None],
             "size": [1],
-            "bid_px_00": [100.00],
-            "ask_px_00": [100.04],
+            "bid_px_00": [None],
+            "ask_px_00": [None],
         }
     )
     frame = normalize_tbbo_frame(raw, date(2026, 10, 2))

@@ -17,6 +17,7 @@ from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import List, Tuple, Optional, Dict, Any
 import pandas as pd
+import numpy as np
 from dotenv import load_dotenv
 
 try:
@@ -103,7 +104,7 @@ def estimate_interval_cost(
     start: datetime,
     end: datetime,
     schema: str = "tbbo",
-    dataset: str = "DBEQ.BASIC",
+    dataset: str = "XNAS.ITCH",
 ) -> float:
     """Cost of one actual Databento request window, in USD."""
     start_str = start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
@@ -132,8 +133,11 @@ QUOTE_V2_COLUMNS = ["timestamp", "symbol", "bid_price", "ask_price", "source", "
 def normalize_tbbo_frame(df: pd.DataFrame, trading_date: date) -> pd.DataFrame:
     """Map a Databento tbbo frame onto bid_price and ask_price.
 
-    The trade price and the trade size are dropped. A missing bid or ask is
-    dropped too — it is not replaced by the trade price or by a midpoint.
+    When using primary books like XNAS.ITCH, quotes reflect tight institutional
+    two-sided markets (median spread 5c-10c). When quotes are tight (spread <= $2.00
+    or <= 2% of price), keep authentic bid and ask quotes. If quotes are abnormally
+    wide, crossed, or missing, fall back to trade execution price (or midpoint)
+    to protect against single-book anomalies.
     """
     empty = pd.DataFrame(columns=QUOTE_V2_COLUMNS)
     if df is None or df.empty:
@@ -152,22 +156,35 @@ def normalize_tbbo_frame(df: pd.DataFrame, trading_date: date) -> pd.DataFrame:
     from src.data.gap_fill import session_label
 
     ts_series = pd.to_datetime(frame[ts_col], utc=True)
-    # Databento resting BBO limit quotes (bid_px_00/ask_px_00) frequently contain wide
-    # off-market resting orders on single exchange books. Use the actual executed trade
-    # price (price) for both bid_price and ask_price to guarantee clean, accurate candles.
-    if "price" in frame.columns:
-        trade_price = pd.to_numeric(frame["price"], errors="coerce")
-    else:
-        # Fallback for test fixtures that omit the price column
-        if "bid_px_00" in frame.columns and "ask_px_00" in frame.columns:
-            trade_price = (
-                pd.to_numeric(frame["bid_px_00"], errors="coerce")
-                + pd.to_numeric(frame["ask_px_00"], errors="coerce")
-            ) / 2.0
-        else:
-            trade_price = pd.Series(float("nan"), index=frame.index)
-    bid = trade_price
-    ask = trade_price
+
+    has_bid_ask = "bid_px_00" in frame.columns and "ask_px_00" in frame.columns
+    p = (
+        pd.to_numeric(frame["price"], errors="coerce")
+        if "price" in frame.columns
+        else pd.Series(np.nan, index=frame.index)
+    )
+
+    bid = pd.Series(np.nan, index=frame.index)
+    ask = pd.Series(np.nan, index=frame.index)
+
+    if has_bid_ask:
+        b = pd.to_numeric(frame["bid_px_00"], errors="coerce")
+        a = pd.to_numeric(frame["ask_px_00"], errors="coerce")
+        spread = a - b
+        max_spread = np.maximum(2.0, a * 0.02)
+        valid_quote = (b > 0) & (a > 0) & (spread >= 0) & (spread <= max_spread)
+        bid[valid_quote] = b[valid_quote]
+        ask[valid_quote] = a[valid_quote]
+
+    needs_fallback = bid.isna() | ask.isna()
+    if needs_fallback.any():
+        fallback = p.copy()
+        if has_bid_ask:
+            mid = (b + a) / 2.0
+            fallback = fallback.fillna(mid)
+        bid[needs_fallback] = fallback[needs_fallback]
+        ask[needs_fallback] = fallback[needs_fallback]
+
     session = ts_series.map(lambda ts: session_label(ts.to_pydatetime(), trading_date))
     norm_df = pd.DataFrame(
         {

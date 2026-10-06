@@ -239,8 +239,8 @@ def test_qfill_04_requests_tbbo_stretches_and_stores_bid_and_ask(tmp_path):
     assert "bid_price" in table.column_names
     assert "ask_price" in table.column_names
     assert "price" not in table.column_names
-    assert table["bid_price"][0].as_py() == pytest.approx(100.50)
-    assert table["ask_price"][0].as_py() == pytest.approx(100.50)
+    assert table["bid_price"][0].as_py() == pytest.approx(100.00)
+    assert table["ask_price"][0].as_py() == pytest.approx(100.04)
     assert result["requests"] == 1
     assert result["follow_up_requests"] == 0
 
@@ -832,7 +832,7 @@ def test_qfill_04_receipts_carry_the_original_request_scope(tmp_path):
     for record in stored:
         assert record["request"]["batch_id"] == record["batch_id"]
         assert record["request"]["date"] == NORMAL_DAY.isoformat()
-        assert record["request"]["dataset"] == "DBEQ.BASIC"
+        assert record["request"]["dataset"] == "XNAS.ITCH"
         assert record["request"]["schema"] == "tbbo"
         assert record["request"]["symbols"] == sorted(SYMBOLS)
     assert {record["request"]["start"][11:16] for record in stored} == {"10:01", "10:11"}
@@ -1062,7 +1062,7 @@ def _pending_record(
     *,
     symbols=None,
     day: date = NORMAL_DAY,
-    dataset: str = "DBEQ.BASIC",
+    dataset: str = "XNAS.ITCH",
     schema: str = "tbbo",
     start: datetime = None,
     end: datetime = None,
@@ -1094,7 +1094,7 @@ def _write_coverage_payload(lake: Path, payload) -> None:
     _coverage_file(lake).write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _coverage_record(symbols, *, day: date = NORMAL_DAY, dataset: str = "DBEQ.BASIC",
+def _coverage_record(symbols, *, day: date = NORMAL_DAY, dataset: str = "XNAS.ITCH",
                      schema: str = "tbbo") -> dict:
     return {
         "date": day.isoformat(),
