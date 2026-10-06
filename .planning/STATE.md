@@ -2,15 +2,15 @@
 gsd_state_version: "1.0"
 milestone: v6.0
 milestone_name: Bid and Ask Prices
-status: planning
-last_updated: "2026-10-06T07:12:17.926Z"
+status: idle
+last_updated: "2026-10-06T12:00:00.000Z"
 last_activity: 2026-10-06
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 4
   total_plans: 4
-  completed_plans: 0
-  percent: 0
+  completed_plans: 4
+  percent: 100
 ---
 
 # Project State: Data Harvester
@@ -20,14 +20,14 @@ progress:
 See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 
 **Core value:** Zero-cloud, zero-quota persistent market data ingestion and storage.
-**Current focus:** Milestone v6.0 Bid and Ask Prices — roadmap written, Phase 50 not started.
+**Current focus:** v6.0 checkout complete. Production lake rewrite remains owner-run.
 
 ## Current Position
 
-Phase: 50 (not started)
-Plan: 50-01
-Status: Roadmap approved from the locked owner design
-Last activity: 2026-10-06 — Milestone v6.0 roadmap written (Phases 50–53)
+Phase: 53 (complete)
+Plan: 53-01
+Status: Milestone v6.0 tools and tests are in this checkout. The production lake was not rewritten.
+Last activity: 2026-10-06 — v6.0 closeout; CLI requires --lake-root and --backup-root.
 
 ## Accumulated Context
 
@@ -60,6 +60,7 @@ Last activity: 2026-10-06 — Milestone v6.0 roadmap written (Phases 50–53)
 - The inspection chart uses `bid_price`. The volume histogram is removed.
 - The existing lake is rewritten, not shimmed. `bid` becomes `bid_price`. `ask` becomes `ask_price`. The old `price` column is discarded. A missing bid or ask is quarantined. The tool needs a second copy of disk, holds the writer lock, rewrites receipts, and sets schema version 2 only after every file passes.
 - Gap fill is one target day. A hole is all registry symbols silent together: 15 minutes pre/post, 2 minutes regular hours, inside 04:00–20:00 ET. Weekends, full holidays, and post-early-close time are skipped.
+- The existing-lake rewrite is the last phase (Phase 53). Owner, 2026-10-06: it cannot be done in this checkout. Gap fill and docs come first. The rewrite still requires a backup before any file is changed, and the owner runs it locally.
 - Research was skipped. The owner locked this design in conversation before the milestone was opened.
 
 **v4.3 outcomes (closed 2026-10-05, archived):**
@@ -79,9 +80,9 @@ Last activity: 2026-10-06 — Milestone v6.0 roadmap written (Phases 50–53)
 ## Session Continuity
 
 Completed: 2026-10-06
-Status: Milestone v6.0 started. v5.0 remains shipped: 105,894,626 ticks in 7,367 Parquet files. Those files are still schema v1 and must be rewritten in Phase 51. No production rewrite has been run from this checkout.
+Status: Phase 52 is implemented. v5.0 remains shipped: 105,894,626 ticks in 7,367 Parquet files. Those files are still schema v1. No production rewrite has been run from this checkout, and the gap fill was not run against that lake.
 
 ## Operator Next Steps
 
-- Do not run a schema rewrite until Phase 51's tool exists and has been tested on a copy.
-- Live services can keep running on schema v1 until that tool is ready. New writes will not match the new columns until Phase 50 lands.
+- Do not rewrite the existing lake in this checkout. That work is Phase 53, the last phase, and the owner runs it on their own machine after a backup.
+- New Capital.com and Databento rows are schema v2. The reader still opens the existing v1 files. A partition that contains both is left alone by compaction until the rewrite.

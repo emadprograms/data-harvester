@@ -1,13 +1,12 @@
 """
 Databento tick gap-filler for the Parquet tick lake.
 
-Iteratively backfills historical tick-by-tick TBBO (Trade and Top-of-Book Quotes)
-one trading day at a time going backward from the most recent session. Ticks are
-published into the lake through the product writer, so the lake's maintenance and
-publisher fences apply. Strictly targets single-stock symbols (excluding all ETFs,
-crypto, and commodities) within the approved 19-symbol scope, during the last 30
-minutes of premarket (09:00-09:30 ET) and the regular session (09:30-16:00 ET).
-Tracks cost before every query to strictly respect the credit budget.
+Fills one named day at a time, going backward from the most recent session.
+A day is not downloaded whole. Databento tbbo is requested only for stretches
+where every active symbol is silent, inside 04:00-20:00 ET. Returned bid and
+ask are appended as schema v2. Existing files are not rewritten. The publisher
+lock is checked before any Databento call. Cost is still checked before each
+day so the credit budget is respected.
 """
 import os
 from pathlib import Path
@@ -168,6 +167,57 @@ def is_day_already_backfilled(trading_date: date, symbols: Optional[List[str]] =
     return False
 
 
+QUOTE_V2_COLUMNS = ["timestamp", "symbol", "bid_price", "ask_price", "source", "session"]
+
+
+def normalize_tbbo_frame(df: pd.DataFrame, trading_date: date) -> pd.DataFrame:
+    """Map a Databento tbbo frame onto bid_price and ask_price.
+
+    The trade price and the trade size are dropped. A missing bid or ask is
+    dropped too — it is not replaced by the trade price or by a midpoint.
+    """
+    empty = pd.DataFrame(columns=QUOTE_V2_COLUMNS)
+    if df is None or df.empty:
+        return empty
+
+    frame = df.copy()
+    if "ts_event" not in frame.columns and "ts_recv" not in frame.columns:
+        frame = frame.reset_index()
+    if "symbol" not in frame.columns:
+        frame = frame.reset_index()
+
+    ts_col = "ts_event" if "ts_event" in frame.columns else "ts_recv"
+    if ts_col not in frame.columns or "symbol" not in frame.columns:
+        return empty
+
+    _start_utc, reg_open_utc, _end_utc = get_day_trading_bounds(trading_date)
+    ts_series = pd.to_datetime(frame[ts_col], utc=True)
+    bid = (
+        pd.to_numeric(frame["bid_px_00"], errors="coerce")
+        if "bid_px_00" in frame.columns
+        else pd.Series(float("nan"), index=frame.index)
+    )
+    ask = (
+        pd.to_numeric(frame["ask_px_00"], errors="coerce")
+        if "ask_px_00" in frame.columns
+        else pd.Series(float("nan"), index=frame.index)
+    )
+    session = ts_series.map(lambda ts: "PRE" if ts < reg_open_utc else "REG")
+    norm_df = pd.DataFrame(
+        {
+            "timestamp": ts_series.dt.strftime("%Y-%m-%d %H:%M:%S.%f"),
+            "symbol": frame["symbol"].astype(str).str.upper(),
+            "bid_price": bid,
+            "ask_price": ask,
+            "source": "DATABENTO",
+            "session": session,
+        }
+    )
+    norm_df = norm_df.dropna(subset=["timestamp", "symbol", "bid_price", "ask_price"])
+    norm_df = norm_df[(norm_df["bid_price"] > 0) & (norm_df["ask_price"] > 0)]
+    return norm_df.reset_index(drop=True)
+
+
 def fetch_and_normalize_day(
     client: Any,
     symbols: List[str],
@@ -176,14 +226,13 @@ def fetch_and_normalize_day(
     dataset: str = "DBEQ.BASIC"
 ) -> pd.DataFrame:
     """
-    Downloads tick TBBO data from Databento and maps it into the lake's tick schema:
-    [timestamp, symbol, price, volume, bid, ask, source, session]
+    Downloads tick TBBO data from Databento and maps it into schema v2:
+    [timestamp, symbol, bid_price, ask_price, source, session]
     """
-    start_utc, reg_open_utc, end_utc = get_day_trading_bounds(trading_date)
+    start_utc, _reg_open_utc, end_utc = get_day_trading_bounds(trading_date)
     start_str = start_utc.strftime("%Y-%m-%dT%H:%M:%S")
     end_str = end_utc.strftime("%Y-%m-%dT%H:%M:%S")
 
-    # Fetch from Databento timeseries
     data = client.timeseries.get_range(
         dataset=dataset,
         symbols=symbols,
@@ -191,51 +240,7 @@ def fetch_and_normalize_day(
         start=start_str,
         end=end_str
     )
-
-    df = data.to_df()
-    if df.empty:
-        return pd.DataFrame(columns=["timestamp", "symbol", "price", "volume", "bid", "ask", "source", "session"])
-
-    # Reset index if ts_event or ts_recv is in the index
-    if "ts_event" not in df.columns:
-        df = df.reset_index()
-
-    # Determine timestamp column (prefer ts_event over ts_recv)
-    ts_col = "ts_event" if "ts_event" in df.columns else "ts_recv"
-    ts_series = pd.to_datetime(df[ts_col], utc=True)
-
-    # Format timestamp string with microseconds for the lake schema
-    timestamps = ts_series.dt.strftime("%Y-%m-%d %H:%M:%S.%f")
-
-    # Map prices: use trade execution price; if missing or 0, fallback to midpoint of bid/ask
-    price = df["price"].astype(float)
-    bid = df["bid_px_00"].astype(float) if "bid_px_00" in df.columns else pd.Series(None, index=df.index)
-    ask = df["ask_px_00"].astype(float) if "ask_px_00" in df.columns else pd.Series(None, index=df.index)
-
-    # Where trade price is zero or null, use midpoint
-    midpoint = (bid + ask) / 2.0
-    price = price.where(price > 0, midpoint)
-
-    # Volume (trade size)
-    volume = df["size"].astype(float).fillna(1.0) if "size" in df.columns else pd.Series(1.0, index=df.index)
-
-    # Session classification: PRE vs REG
-    session = ts_series.apply(lambda ts: "PRE" if ts < reg_open_utc else "REG")
-
-    norm_df = pd.DataFrame({
-        "timestamp": timestamps,
-        "symbol": df["symbol"].astype(str).str.upper(),
-        "price": price.round(4),
-        "volume": volume.round(2),
-        "bid": bid.round(4),
-        "ask": ask.round(4),
-        "source": "DATABENTO",
-        "session": session
-    })
-
-    # Drop any records with completely null price
-    norm_df = norm_df.dropna(subset=["price", "symbol", "timestamp"])
-    return norm_df
+    return normalize_tbbo_frame(data.to_df(), trading_date)
 
 
 def publish_ticks_to_lake(df: pd.DataFrame, lake_root: Optional[Any] = None) -> int:
@@ -279,14 +284,16 @@ def run_databento_backfill(
     max_days: int = 40,
     start_date: Optional[date] = None,
     client: Optional[Any] = None,
-    progress_callback: Optional[Any] = None
+    progress_callback: Optional[Any] = None,
+    lake_root: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
-    Orchestrates the backward day-by-day tick backfill loop:
-    1. Targets single-stock symbols only.
-    2. Starts from yesterday (most recent closed session) and goes backward.
-    3. Checks cost before every day and stops if budget is reached.
-    4. Publishes into the Parquet tick lake.
+    Walks backward one named day at a time.
+
+    The publisher lock is checked before any Databento call. Each day requests
+    only all-symbol silence and appends schema v2 rows. Existing files are not
+    rewritten. Cost is checked before each day so the credit budget still stops
+    the walk.
     """
     if client is None:
         client = get_databento_client()
@@ -307,10 +314,16 @@ def run_databento_backfill(
     print(f"============================================================", flush=True)
     print(f"🚀 DATABENTO TICK BACKFILL INITIALIZED", flush=True)
     print(f"Target Symbols ({len(symbols)}): {', '.join(symbols)}", flush=True)
-    print(f"Hours: 09:00 ET -> 16:00 ET (Last 30m Pre-Market + Regular)", flush=True)
+    print(f"Hours: 04:00 ET -> 20:00 ET, all-symbol silence only", flush=True)
     print(f"Credit Budget Cap: ${max_budget:.2f} USD", flush=True)
     print(f"Starting from: {start_date} going backward", flush=True)
     print(f"============================================================", flush=True)
+
+    from src.data.gap_fill import fill_named_day, is_full_nyse_holiday, refuse_if_lake_locked
+    from src.storage.config import resolve_tick_lake_root
+
+    root = Path(lake_root) if lake_root is not None else resolve_tick_lake_root()
+    refuse_if_lake_locked(root)
 
     curr_day = start_date
     while len(completed_days) < max_days:
@@ -326,9 +339,8 @@ def run_databento_backfill(
         curr_day -= timedelta(days=1)
         day_str = trading_day.strftime("%Y-%m-%d")
 
-        # Check if already backfilled
-        if is_day_already_backfilled(trading_day, symbols):
-            print(f"⏩ [{day_str}] Already backfilled in the tick lake. Skipping.", flush=True)
+        if is_full_nyse_holiday(trading_day):
+            print(f"⏩ [{day_str}] Full NYSE holiday. Skipping.", flush=True)
             continue
 
         # Estimate cost for this trading day
@@ -338,35 +350,41 @@ def run_databento_backfill(
             print(f"⚠️ [{day_str}] Cost estimate failed (holiday or market closed): {e}. Skipping.", flush=True)
             continue
 
-        if day_cost == 0.0:
-            print(f"ℹ️ [{day_str}] Market holiday / zero billable size. Skipping.", flush=True)
-            continue
-
+        # A zero estimate for the old regular-session window must not hide a
+        # pre-market or post-market silence. Holidays are skipped above.
         # Check budget limit
         if accumulated_cost + day_cost > max_budget:
             print(f"🛑 Budget limit reached! (Next day ${day_cost:.2f} would exceed budget of ${max_budget:.2f}). Stopping.", flush=True)
             break
 
-        # Fetch and ingest
-        print(f"📥 [{day_str}] Fetching TBBO ticks... (Estimated Cost: ${day_cost:.3f} USD)", flush=True)
-        df_day = fetch_and_normalize_day(client, symbols, trading_day, schema="tbbo")
-
-        if not df_day.empty:
-            ticks_inserted = publish_ticks_to_lake(df_day)
+        # Request only all-symbol silence. Existing files are not rewritten.
+        print(f"📥 [{day_str}] Filling silent stretches... (Estimated Cost: ${day_cost:.3f} USD)", flush=True)
+        result = fill_named_day(
+            trading_day,
+            client=client,
+            lake_root=root,
+            symbols=symbols,
+        )
+        ticks_inserted = int(result["rows"])
+        if result["requests"] or ticks_inserted:
             accumulated_cost += day_cost
             total_ticks_ingested += ticks_inserted
             completed_days.append(day_str)
             rem_budget = max_budget - accumulated_cost
-            print(f"✅ [{day_str}] Ingested {ticks_inserted:,} ticks. Spent so far: ${accumulated_cost:.3f} | Remaining budget: ${rem_budget:.3f}", flush=True)
+            print(
+                f"✅ [{day_str}] Requested {result['requests']} stretches, ingested {ticks_inserted:,} ticks. "
+                f"Spent so far: ${accumulated_cost:.3f} | Remaining budget: ${rem_budget:.3f}",
+                flush=True,
+            )
         else:
-            print(f"ℹ️ [{day_str}] No ticks returned.", flush=True)
+            print(f"ℹ️ [{day_str}] No all-symbol silence to request.", flush=True)
 
         if progress_callback:
             progress_callback({
                 "date": day_str,
                 "day_cost": day_cost,
                 "accumulated_cost": accumulated_cost,
-                "ticks": len(df_day),
+                "ticks": ticks_inserted,
                 "total_ticks": total_ticks_ingested
             })
 

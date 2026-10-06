@@ -2,11 +2,11 @@
   "contract": "1.0.0",
   "flavor": "core",
   "milestone": "v6.0",
-  "phases": [],
+  "phases": ["50", "51", "52", "53"],
   "next": {
-    "command": "/gsd-discuss-phase 50",
-    "label": "Discuss Phase 50",
-    "reason": "Milestone v6.0 roadmap is written. Phase 50 is the quote schema."
+    "command": null,
+    "label": "Idle",
+    "reason": "v6.0 checkout work is complete. The owner runs the production rewrite locally with explicit --lake-root and --backup-root."
   },
-  "updated_at": "2026-10-06T07:12:17.929Z"
+  "updated_at": "2026-10-06T19:00:00.000Z"
 }

@@ -1,9 +1,11 @@
 # Partitioned Parquet Tick Lake: Production Operations Guide
 
-**Document Version:** 2.0.0
-**Phase / Milestone:** Originally Phase 21 (P8) / Milestone v4.0 — revised for Milestone v5.0 (Parquet-only storage)
-**Last reviewed:** 2026-10-05
+**Document Version:** 2.1.0
+**Phase / Milestone:** Originally Phase 21 (P8) / Milestone v4.0 — revised for Milestone v5.0 (Parquet-only storage) and Milestone v6.0 (bid and ask prices)
+**Last reviewed:** 2026-10-06
 **Applicability:** Production Operators, Site Reliability Engineers, Platform Architects, Quant Analytics Teams (Repo B).
+
+**Changes in 2.1.0:** new rows store `bid_price` and `ask_price`. Do not read `price` or `volume` as the stored quote. The lake already on disk is still schema v1. The rewrite is the last phase and is not to be run yet. Gap fill requests only all-symbol silence. Physical schema remains §2.5; backend selection remains §2.6.
 
 **Changes in 2.0.0:** v5.0 deleted the disk-database layer (`src/database/`) and the historical 1-minute bar archive. The lake is the only store; §2.6 documents the rule with no legacy backend, §3 is macOS-only (`launchd`), and §5.4 records the post-migration deletion of the legacy database files.
 
@@ -143,16 +145,39 @@ The tick lake layout strictly segregates queryable data, staging areas, administ
 - **Safe Symbol Encoding:** Symbols containing special characters (e.g., `/`, `:`, `%`, space) are uppercase percent-encoded (e.g., `EUR/USD` $\to$ `symbol=EUR%2FUSD`). Standard ASCII alphanumeric characters, periods, underscores, and hyphens (`[A-Za-z0-9._-]`) remain unescaped.
 - **Partition date is UTC event date:** `date=<YYYY-MM-DD>` is the UTC event date (`CAST(timestamp AS DATE)`), not local exchange time. Late-arriving ticks land in their original event-date partition.
 
+### 2.4.1 Stored quote and gap fill
+
+New rows store `bid_price` and `ask_price` only, plus `timestamp`, `symbol`, `source`, `session`, and `ingest_id`. Do not read `price` or `volume` as the stored quote. Capital.com stores its quote-change bid and ask. Databento `tbbo` stores `bid_px_00` as `bid_price` and `ask_px_00` as `ask_price`. Fewer Databento rows than Capital.com rows is accepted.
+
+The existing lake is still schema v1. Those files still contain `price`, `volume`, `bid`, and `ask`. The quote in a schema v1 file is `bid` and `ask`, not `price` or `volume`. The rewrite that copies `bid` to `bid_price` and `ask` to `ask_price` is the last phase. Do not run that rewrite. It is not available from this checkout, and it is not to be run yet.
+
+Gap fill names one day and requests Databento `tbbo` only for stretches inside 04:00-20:00 ET where every active registry symbol is silent. A minute where one symbol has a tick is not requested. Pre-market (04:00-09:30 ET) and post-market (16:00-20:00 ET) count at 15 minutes or more. Regular hours (09:30-16:00 ET) count at 2 minutes or more. A stretch that crosses 09:30 or 16:00 is split, and each piece uses its own rule. Weekends, full NYSE holidays, and the time after an official early close (13:00 ET) are not requested. Gap fill does not start while the live writer holds the publisher lock. It appends new rows and does not rewrite existing files.
+
+A new-row candle uses `bid_price`. This query does not match files already on disk:
+
+```sql
+SELECT
+    time_bucket(INTERVAL '1 minute', timestamp) AS bucket_time,
+    arg_min(bid_price, (timestamp, ingest_id)) AS open,
+    max(bid_price) AS high,
+    min(bid_price) AS low,
+    arg_max(bid_price, (timestamp, ingest_id)) AS close
+FROM read_parquet(?)
+GROUP BY bucket_time
+```
+
 ### 2.5 Physical Schema v1 (9 columns)
+
+Files already on disk use this table. `price` and `volume` in it are not the stored quote.
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
 | `timestamp` | `TIMESTAMP` (naive UTC, µs) | No | Parquet `timestamp('us')` |
 | `symbol` | `VARCHAR` | No | Canonical uppercase display symbol. Physically written dictionary-encoded (`dictionary<string, int32>`); reads back as text. |
-| `price` | `DOUBLE` | No | Observed quote/trade price |
-| `volume` | `DOUBLE` | Yes | Coalesces to `1.0` during resampling when null |
-| `bid` | `DOUBLE` | Yes | Best bid |
-| `ask` | `DOUBLE` | Yes | Best ask |
+| `price` | `DOUBLE` | No | Retired value on schema v1 files. Not the stored quote. |
+| `volume` | `DOUBLE` | Yes | Present only on schema v1 files. Not the stored quote. |
+| `bid` | `DOUBLE` | Yes | Best bid. This is the quote on a schema v1 file. |
+| `ask` | `DOUBLE` | Yes | Best ask. This is the quote on a schema v1 file. |
 | `source` | `VARCHAR` | Yes | Provider identifier (`CAPITAL`, `BINANCE`, …) |
 | `session` | `VARCHAR` | Yes | Session tag (`REG`, `PRE`, `POST`, …) |
 | `ingest_id` | `VARCHAR` | No | Stable unique ingestion identity (writer-generated string; migrated rows use `mig_<symbol>_<YYYYMMDD>_<index:08d>`) |
@@ -518,3 +543,4 @@ purge fencing, and multi-process reader concurrency with zero file locks.
 | 1.0.0 | 2026-10-03 | v4.0 (P8) | Initial production operations guide for the Partitioned Parquet Tick Lake. |
 | 1.1.0 | 2026-10-03 | v4.1 | Corrected defaults/paths/filenames to match shipped code; documented unwired `STREAM_*` knobs; added §7 verification & hardening and §8 history; documented compaction/migration status honestly. |
 | 2.0.0 | 2026-10-05 | v5.0 | Removed the legacy backend from §2.6, dropped Windows service scripts, rewrote §5 as a one-time owner-run migration plus store deletion, replaced §7 with the v5.0 structural guards. |
+| 2.1.0 | 2026-10-06 | v6.0 | New rows store `bid_price` and `ask_price`. The lake already on disk is still schema v1. The rewrite is the last phase and is not to be run yet. Physical schema remains §2.5; backend selection remains §2.6. |

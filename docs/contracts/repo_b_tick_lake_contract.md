@@ -1,10 +1,12 @@
 # Repo B Tick Lake Read Contract
 
-**Document Version:** 1.4.0
-**Phase / Milestone:** Originally Phase 19 (P4) / Milestone v4.0 — reviewed and hardened in Milestone v4.1 (Phases 22–27), Milestone v4.3 (Finding C43-07) and Milestone v5.0 (Parquet-only storage)
-**Last reviewed:** 2026-10-05
+**Document Version:** 1.5.0
+**Phase / Milestone:** Originally Phase 19 (P4) / Milestone v4.0 — reviewed and hardened in Milestone v4.1 (Phases 22–27), Milestone v4.3 (Finding C43-07), Milestone v5.0 (Parquet-only storage), and Milestone v6.0 (bid and ask prices)
+**Last reviewed:** 2026-10-06
 **Target Audience:** Repo B engineers, quantitative research teams, backtesting & simulation consumers.
 **Dependencies on `data-harvester`:** **NONE** (zero library imports required; uses standard `duckdb` and `pyarrow`).
+
+**Changes in 1.5.0 (Milestone v6.0):** new rows store `bid_price` and `ask_price`. Do not read `price` or `volume` as the stored quote. The lake already on disk is still schema v1. The rewrite is the last phase and is not to be run yet. Gap fill requests only all-symbol silence.
 
 **Changes in 1.4.0 (Milestone v5.0):** the legacy `streaming.duckdb` store was migrated into the lake and deleted, so §1 now states plainly that no disk database exists; the historical bar archive is gone and candles are always resampled from ticks.
 
@@ -84,32 +86,55 @@ To guarantee fast query times and avoid unnecessary filesystem traversal:
 
 ---
 
-## 3. Physical Schema v1
+## 3. Stored quote, schema v1 files, and gap fill
 
-Every Parquet file in `ticks/` adheres strictly to **Lake Schema v1**.
+New rows store `bid_price` and `ask_price` only, plus `timestamp`, `symbol`, `source`, `session`, and `ingest_id`. Do not read `price` or `volume` as the stored quote. Capital.com stores its quote-change bid and ask. Databento `tbbo` stores `bid_px_00` as `bid_price` and `ask_px_00` as `ask_price`. Fewer Databento rows than Capital.com rows is accepted.
 
-### 3.1 Column Specifications
+The existing lake is still schema v1. Those files still contain `price`, `volume`, `bid`, and `ask`. The quote in a schema v1 file is `bid` and `ask`, not `price` or `volume`. The rewrite that copies `bid` to `bid_price` and `ask` to `ask_price` is the last phase. Do not run that rewrite. It is not available from this checkout, and it is not to be run yet.
+
+Gap fill names one day and requests Databento `tbbo` only for stretches inside 04:00-20:00 ET where every active registry symbol is silent. A minute where one symbol has a tick is not requested. Pre-market (04:00-09:30 ET) and post-market (16:00-20:00 ET) count at 15 minutes or more. Regular hours (09:30-16:00 ET) count at 2 minutes or more. A stretch that crosses 09:30 or 16:00 is split, and each piece uses its own rule. Weekends, full NYSE holidays, and the time after an official early close (13:00 ET) are not requested. Gap fill does not start while the live writer holds the publisher lock. It appends new rows and does not rewrite existing files.
+
+A new-row candle uses `bid_price`. This query does not match files already on disk:
+
+```sql
+SELECT
+    time_bucket(INTERVAL '1 minute', timestamp) AS bucket_time,
+    arg_min(bid_price, (timestamp, ingest_id)) AS open,
+    max(bid_price) AS high,
+    min(bid_price) AS low,
+    arg_max(bid_price, (timestamp, ingest_id)) AS close
+FROM read_parquet(?)
+GROUP BY bucket_time
+```
+
+### 3.1 Physical Schema v1
+
+Files already on disk use this table. `price` and `volume` in it are not the stored quote. New rows do not use this column set. `lake.json` remains schema version 1 until the last-phase rewrite, which must not be run yet.
+
+### 3.2 Column Specifications
 
 | Column Name | DuckDB Physical Type | Arrow Physical Type | Nullable | Description |
 |---|---|---|---|---|
 | `timestamp` | `TIMESTAMP` (naive UTC) | `timestamp('us')` | **No** | Microsecond UTC timestamp of the quote event. Zero timezone offset. |
 | `symbol` | `VARCHAR` | `dictionary<values=string, indices=int32>` | **No** | Canonical uppercase display symbol (e.g. `'AAPL'`, `'NVDA'`). Written dictionary-encoded; it reads back as text, but a schema that asserts plain `string` will not match. |
-| `price` | `DOUBLE` | `float64` | **No** | Observed quote/trade price (> 0.0). |
-| `volume` | `DOUBLE` | `float64` | Yes | Traded volume or quote depth. **Capital observation semantics:** When null, volume coalesces to `1.0`. |
-| `bid` | `DOUBLE` | `float64` | Yes | Current best bid price. |
-| `ask` | `DOUBLE` | `float64` | Yes | Current best ask price. |
+| `price` | `DOUBLE` | `float64` | **No** | Retired value on schema v1 files. Not the stored quote. |
+| `volume` | `DOUBLE` | `float64` | Yes | Present only on schema v1 files. Not the stored quote. A null in these old files coalesces to `1.0` in the historical example below. |
+| `bid` | `DOUBLE` | `float64` | Yes | Best bid. This is the quote on a schema v1 file. |
+| `ask` | `DOUBLE` | `float64` | Yes | Best ask. This is the quote on a schema v1 file. |
 | `source` | `VARCHAR` | `string` | Yes | Data provider identifier (e.g. `'CAPITAL'`, `'BINANCE'`). |
 | `session` | `VARCHAR` | `string` | Yes | Market session tag (e.g. `'REG'`, `'PRE'`, `'POST'`). |
 | `ingest_id` | `VARCHAR` | `string` | **No** | Globally unique stable identifier for the tick (e.g. `w1_1727879400000000_0001`). |
 
-### 3.2 Row Ordering Key
+### 3.3 Row Ordering Key
 
 Rows within each Parquet file are strictly sorted by the composite key:
 $$\text{ORDER BY } \text{timestamp ASC}, \text{ingest_id ASC}$$
 
-### 3.3 Deterministic Resampling Tie-Breaking
+### 3.4 Deterministic Resampling Tie-Breaking
 
-When resampling ticks into OHLCV bars (e.g. 1-minute or 5-minute candles), multiple ticks may share the identical microsecond `timestamp`. To ensure 100% deterministic, reproducible candle calculations across independent systems:
+The formulas in this subsection describe files already on disk. They are not the stored quote. New rows resample from `bid_price`. Do not read `price` or `volume` as the stored quote.
+
+When resampling ticks from a schema v1 file, multiple ticks may share the identical microsecond `timestamp`. To ensure 100% deterministic, reproducible candle calculations across independent systems:
 - **Open Price:** Price of the tick with `MIN(timestamp, ingest_id)`:
   $$\text{open} = \text{arg\_min}(\text{price}, (\text{timestamp}, \text{ingest\_id}))$$
 - **Close Price:** Price of the tick with `MAX(timestamp, ingest_id)`:
@@ -125,7 +150,9 @@ When resampling ticks into OHLCV bars (e.g. 1-minute or 5-minute candles), multi
 
 The following complete Python snippet demonstrates how Repo B can query the tick lake using only standard `duckdb`.
 
-### 4.1 Resampling OHLCV Candles (1-Minute and 5-Minute)
+### 4.1 Resampling candles from files already on disk
+
+The example below reads files already on disk. Those files are still schema v1. `price` and `volume` in that example are not the stored quote. New rows use `bid_price` and `ask_price`. Do not run the rewrite.
 
 ```python
 from datetime import date, datetime
@@ -255,6 +282,8 @@ class RepoBTickReader:
 ```
 
 ### 4.2 Querying Reverse-Chronological Stream Tape
+
+This example also reads files already on disk. `price` and `volume` in it are not the stored quote.
 
 ```python
 def query_tape(lake_root: Path, symbol: str, limit: int = 50) -> List[Dict[str, Any]]:
@@ -468,3 +497,4 @@ atomic rename and never rewritten in place. The consequences for consumers are:
 | 1.2.0 | 2026-10-04 | v4.2 (Phase 33) | Fixed symbol encoding rule and example, corrected the physical `symbol` type, fixed the PyArrow example, and documented snapshot semantics (§7.3). |
 | 1.3.0 | 2026-10-04 | v4.3 (C43-07) | Retracted §7.3 silent-partial claim (documented duckdb.IOException on missing files), updated §7.1 fail-fast root validation contract, and documented timezone-aware / half-open interval semantics. |
 | 1.4.0 | 2026-10-05 | v5.0 | Parquet-only storage: the legacy disk database no longer exists; candles are always resampled from ticks. |
+| 1.5.0 | 2026-10-06 | v6.0 | New rows store `bid_price` and `ask_price`. The lake already on disk is still schema v1. The rewrite is the last phase and is not to be run yet. |

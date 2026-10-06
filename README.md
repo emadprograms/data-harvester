@@ -2,7 +2,26 @@
 
 A high-performance market data harvesting, 24/7 live tick streaming, and telemetry observability engine powered by a **Partitioned Parquet Tick Lake**, zero-lock multi-process concurrency, sub-100ms in-memory **DuckDB** analytical resampling, and interactive financial charting.
 
-**Current milestone:** v5.0 — *Parquet-only storage (Option A)*. The partitioned Parquet tick lake is the **only** store: no runtime path creates a `.duckdb` file, DuckDB survives purely as the in-memory query engine behind `TickLakeReader`, and the streaming scope is the 19 approved US equities, weekdays 04:00–20:00 ET.
+**Current milestone:** v6.0 is in progress. New rows store bid and ask prices. The lake already on disk is still schema v1. v5.0 remains the storage baseline: the partitioned Parquet tick lake is the **only** store, no runtime path creates a `.duckdb` file, and the streaming scope is the 19 approved US equities, weekdays 04:00–20:00 ET.
+
+New rows store `bid_price` and `ask_price` only, plus `timestamp`, `symbol`, `source`, `session`, and `ingest_id`. Do not read `price` or `volume` as the stored quote. Capital.com stores its quote-change bid and ask. Databento `tbbo` stores `bid_px_00` as `bid_price` and `ask_px_00` as `ask_price`. Fewer Databento rows than Capital.com rows is accepted.
+
+The existing lake is still schema v1. Those files still contain `price`, `volume`, `bid`, and `ask`. The quote in a schema v1 file is `bid` and `ask`, not `price` or `volume`. The rewrite that copies `bid` to `bid_price` and `ask` to `ask_price` is the last phase. Do not run that rewrite. It is not available from this checkout, and it is not to be run yet.
+
+Gap fill names one day and requests Databento `tbbo` only for stretches inside 04:00-20:00 ET where every active registry symbol is silent. A minute where one symbol has a tick is not requested. Pre-market (04:00-09:30 ET) and post-market (16:00-20:00 ET) count at 15 minutes or more. Regular hours (09:30-16:00 ET) count at 2 minutes or more. A stretch that crosses 09:30 or 16:00 is split, and each piece uses its own rule. Weekends, full NYSE holidays, and the time after an official early close (13:00 ET) are not requested. Gap fill does not start while the live writer holds the publisher lock. It appends new rows and does not rewrite existing files.
+
+A new-row candle uses `bid_price`. This query does not match files already on disk:
+
+```sql
+SELECT
+    time_bucket(INTERVAL '1 minute', timestamp) AS bucket_time,
+    arg_min(bid_price, (timestamp, ingest_id)) AS open,
+    max(bid_price) AS high,
+    min(bid_price) AS low,
+    arg_max(bid_price, (timestamp, ingest_id)) AS close
+FROM read_parquet(?)
+GROUP BY bucket_time
+```
 
 ---
 
@@ -14,7 +33,7 @@ A high-performance market data harvesting, 24/7 live tick streaming, and telemet
   <TICK_LAKE_ROOT>/ticks/symbol=<SYMBOL>/date=<YYYY-MM-DD>/batch_<WRITER_ID>_<SEQ>.parquet
   ```
 - **Zero-Lock Concurrency**: Downstream consumers (e.g. Repo B quantitative strategies, analytical runners, dashboard processes) query live market data using isolated in-memory DuckDB connections (`:memory:`). Ingestion writers and concurrent reader processes operate simultaneously with **zero file-lock collisions** (`duckdb.IOException`), zero read latency degradation, and zero Parquet footer corruption.
-- **Sub-100ms Resampling**: In-memory DuckDB vectorized queries resample millions of raw ticks into deterministic OHLCV bars (`1s`, `5s`, `1m`, `5m`, `15m`, `1h`, `1d`) with sub-100ms p95 latency using `time_bucket()` and deterministic tie-breaking via `arg_min(price, (timestamp, ingest_id))` / `arg_max(price, (timestamp, ingest_id))`.
+- **Sub-100ms Resampling**: In-memory DuckDB vectorized queries resample ticks into bars (`1s`, `5s`, `1m`, `5m`, `15m`, `1h`, `1d`). New rows use `bid_price`. Files already on disk are still schema v1, and `price` and `volume` are not the stored quote.
 - **Atomic Two-Phase Publication**: Writers buffer ticks in memory, write staged Parquet files with checksum verification, and atomically promote them via filesystem rename into `ticks/` with fsynced publication receipts in `_control/receipts/`.
 - **Versioned Symbol Registry**: Symbol lifecycle (activation, deactivation, purge fencing) is centrally managed in `_control/registry.json` with monotonic version bumping and cross-process reload signaling (`.stream_reload.signal`).
 - **Control Plane Layout**: `lake.json` (format metadata), `_staging/` (in-flight writes), `_maintenance/` (guard + compaction artifacts), `_migration/` (migration plan/state/verification), `_control/` (registry, writer status, publisher lock, receipts, intents), `_spool/` (optional durable spool).
@@ -48,6 +67,8 @@ A high-performance market data harvesting, 24/7 live tick streaming, and telemet
 Downstream consumers (such as Repo B) require **zero imports** from `data-harvester`. You only need standard, publicly available `duckdb >= 1.0.0` or `pyarrow >= 14.0.0`. The full contract (schema table, partition pruning rules, maintenance-guard rules, and query snippets) lives in [`docs/contracts/repo_b_tick_lake_contract.md`](docs/contracts/repo_b_tick_lake_contract.md).
 
 ### Standalone Python Reader Snippet
+
+The snippet below reads files already on disk. Those files are still schema v1. `price` and `volume` in that snippet are not the stored quote. New rows use `bid_price` and `ask_price`.
 
 ```python
 from datetime import date, datetime
@@ -94,7 +115,8 @@ class RepoBTickReader:
         timeframe: str = "1m",
     ) -> List[Dict[str, Any]]:
         """
-        Resample raw ticks into deterministic OHLCV candles using in-memory DuckDB.
+        Resample raw ticks. This example reads files already on disk.
+        Those files are still schema v1. price and volume here are not the stored quote.
         """
         files = self._resolve_files(symbol, start_date, end_date)
         if not files:

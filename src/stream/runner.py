@@ -358,6 +358,25 @@ class StreamingEngine:
 
     async def _handle_capital_tick(self, tick):
         """Feeds a tick from Capital.com directly into the write queue, filtering out excluded/purged assets."""
+        if isinstance(tick, dict) and ("bid_price" in tick or "ask_price" in tick):
+            raw_epic = tick.get("epic", "") or tick.get("symbol", "")
+            symbol = self._resolve_stream_symbol(raw_epic)
+            if symbol is None:
+                self._reject_out_of_scope(raw_epic)
+                return
+            row = {
+                "timestamp": tick.get("timestamp"),
+                "symbol": symbol,
+                "bid_price": tick.get("bid_price"),
+                "ask_price": tick.get("ask_price"),
+                "source": tick.get("source", "CAPITAL"),
+                "session": tick.get("session", "REG"),
+            }
+            if tick.get("ingest_id"):
+                row["ingest_id"] = str(tick["ingest_id"])
+            await self._enqueue_tick_async(row)
+            return
+
         if isinstance(tick, dict):
             raw_epic = tick.get("epic", "") or tick.get("symbol", "")
             symbol = self._resolve_stream_symbol(raw_epic)

@@ -18,6 +18,7 @@ from src.data.databento_backfill import (
     EXCLUDED_SYMBOLS,
     NY_TZ
 )
+from src.storage.config import init_tick_lake
 
 
 def test_databento_sdk_is_only_required_for_live_client(monkeypatch):
@@ -78,30 +79,28 @@ def test_generate_candidate_trading_days():
         assert days[i] > days[i + 1]
 
 
-def test_budget_cap_stops_execution():
+def test_budget_cap_stops_execution(tmp_path):
     """Verify that the backfill loop respects max_budget and stops immediately when cap is reached."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
     mock_client = MagicMock()
     # Mock cost estimate: $10 per day
     with patch("src.data.databento_backfill.estimate_day_cost", return_value=10.0):
-        with patch("src.data.databento_backfill.is_day_already_backfilled", return_value=False):
-            with patch("src.data.databento_backfill.fetch_and_normalize_day") as mock_fetch:
-                mock_fetch.return_value = pd.DataFrame({
-                    "timestamp": ["2026-09-24 13:30:00.000000"],
-                    "symbol": ["NVDA"],
-                    "price": [120.0],
-                    "volume": [1.0],
-                    "bid": [119.9],
-                    "ask": [120.1],
-                    "source": ["DATABENTO"],
-                    "session": ["REG"]
-                })
+        with patch("src.data.gap_fill.fill_named_day") as mock_fetch:
+                mock_fetch.return_value = {
+                    "requests": 1,
+                    "follow_up_requests": 0,
+                    "rows": 1,
+                    "stretches": [],
+                }
                 with patch("src.data.databento_backfill.publish_ticks_to_lake", return_value=1):
                     # Budget is $25.0 -> can only afford 2 days ($20 total). 3rd day ($30) exceeds $25.
                     res = run_databento_backfill(
                         max_budget=25.0,
                         max_days=10,
                         start_date=date(2026, 9, 24),
-                        client=mock_client
+                        client=mock_client,
+                        lake_root=lake,
                     )
 
                     assert res["success"] is True

@@ -6,7 +6,7 @@ A high-performance, 100% local market data harvesting and streaming engine runni
 ## Core Value
 Zero-cloud, zero-quota persistent market data ingestion and storage: capture real-time market data reliably and provide sub-millisecond OHLCV querying without hitting API limits or heating up hardware.
 
-## Current Milestone: v6.0 Bid and Ask Prices
+## Current Milestone: v6.0 Bid and Ask Prices (checkout complete)
 
 **Goal:** Store only the bid price and the ask price, rewrite the existing lake to that shape, and fill computer-offline holes from Databento without a midpoint or a volume column.
 
@@ -195,7 +195,8 @@ _Milestone requirement details are archived in [.planning/milestones/](milestone
 | Ingestion schedule window (04:00–20:00 ET weekdays) | Matches US market liquidity hours, protects hardware during nights/weekends | ✓ Good |
 | Unattended off-hours compaction | Consolidates micro-batches during quiet hours under lease lock without contention | ✓ Good |
 | Strict 19-symbol authority | Enforces canonical symbol inventory across runner, supervisor, gap-fill, and UI | ✓ Good |
-| v6.0 stores bid price and ask price only | The chart is for inspection. A midpoint was redundant. Volume was not comparable across feeds, and sizes were never stored | — Pending |
+| v6.0 stores bid price and ask price only | The chart is for inspection. A midpoint was redundant. Volume was not comparable across feeds, and sizes were never stored | ✓ Good |
+| Existing-lake rewrite is the last phase | Tool and fixture tests shipped in Phase 53. Production rewrite stays owner-run. | ✓ Good (fixture only) |
 
 ## Evolution
 This document evolves at phase transitions and milestone boundaries.
@@ -214,4 +215,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-06 — Milestone v6.0 (Bid and Ask Prices) started. The v5.0 stop rule is lifted by the owner.*
+*Last updated: 2026-10-06 — Milestone v6.0 checkout complete. Production lake rewrite remains owner-run.*
