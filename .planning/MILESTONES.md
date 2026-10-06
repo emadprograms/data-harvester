@@ -17,7 +17,7 @@ _Newest first. Each entry is a shipped, verified milestone._
 ## v6.0 Bid and Ask Prices (Checkout shipped: 2026-10-06)
 
 **Phases completed:** 4 phases (Phases 50–53)  
-**Tests in this checkout:** Phase 50–53 suites 28 passed. Production lake not rewritten.  
+**Tests in this checkout:** Phase 50–53 focused suites 99 passed. Production lake not rewritten.  
 **Closeout:** checkout complete; owner still runs `python -m src.storage.quote_rewrite --lake-root … --backup-root …` against the real lake.
 
 **Key accomplishments:**

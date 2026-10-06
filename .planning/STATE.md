@@ -27,7 +27,7 @@ See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 Phase: 53 (complete)
 Plan: 53-01
 Status: Milestone v6.0 tools and tests are in this checkout. The production lake was not rewritten.
-Last activity: 2026-10-06 — v6.0 closeout; CLI requires --lake-root and --backup-root.
+Last activity: 2026-10-06 — v6.0 checkout closeout (docs honesty, dead helpers, planning artifacts). Production rewrite remains owner-run.
 
 ## Accumulated Context
 
@@ -80,7 +80,7 @@ Last activity: 2026-10-06 — v6.0 closeout; CLI requires --lake-root and --back
 ## Session Continuity
 
 Completed: 2026-10-06
-Status: Phase 52 is implemented. v5.0 remains shipped: 105,894,626 ticks in 7,367 Parquet files. Those files are still schema v1. No production rewrite has been run from this checkout, and the gap fill was not run against that lake.
+Status: v6.0 checkout complete. v5.0 remains shipped: 105,894,626 ticks in 7,367 Parquet files. Those files are still schema v1. No production rewrite has been run from this checkout, and the gap fill was not run against that lake.
 
 ## Operator Next Steps
 

@@ -283,8 +283,6 @@ def test_zero_cost_estimate_still_fills_silence(tmp_path):
     init_tick_lake(lake)
     client = MagicMock()
     with patch("src.data.databento_backfill.get_target_stock_symbols", return_value=SYMBOLS), patch(
-        "src.data.databento_backfill.estimate_day_cost", return_value=0.0
-    ), patch(
         "src.data.gap_fill.fill_named_day",
         return_value={"requests": 1, "follow_up_requests": 0, "rows": 1},
     ) as mocked:

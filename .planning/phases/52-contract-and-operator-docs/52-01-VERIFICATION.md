@@ -7,9 +7,9 @@
 `tests/docs/test_phase52_docs.py`, `tests/docs/test_documentation_contract.py`, and `tests/contract/test_repo_b_contract.py`: 48 passed.
 
 - DOCS-01: the README, the operations guide, and the Repo B contract name `bid_price` and `ask_price`, say not to read `price` or `volume` as the stored quote, and describe the all-symbol gap-fill rule.
-- Each document says the existing lake is still schema v1, that the rewrite is the last phase, and not to run that rewrite.
+- Each document says the existing lake is still schema v1. The rewrite tool is named as `python -m src.storage.quote_rewrite --lake-root <explicit-lake> --backup-root <explicit-backup>`. Production execution is deferred. The documents do not say the tool is unavailable from this checkout, and they do not say `Run the rewrite`.
 - The published schema v1 examples still execute against a schema v1 fixture. They are labeled as files already on disk, not as the stored quote.
 
 ## Not done here
 
-The production lake was not opened and was not rewritten. The rewrite remains Phase 53.
+The production lake was not opened and was not rewritten.

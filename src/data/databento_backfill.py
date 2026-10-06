@@ -81,24 +81,6 @@ def get_target_stock_symbols(lake_root: Optional[Any] = None) -> List[str]:
     return sorted(sym for sym in symbols if sym and _is_approved_equity(sym))
 
 
-def get_day_trading_bounds(trading_date: date) -> Tuple[datetime, datetime, datetime]:
-    """
-    Computes exact UTC start and end bounds for:
-    - Last 30 minutes of premarket: 09:00:00 ET to 09:30:00 ET
-    - Regular market hours: 09:30:00 ET to 16:00:00 ET
-    Returns (start_utc, reg_open_utc, end_utc).
-    """
-    dt_pre_start = datetime(trading_date.year, trading_date.month, trading_date.day, 9, 0, 0, tzinfo=NY_TZ)
-    dt_reg_open = datetime(trading_date.year, trading_date.month, trading_date.day, 9, 30, 0, tzinfo=NY_TZ)
-    dt_reg_close = datetime(trading_date.year, trading_date.month, trading_date.day, 16, 0, 0, tzinfo=NY_TZ)
-
-    return (
-        dt_pre_start.astimezone(timezone.utc),
-        dt_reg_open.astimezone(timezone.utc),
-        dt_reg_close.astimezone(timezone.utc),
-    )
-
-
 def get_databento_client(api_key: Optional[str] = None) -> Any:
     """Instantiates a Databento Historical client."""
     if not api_key:
@@ -134,57 +116,6 @@ def estimate_interval_cost(
         end=end_str,
     )
     return float(cost)
-
-
-def estimate_day_cost(
-    client: Any,
-    symbols: List[str],
-    trading_date: date,
-    schema: str = "tbbo",
-    dataset: str = "DBEQ.BASIC"
-) -> float:
-    """
-    Queries Databento metadata API to get the exact cost in USD for the day's requested slice.
-    """
-    start_utc, _, end_utc = get_day_trading_bounds(trading_date)
-    return estimate_interval_cost(
-        client,
-        symbols,
-        start_utc,
-        end_utc,
-        schema=schema,
-        dataset=dataset,
-    )
-
-
-def is_day_already_backfilled(trading_date: date, symbols: Optional[List[str]] = None) -> bool:
-    """
-    Checks whether DATABENTO ticks already exist in the lake for the trading day.
-
-    Only gap-filled history counts: a day captured live by Capital.com must not
-    stop the gap-filler from adding what it is missing.
-    """
-    from src.storage.config import resolve_tick_lake_root
-    from src.storage.reader import TickLakeReader
-
-    start_utc, _, end_utc = get_day_trading_bounds(trading_date)
-    window = (start_utc.replace(tzinfo=None), end_utc.replace(tzinfo=None))
-
-    try:
-        reader = TickLakeReader(root=resolve_tick_lake_root())
-    except Exception:
-        return False
-
-    filled = 0
-    for symbol in (symbols or [None]):
-        try:
-            rows = reader.query_ticks(symbol=symbol, start=window[0], end=window[1], limit=1001)
-        except Exception:
-            return False
-        filled += sum(1 for row in rows if str(row.get("source", "")).upper() == "DATABENTO")
-        if filled > 1000:
-            return True
-    return False
 
 
 QUOTE_V2_COLUMNS = ["timestamp", "symbol", "bid_price", "ask_price", "source", "session"]
@@ -237,31 +168,6 @@ def normalize_tbbo_frame(df: pd.DataFrame, trading_date: date) -> pd.DataFrame:
     norm_df = norm_df.dropna(subset=["timestamp", "symbol", "bid_price", "ask_price"])
     norm_df = norm_df[(norm_df["bid_price"] > 0) & (norm_df["ask_price"] > 0)]
     return norm_df.reset_index(drop=True)
-
-
-def fetch_and_normalize_day(
-    client: Any,
-    symbols: List[str],
-    trading_date: date,
-    schema: str = "tbbo",
-    dataset: str = "DBEQ.BASIC"
-) -> pd.DataFrame:
-    """
-    Downloads tick TBBO data from Databento and maps it into schema v2:
-    [timestamp, symbol, bid_price, ask_price, source, session]
-    """
-    start_utc, _reg_open_utc, end_utc = get_day_trading_bounds(trading_date)
-    start_str = start_utc.strftime("%Y-%m-%dT%H:%M:%S")
-    end_str = end_utc.strftime("%Y-%m-%dT%H:%M:%S")
-
-    data = client.timeseries.get_range(
-        dataset=dataset,
-        symbols=symbols,
-        schema=schema,
-        start=start_str,
-        end=end_str
-    )
-    return normalize_tbbo_frame(data.to_df(), trading_date)
 
 
 def _stable_tbbo_ingest_id(record: Dict[str, Any]) -> str:

@@ -310,20 +310,6 @@ def _swap_file(root: Path, relative: str, new_table: pa.Table) -> None:
     os.replace(staging, live)
 
 
-def _probe_lock(root: Path) -> None:
-    probe = LakePublisherLock(
-        root,
-        writer_id="quote-rewrite-probe",
-        ignore_maintenance=True,
-    )
-    try:
-        probe.acquire(blocking=False)
-    except LakeOwnershipError as exc:
-        raise QuoteRewriteError(f"publisher lock already held for {root}") from exc
-    else:
-        probe.release()
-
-
 def _foreign_guard(root: Path) -> None:
     guard = root / "_maintenance" / MAINTENANCE_GUARD_FILENAME
     if not guard.exists():

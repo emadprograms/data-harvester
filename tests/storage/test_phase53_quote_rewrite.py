@@ -94,6 +94,7 @@ def test_rewrite_source_does_not_resolve_production_lake():
     source = inspect.getsource(quote_rewrite_mod)
     assert "resolve_tick_lake_root()" not in source.replace(" ", "")
     assert "resolve_tick_lake_root()" not in inspect.getsource(rewrite_quote_lake)
+    assert "def _probe_lock" not in source
 
 
 def test_rewrite_01_kept_row_uses_bid_and_ask_not_price(tmp_path):
