@@ -50,6 +50,7 @@ cat <<EOF > "$STREAMER_PLIST"
         <string>src.stream.runner</string>
         <string>--enforce-window</string>
         <string>--maintenance</string>
+        <string>--watch-ingestion-progress</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
