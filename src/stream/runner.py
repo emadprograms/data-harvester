@@ -96,6 +96,7 @@ def _positive_int(value: Any, env_name: str, default: int) -> int:
 
 from src.utils.notifications import (
     DRAIN_FAILED,
+    INGESTION_STALLED,
     SESSION_STARTED,
     SESSION_START_FAILED,
     SESSION_STOPPED,
@@ -526,6 +527,20 @@ class StreamingEngine:
                 self.epic_to_display[c_ticker] = sym
                 self.epic_to_display[sym] = sym
         logger.info(f"🔄 Reloading active Capital.com streaming symbols ({len(capital_symbols)}): {capital_symbols}")
+        if not capital_symbols and not self.mock_mode:
+            # A live run whose authority just became empty will stop receiving data.
+            # Surface it immediately instead of idling silently.
+            logger.error(
+                "Live subscription set is now EMPTY: the registry has no active symbols, "
+                "so no ticks will arrive until it is re-seeded."
+            )
+            notify_detached(
+                INGESTION_STALLED,
+                detail=(
+                    "Live subscription set became empty (registry has no active symbols); "
+                    "ingestion is stalled until the registry is re-seeded."
+                ),
+            )
         if self.capital_streamer:
             success = await self.capital_streamer.update_subscriptions(capital_symbols)
             return success
@@ -660,6 +675,26 @@ class StreamingEngine:
                 self.epic_to_display[c_ticker] = sym
                 self.epic_to_display[sym] = sym
         logger.info(f"🎯 Target Capital.com symbols for live quotes ({len(capital_symbols)}): {capital_symbols[:6]}...")
+
+        # A live engine with an empty subscription set is a misconfiguration, not a
+        # quiet session: no provider connection is opened, no tick can ever arrive,
+        # and the process would otherwise idle forever with every status light green
+        # (see docs/reports/INCIDENT-2026-10-06-symbol-registry-outage.md). Fail
+        # loudly so the supervisor reports ERROR and nothing looks healthy.
+        if not capital_symbols and not self.mock_mode:
+            self.running = False
+            registry_path = getattr(self.registry, "path", "<unknown>")
+            raise RegistryError(
+                "Refusing to start live ingestion: the lake registry lists no active "
+                f"symbols ({registry_path}). The registry is the single symbol authority, "
+                "so an empty one means no data can arrive. Seed it first, e.g. "
+                f"`python -m src.storage.registry --root {self.lake_root} --seed approved`."
+            )
+        if not capital_symbols:
+            logger.warning(
+                "Mock run with an empty registry: the provider is constructed with no "
+                "epics and will not emit ticks (this stays lenient for offline/dev runs)."
+            )
 
         # Initialize Capital.com streamer (or MockStreamer in mock_mode)
         if self.mock_mode:

@@ -8,6 +8,9 @@ tell *why* the streamer is or is not running:
 - ``WAITING_FOR_WINDOW`` — outside the weekday 04:00–20:00 ET window, by design.
 - ``STARTING`` — the window just opened and the child is being launched.
 - ``INGESTING`` — the child is up and inside the window.
+- ``STALLED`` — the child is up inside the window but no tick has been written
+  for the stall threshold: the process is alive, ingestion is not
+  (INCIDENT-2026-10-06 — "alive" was reported as "ingesting").
 - ``DRAINING`` — the window closed (or a stop was requested) and the child is
   finishing its final flush.
 - ``MAINTENANCE`` — off-hours work (compaction) owns the lake.
@@ -27,6 +30,7 @@ class LifecycleState(str, Enum):
     WAITING_FOR_WINDOW = "WAITING_FOR_WINDOW"
     STARTING = "STARTING"
     INGESTING = "INGESTING"
+    STALLED = "STALLED"
     DRAINING = "DRAINING"
     MAINTENANCE = "MAINTENANCE"
     ERROR = "ERROR"

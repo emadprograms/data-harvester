@@ -15,6 +15,7 @@ Provides a resilient background process manager:
 - Redirects output to rotating log files in logs/
 - Handles clean shutdown signals
 """
+import json
 import os
 import sys
 import time
@@ -24,7 +25,7 @@ import subprocess
 import threading
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 WATCH_EXTENSIONS = {".py", ".html", ".js", ".css", ".json"}
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +35,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.utils.lifecycle import LifecycleRecorder, LifecycleState  # noqa: E402
+from src.utils.notifications import (  # noqa: E402
+    INGESTION_STALLED,
+    SESSION_STARTED,
+    notify_detached,
+)
 from src.utils.session_window import describe as describe_window  # noqa: E402
 from src.utils.session_window import is_eligible, next_open, now_et  # noqa: E402
 
@@ -101,6 +107,9 @@ class ProcessSupervisor:
         enforce_window: bool = False,
         clock: Optional[Callable[[], "datetime"]] = None,
         maintenance_hook: Optional[Callable[[], object]] = None,
+        stall_seconds: float = 900.0,
+        heartbeat_log_interval: float = 900.0,
+        watch_ingestion_progress: bool = False,
     ):
         self.name = name
         self.module = module
@@ -133,6 +142,19 @@ class ProcessSupervisor:
         self.maintenance_hook = maintenance_hook
         self._maintenance_ran_for: Optional[str] = None
 
+        # Ingestion-progress watchdog (INCIDENT-2026-10-06). Zero disables it.
+        # Only ingestion services may read the lake's writer status: the dashboard
+        # supervisor must never inherit the streamer's progress file as its own.
+        self.stall_seconds = float(stall_seconds)
+        self.watch_ingestion_progress = bool(watch_ingestion_progress or enforce_window)
+        self.heartbeat_log_interval = float(heartbeat_log_interval)
+        self._last_progress_rows: Optional[float] = None
+        self._last_progress_at: Optional[float] = None
+        self._last_detail: str = ""
+        self._last_heartbeat_log: float = time.monotonic()
+        self._last_stall_notified: Optional[LifecycleState] = None
+        self.lake_root = self._resolve_lake_root()
+
         target_log_dir = log_dir if log_dir is not None else (REPO_ROOT / "logs")
         self.log_dir = Path(target_log_dir).resolve()
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -148,6 +170,16 @@ class ProcessSupervisor:
                     signal.signal(signal.SIGHUP, signal.SIG_IGN)
             except (ValueError, AttributeError):
                 pass
+
+    @staticmethod
+    def _resolve_lake_root() -> Optional[Path]:
+        """The lake this supervisor's child writes to, or None when unresolvable."""
+        try:
+            from src.storage.config import resolve_tick_lake_root
+            return Path(resolve_tick_lake_root()).resolve()
+        except Exception:
+            env_root = os.environ.get("TICK_LAKE_ROOT") or os.environ.get("DATA_DIR")
+            return Path(env_root).resolve() if env_root else None
 
     @property
     def child_pid(self) -> Optional[int]:
@@ -170,7 +202,24 @@ class ProcessSupervisor:
         return self._clock() if self._clock is not None else now_et()
 
     def _record(self, state: LifecycleState, detail: str = "") -> LifecycleState:
-        self._log(f"Lifecycle: {state.value}" + (f" — {detail}" if detail else ""))
+        """Publish a lifecycle state, logging transitions only.
+
+        The state file is refreshed every poll (so its ``updated_at`` stays a
+        useful liveness signal), but an unchanged state is logged at most once
+        per ``heartbeat_log_interval`` — otherwise a 2-second poll floods the
+        log with identical lines (INCIDENT-2026-10-06: 13 MB of repeated
+        `Lifecycle: INGESTING` drowned out the engine's own output).
+        """
+        changed = state is not self._last_state or detail != self._last_detail
+        now = time.monotonic()
+        due_for_heartbeat = (now - self._last_heartbeat_log) >= self.heartbeat_log_interval
+        if changed or due_for_heartbeat:
+            self._log(
+                f"Lifecycle: {state.value}"
+                + (f" — {detail}" if detail else "")
+                + ("" if changed else " (still)")
+            )
+            self._last_heartbeat_log = now
         self._recorder.transition(
             state,
             detail=detail,
@@ -178,7 +227,55 @@ class ProcessSupervisor:
             pid=self.child_pid,
         )
         self._last_state = state
+        self._last_detail = detail
         return state
+
+    # ------------------------------------------------------- stall detection
+
+    def _ingestion_progress(self) -> Optional[Dict[str, Any]]:
+        """Read the lake writer's own progress file, or None when unavailable."""
+        lake_root = self.lake_root
+        if lake_root is None:
+            return None
+        status_file = Path(lake_root) / "_control" / "writer_status.json"
+        try:
+            with open(status_file, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except Exception:
+            return None
+
+    def _stall_detail(self, progress: Dict[str, Any]) -> Optional[str]:
+        """Return a reason string when the child is up but nothing is flowing.
+
+        A child that has subscribed to nothing, or whose provider never delivers
+        a tick, writes no rows: the process stays healthy while the lake stays
+        empty. Only the absence of *progress* reveals it.
+        """
+        if self.stall_seconds <= 0:
+            return None
+        rows = progress.get("total_rows_written")
+        if not isinstance(rows, (int, float)):
+            return None
+        now = time.monotonic()
+        if self._last_progress_rows is not None and rows > self._last_progress_rows:
+            self._last_progress_at = now
+        self._last_progress_rows = rows
+        if self._last_progress_at is None:
+            self._last_progress_at = now
+        stalled_for = now - self._last_progress_at
+        if stalled_for < self.stall_seconds:
+            return None
+        api_pid = progress.get("pid")
+        pid_note = ""
+        if isinstance(api_pid, int):
+            try:
+                os.kill(api_pid, 0)
+            except OSError:
+                pid_note = " (writer process is gone)"
+        return (
+            f"no rows written for {stalled_for:.0f}s "
+            f"(total_rows_written={int(rows)}){pid_note}"
+        )
 
     def stop(self, timeout: float = 15.0):
         """Cleanly stops the supervisor and terminates the supervised child process."""
@@ -346,6 +443,41 @@ class ProcessSupervisor:
             except Exception as e:
                 self._log(f"Git auto-sync check encountered error: {e}")
 
+    def _record_ingesting(self, now, detail: str = "") -> LifecycleState:
+        """Report INGESTING only when the child is actually making progress.
+
+        Process liveness is not ingestion: a child that subscribed to nothing
+        (empty registry) or whose provider never delivers keeps the PID alive
+        while the lake stays empty. When the writer reports no new rows for
+        ``stall_seconds``, say so instead of showing green.
+        """
+        progress = (
+            self._ingestion_progress()
+            if (self.watch_ingestion_progress and self.stall_seconds > 0)
+            else None
+        )
+        if progress is not None:
+            stall_detail = self._stall_detail(progress)
+            if stall_detail:
+                state = self._record(LifecycleState.STALLED, detail=stall_detail)
+                if state is not self._last_stall_notified:
+                    notify_detached(
+                        INGESTION_STALLED,
+                        detail=f"{self.name}: {stall_detail}",
+                        fields={"Service": self.name, "Window": describe_window(now)},
+                    )
+                    self._last_stall_notified = state
+                return state
+            if self._last_stall_notified is not None:
+                # Recovered: let the operator know the stall cleared.
+                notify_detached(
+                    SESSION_STARTED,
+                    detail=f"{self.name}: ingestion resumed after a stall",
+                    fields={"Service": self.name, "Window": describe_window(now)},
+                )
+                self._last_stall_notified = None
+        return self._record(LifecycleState.INGESTING, detail=detail or describe_window(now))
+
     def _windowed_tick(self) -> LifecycleState:
         """One control decision for an ingestion service (SCHED-02).
 
@@ -403,7 +535,7 @@ class ProcessSupervisor:
                     f"Resetting consecutive crashes from {self._consecutive_crashes} to 0."
                 )
                 self._consecutive_crashes = 0
-            return self._record(LifecycleState.INGESTING, detail=describe_window(now))
+            return self._record_ingesting(now)
 
         # The child died inside the window: that is a genuine crash.
         self._consecutive_crashes += 1
@@ -472,7 +604,9 @@ class ProcessSupervisor:
                     f"Resetting consecutive crashes from {self._consecutive_crashes} to 0."
                 )
                 self._consecutive_crashes = 0
-            return self._record(LifecycleState.INGESTING, detail="child healthy")
+            # Same progress check as the windowed path: a live child is not
+            # proof of ingestion (INCIDENT-2026-10-06).
+            return self._record_ingesting(self._now(), detail="child healthy")
 
         self._consecutive_crashes += 1
         self._stop_child()
@@ -549,6 +683,23 @@ def main():
         action="store_true",
         help="Run off-hours compaction (once per closed interval, after confirmed drain) while off the window",
     )
+    parser.add_argument(
+        "--watch-ingestion-progress",
+        action="store_true",
+        help="Read the lake writer status and publish STALLED when no rows are written (ingestion services)",
+    )
+    parser.add_argument(
+        "--stall-seconds",
+        type=float,
+        default=900.0,
+        help="Publish STALLED when the writer reports no new rows for this long (0 disables)",
+    )
+    parser.add_argument(
+        "--heartbeat-log-interval",
+        type=float,
+        default=900.0,
+        help="Minimum seconds between repeated identical lifecycle log lines",
+    )
 
     args = parser.parse_args()
     supervisor = ProcessSupervisor(
@@ -565,6 +716,9 @@ def main():
         module_args=args.args,
         enforce_window=args.enforce_window,
         maintenance_hook=_maintenance_hook if args.maintenance else None,
+        watch_ingestion_progress=args.watch_ingestion_progress,
+        stall_seconds=args.stall_seconds,
+        heartbeat_log_interval=args.heartbeat_log_interval,
     )
     supervisor.run()
 

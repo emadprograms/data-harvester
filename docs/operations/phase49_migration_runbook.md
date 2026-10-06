@@ -103,6 +103,30 @@ python3 tools/migrate_streaming_to_parquet.py \
 `--mode all` runs stages 1–4 in one process and is equivalent; stages 5 and 6 still have
 to be run afterwards.
 
+### Stage 4b — SYMBOLS: seed the lake registry (required)
+
+Migration moves **data**. It does not, by itself, teach the lake *which symbols to
+subscribe to*: the registry (`_control/registry.json`) is the single symbol authority, and
+a live streamer pointed at an empty registry subscribes to nothing. It used to do so
+silently, with every status light green (INCIDENT-2026-10-06 — a full trading day of zero
+ingestion). Both the one-command gate and `--mode all`/`--mode publish` now seed the
+registry from the plan automatically; `--no-seed-registry` opts out. Verify it happened,
+and seed by hand if you migrated in stages with the opt-out:
+
+```bash
+# Inspect: prints every registered symbol and the active count (exit 1 if none active).
+python3 -m src.storage.registry --root "$TICK_LAKE_ROOT"
+
+# Seed with the approved 19-equity ticket, or an explicit list derived from the lake:
+python3 -m src.storage.registry --root "$TICK_LAKE_ROOT" --seed approved
+python3 -m src.storage.registry --root "$TICK_LAKE_ROOT" --seed AAPL,MSFT,NVDA
+```
+
+Seeding is idempotent and never deactivates an existing symbol. **The streamer refuses to
+start (exit non-zero, supervisor reports `ERROR`) when the registry has no active
+symbols** — a migrated lake with an empty registry is a misconfiguration, not a quiet
+session, and it is now loud.
+
 ### Acceptance for MIG-01
 
 | Check | Where to look | Pass condition |

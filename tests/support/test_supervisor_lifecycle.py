@@ -111,6 +111,9 @@ def test_lifecycle_states_are_the_documented_set():
         "WAITING_FOR_WINDOW",
         "STARTING",
         "INGESTING",
+        # STALLED: the child is alive inside the window but writing no rows
+        # (INCIDENT-2026-10-06 — "process alive" was reported as "ingesting").
+        "STALLED",
         "DRAINING",
         "MAINTENANCE",
         "ERROR",

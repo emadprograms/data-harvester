@@ -39,6 +39,7 @@ SESSION_START_FAILED = "session_start_failed"
 SUPERVISOR_RESTART = "supervisor_restart"
 DRAIN_FAILED = "drain_failed"
 COMPACTION_FAILED = "compaction_failed"
+INGESTION_STALLED = "ingestion_stalled"
 
 EVENTS: Dict[str, Dict[str, Any]] = {
     SESSION_STARTED: {
@@ -69,6 +70,11 @@ EVENTS: Dict[str, Dict[str, Any]] = {
     COMPACTION_FAILED: {
         "emoji": "🟠",
         "title": "Off-hours compaction failed",
+        "color": 0xE67E22,
+    },
+    INGESTION_STALLED: {
+        "emoji": "🟠",
+        "title": "Ingestion stalled",
         "color": 0xE67E22,
     },
 }

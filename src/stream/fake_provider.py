@@ -34,7 +34,10 @@ class FakeProvider:
         gap_ledger: Optional[GapLedger] = None,
         replay_capable: bool = False,
     ):
-        self.epics = list(epics) if epics else ["AAPL", "MSFT"]
+        # No phantom default: substituting symbols here would hide an empty
+        # registry behind invented data the engine then rejects as out-of-scope
+        # (INCIDENT-2026-10-06). An empty epic list stays empty and emits nothing.
+        self.epics = list(epics) if epics else []
         self.on_tick_callback = on_tick_callback
         self.ticks_per_sec = float(ticks_per_sec)
         self.provider_name = provider_name
@@ -95,6 +98,12 @@ class FakeProvider:
     async def _run_loop(self) -> None:
         interval = 1.0 / self.ticks_per_sec if self.ticks_per_sec > 0 else 0.02
         while self.running:
+            if not self.epics:
+                # Unsubscribed: nothing to emit. Idle instead of dividing by zero
+                # (a live reload that clears the subscription set used to crash the
+                # streamer child and trigger a supervisor restart loop).
+                await asyncio.sleep(interval)
+                continue
             self._seq_id += 1
             epic = self.epics[(self._seq_id - 1) % len(self.epics)]
             now = datetime.now(timezone.utc)

@@ -31,6 +31,25 @@ from src.storage.config import (
 from src.storage.schema import LAKE_SCHEMA_MIXED
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """True when a process with this PID currently exists.
+
+    Used to detect a writer that died and left a stale ``writer_status.json``
+    behind still claiming ``RUNNING`` (INCIDENT-2026-10-06: a dead writer was
+    reported as LIVE, and the dashboard stayed green).
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        return psutil.pid_exists(pid)
+    except Exception:
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+
 _V2_QUOTE_SELECT = """
     SELECT
         timestamp,
@@ -996,7 +1015,14 @@ class TickLakeReader:
         return None
 
     def get_stream_status(self) -> Dict[str, Any]:
-        """Read streamer status from _control/writer_status.json."""
+        """Read streamer status from _control/writer_status.json.
+
+        The status string alone is not evidence of life: a writer that crashed
+        leaves its last file behind, still saying ``RUNNING`` (INCIDENT-2026-10-06).
+        Liveness therefore requires the recorded PID to exist; heartbeat age is
+        reported separately so callers can spot a process that is alive but has
+        stopped publishing.
+        """
         self.validate_lake()
         self._check_maintenance()
         if self.root:
@@ -1007,10 +1033,25 @@ class TickLakeReader:
                         data = json.load(f)
 
                     raw_status = data.get("status", "RUNNING")
-                    is_alive = str(raw_status).upper() in ("RUNNING", "HEALTHY", "LIVE")
+                    status_says_alive = str(raw_status).upper() in ("RUNNING", "HEALTHY", "LIVE")
                     writer_id = data.get("writer_id")
                     pid = data.get("pid")
+                    pid_alive = _pid_is_alive(pid) if isinstance(pid, int) else None
+                    is_alive = bool(status_says_alive and pid_alive is not False)
                     ticks_total = data.get("total_rows_written", data.get("ticks_total", 0))
+
+                    heartbeat_age_s = None
+                    updated_at = data.get("updated_at")
+                    if updated_at:
+                        try:
+                            updated = datetime.fromisoformat(str(updated_at))
+                            if updated.tzinfo is None:
+                                updated = updated.replace(tzinfo=timezone.utc)
+                            heartbeat_age_s = round(
+                                (datetime.now(timezone.utc) - updated).total_seconds(), 1
+                            )
+                        except (TypeError, ValueError):
+                            heartbeat_age_s = None
 
                     latest_ts = None
                     seconds_ago = None
@@ -1027,6 +1068,9 @@ class TickLakeReader:
                         "is_alive": is_alive,
                         "status": raw_status,
                         "status_label": "LIVE" if is_alive else "STOPPED",
+                        "pid_alive": pid_alive,
+                        "heartbeat_age_seconds": heartbeat_age_s,
+                        "stale_status_file": bool(status_says_alive and pid_alive is False),
                         "writer_id": writer_id,
                         "pid": pid,
                         "all_pids": [pid] if pid else [],
@@ -1611,6 +1655,7 @@ class TickLakeReader:
         total_files = 0
         total_size = 0
         active_symbols = set()
+        newest_mtime = None
         try:
             p_files = list(ticks_dir.glob("symbol=*/date=*/*.parquet"))
         except OSError as exc:
@@ -1620,7 +1665,10 @@ class TickLakeReader:
             if f.is_file():
                 total_files += 1
                 try:
-                    total_size += f.stat().st_size
+                    stat = f.stat()
+                    total_size += stat.st_size
+                    if newest_mtime is None or stat.st_mtime > newest_mtime:
+                        newest_mtime = stat.st_mtime
                 except OSError:
                     pass
                 try:
@@ -1630,12 +1678,22 @@ class TickLakeReader:
                 except (ValueError, PathTraversalError):
                     pass
 
+        # `active_symbols` counts symbols that HAVE DATA on disk, which is a
+        # historical fact, not evidence of live ingestion (INCIDENT-2026-10-06:
+        # it reported 19 while zero ticks were being written). Report the honest
+        # names for both facts; the ingest authority is the lake registry.
+        newest_age_s = None
+        if newest_mtime is not None:
+            newest_age_s = round(datetime.now(timezone.utc).timestamp() - newest_mtime, 1)
+
         return {
             "status": "healthy",
             "root": str(self.root),
             "total_files": total_files,
             "total_size_bytes": total_size,
             "active_symbols": len(active_symbols),
+            "historical_symbols": len(active_symbols),
+            "seconds_since_newest_write": newest_age_s,
             "healthy": True,
         }
 

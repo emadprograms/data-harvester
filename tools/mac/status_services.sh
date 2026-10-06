@@ -69,6 +69,61 @@ else
 fi
 
 echo ""
+echo "--- Supervisor Lifecycle State ---"
+"$PYTHON_BIN" -c "
+import json
+from pathlib import Path
+repo_root = Path('$REPO_ROOT')
+for name in ('streamer', 'dashboard'):
+    state_file = repo_root / 'logs' / f'{name}.state.json'
+    if state_file.exists():
+        try:
+            payload = json.loads(state_file.read_text(encoding='utf-8'))
+            state = payload.get('state', 'UNKNOWN')
+            detail = payload.get('detail', '')
+            marker = 'OK' if state in ('INGESTING',) else ('WAIT' if state in ('WAITING_FOR_WINDOW', 'MAINTENANCE', 'DRAINING', 'STARTING') else 'ATTENTION')
+            print(f'  [{marker}] {name}: {state}' + (f' — {detail}' if detail else ''))
+            if state == 'STALLED':
+                print('        ^ the process is alive but no ticks are being written.')
+        except Exception as e:
+            print(f'  [??] {name}: unreadable state file ({e})')
+    else:
+        print(f'  [??] {name}: no state file (supervisor not running?)')
+"
+
+echo ""
+echo "--- Registry (the single symbol authority) ---"
+"$PYTHON_BIN" -c "
+import json, os, sys
+from pathlib import Path
+repo_root = Path('$REPO_ROOT')
+try:
+    from src.storage.config import resolve_tick_lake_root
+    lake_root = resolve_tick_lake_root()
+except Exception:
+    env_root = os.environ.get('TICK_LAKE_ROOT') or os.environ.get('DATA_DIR')
+    lake_root = Path(env_root).resolve() if env_root else repo_root / 'data' / 'tick_lake'
+reg_path = Path(lake_root) / '_control' / 'registry.json'
+if not reg_path.exists():
+    print(f'  [ATTENTION] No registry at {reg_path}')
+    print('        A live streamer will refuse to start until the registry is seeded:')
+    print(f'        python -m src.storage.registry --root {lake_root} --seed approved')
+else:
+    try:
+        data = json.loads(reg_path.read_text(encoding='utf-8'))
+        symbols = data.get('symbols') or {}
+        active = [k for k, v in symbols.items() if isinstance(v, dict) and v.get('active') and v.get('status') == 'ACTIVE']
+        print(f'  [{\"OK\" if active else \"ATTENTION\"}] Active ingest symbols: {len(active)} of {len(symbols)} registered')
+        if not active:
+            print('        No active symbols: nothing will be subscribed and no ticks will arrive.')
+            print(f'        Seed it: python -m src.storage.registry --root {lake_root} --seed approved')
+        else:
+            print(f'        {sorted(active)}')
+    except Exception as e:
+        print(f'  [ATTENTION] Registry unreadable: {e}')
+"
+
+echo ""
 echo "--- Tick Lake Storage & Writer Status ---"
 "$PYTHON_BIN" -c "
 import json, os
@@ -105,7 +160,23 @@ else:
             rows = st.get('total_rows_written', 0)
             batches = st.get('batches_published', 0)
             hb = st.get('updated_at', 'N/A')
-            print(f'  ✓ Writer Status: [{w_status}] ID: {writer_id} | Rows: {rows:,d} | Batches: {batches:,d} | Heartbeat: {hb}')
+            # The status string is not evidence of life: a crashed writer leaves
+            # its last file behind still saying RUNNING (INCIDENT-2026-10-06).
+            pid = st.get('pid')
+            alive = None
+            if isinstance(pid, int):
+                try:
+                    import psutil
+                    alive = psutil.pid_exists(pid)
+                except Exception:
+                    try:
+                        os.kill(pid, 0); alive = True
+                    except OSError:
+                        alive = False
+            label = w_status
+            if alive is False:
+                label = f'{w_status} but PID {pid} IS NOT RUNNING (stale status file)'
+            print(f'  ✓ Writer Status: [{label}] ID: {writer_id} | Rows: {rows:,d} | Batches: {batches:,d} | Heartbeat: {hb}')
         except Exception as e:
             print(f'  ⚠️ Error reading writer_status.json: {e}')
     else:

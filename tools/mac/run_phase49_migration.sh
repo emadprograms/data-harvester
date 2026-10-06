@@ -204,6 +204,72 @@ passed = (
 raise SystemExit(0 if passed else 1)
 PY
 
+# ---------------------------------------------------------- symbol registry
+# The streamer subscribes to the lake registry and nothing else. A migrated lake
+# with an empty registry is a lake that will ingest nothing, silently
+# (INCIDENT-2026-10-06). The migration seeds it from the plan; this verifies it,
+# and backfills from the published partitions if the seed could not be derived.
+
+say ""
+say "== symbol registry (the streamer's single authority) =="
+
+REG_CHECK="$("$PYTHON_BIN" - "$LAKE_ROOT" <<'PY'
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+reg = root / "_control" / "registry.json"
+if not reg.is_file():
+    print("MISSING 0")
+    raise SystemExit
+try:
+    data = json.loads(reg.read_text(encoding="utf-8"))
+except Exception:
+    print("UNREADABLE 0")
+    raise SystemExit
+symbols = data.get("symbols") or {}
+active = [k for k, v in symbols.items()
+          if isinstance(v, dict) and v.get("active") and v.get("status") == "ACTIVE"]
+print(f"{'OK' if active else 'EMPTY'} {len(active)}")
+PY
+)"
+
+REG_STATE="${REG_CHECK%% *}"
+REG_COUNT="${REG_CHECK##* }"
+say "   registry state: $REG_STATE ($REG_COUNT active symbols)"
+
+if [ "$REG_STATE" != "OK" ]; then
+  LAKE_SYMBOLS="$("$PYTHON_BIN" - "$LAKE_ROOT" <<'PY'
+import sys
+from pathlib import Path
+ticks = Path(sys.argv[1]) / "ticks"
+found = sorted({p.name.split("=", 1)[1] for p in ticks.glob("symbol=*") if p.is_dir()})
+print(",".join(found))
+PY
+)"
+  if [ -z "$LAKE_SYMBOLS" ]; then
+    fail "the lake registry has no active symbols and no symbol partitions exist.
+The streamer would subscribe to nothing and ingest nothing while every status
+light stayed green. Nothing was deleted; fix the migration or seed by hand:
+  $PYTHON_BIN -m src.storage.registry --root \"$LAKE_ROOT\" --seed approved"
+  fi
+  say "   seeding the registry from the published partitions: $LAKE_SYMBOLS"
+  "$PYTHON_BIN" -m src.storage.registry --root "$LAKE_ROOT" --seed "$LAKE_SYMBOLS" || \
+    fail "registry seeding failed — the streamer will refuse to start until it is seeded."
+
+  REG_CHECK="$("$PYTHON_BIN" - "$LAKE_ROOT" <<'PY'
+import json, sys
+from pathlib import Path
+data = json.loads((Path(sys.argv[1]) / "_control" / "registry.json").read_text(encoding="utf-8"))
+symbols = data.get("symbols") or {}
+active = [k for k, v in symbols.items()
+          if isinstance(v, dict) and v.get("active") and v.get("status") == "ACTIVE"]
+print(f"{'OK' if active else 'EMPTY'} {len(active)}")
+PY
+)"
+  [ "${REG_CHECK%% *}" = "OK" ] || fail "the lake registry is still empty after seeding."
+  say "   registry now: $REG_CHECK"
+fi
+
 say ""
 say "GATE PASSED. Nothing has been deleted yet."
 say ""

@@ -212,13 +212,11 @@ def get_market_session_info() -> dict:
     }
 
 
-# 19 Monitored Single-Stock Equities (AAPL to TSM)
-MONITORED_19_SYMBOLS = [
-    "AAPL", "ADBE", "AMD", "AMZN", "APP",
-    "AVGO", "BABA", "GOOGL", "META", "MSFT",
-    "MU", "NDAQ", "NVDA", "ORCL", "PANW",
-    "QCOM", "SHOP", "TSLA", "TSM"
-]
+# The monitored ticket is what the lake registry lists (it is the single symbol
+# authority — SYMB-01). This presentation-side copy existed as a second,
+# independently editable definition of "symbols" and was removed as part of the
+# INCIDENT-2026-10-06 cleanup; import the one definition when a client needs it.
+from src.storage.reader import MONITORED_19_SYMBOLS  # noqa: F401  (re-exported)
 
 _AVAILABLE_WEEKS_CACHE = {"timestamp": 0.0, "weeks": []}
 

@@ -235,6 +235,18 @@ The supervisor process coordinates background execution of the streamer and dash
 Repository-root convenience wrappers (`START_SERVICES.sh`, `VIEW_STATUS.sh`, `STOP_SERVICES.sh`) delegate to the matching `tools/mac/` scripts. All Mac scripts resolve `./.venv/bin/python` first and fall back to `python3`.
 
 ### 3.3 Dynamic Symbol Management & Dynamic Reload
+
+0. **Seeding a lake (first start, or after a migration):**
+   ```bash
+   python3 -m src.storage.registry --root "$TICK_LAKE_ROOT"            # inspect (exit 1 if none active)
+   python3 -m src.storage.registry --root "$TICK_LAKE_ROOT" --seed approved
+   ```
+   The registry is the single symbol authority for streaming admission, and the
+   approved ticket lives in `src/config.py`. Seeding is idempotent and never
+   deactivates anything. A **live** streamer with zero active symbols refuses to
+   start (the supervisor reports `ERROR`); it never idles "green" on an empty
+   subscription set (INCIDENT-2026-10-06).
+
 1. **Adding a Symbol:**
    ```bash
    curl -X POST http://localhost:8420/api/streaming/symbols \
@@ -497,6 +509,21 @@ print(f"Cleaned {cleaned} orphaned staging files.")
   4. If the drive cannot be remounted within 5 minutes, gracefully stop the service to avoid WebSocket connection drops.
 
 ### 6.5 Production Health Verification Checklist
+
+**Read the signals that cannot be faked.** Files on disk are history; process liveness is
+not ingestion. A lake full of yesterday's Parquet says nothing about whether ticks are
+arriving right now (INCIDENT-2026-10-06: a full trading day was lost with every light
+green).
+
+| Signal | Where | Green means |
+|---|---|---|
+| Registry has active symbols | `python3 -m src.storage.registry --root "$TICK_LAKE_ROOT"` | symbols the streamer may subscribe to |
+| Supervisor lifecycle state | `logs/streamer.state.json` (`INGESTING`) | child up **and** rows being written |
+| `STALLED` state | the same file | child alive but **no rows written** for the stall threshold — investigate, do not ignore |
+| Writer liveness | `/api/stream/status` → `pid_alive`, `heartbeat_age_seconds`, `stale_status_file` | the writer PID exists; a stale file is called out |
+| Ingest progress | `/api/status` → `status`, `reasons` | `HEALTHY` only when the writer is alive and publishing; `DEGRADED` carries the reason |
+| Empty registry | `/api/integrity` → `registry_empty` | `false`; `true` means nothing is being audited because nothing is subscribed |
+
 Before handing off or ending maintenance, verify the following health endpoints:
 
 ```bash
