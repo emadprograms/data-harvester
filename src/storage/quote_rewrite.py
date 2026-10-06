@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -44,6 +45,9 @@ RETIRED_DIRNAME = "quote_rewrite_retired"
 BACKUP_MARKER = "BACKUP_COMPLETE"
 REWRITE_OPERATION = "quote_rewrite"
 QUARANTINE_REPORT = "quote_rewrite_quarantine.json"
+QUARANTINE_PARTS_DIRNAME = "quote_rewrite_quarantine_parts"
+# Receipts above this many rows are not re-fingerprinted in memory.
+LARGE_RECEIPT_ROWS = 2_000_000
 
 
 def _require_path(value: Path, name: str) -> Path:
@@ -69,14 +73,37 @@ def _free_bytes(path: Path) -> int:
     return shutil.disk_usage(path).free
 
 
-def _atomic_write_json(path: Path, payload: Any) -> None:
+def _atomic_write_json(path: Path, payload: Any, indent: Optional[int] = 2) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, default=str)
+        json.dump(payload, handle, indent=indent, default=str)
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, path)
+
+
+def _quarantine_part_path(root: Path, relative: str) -> Path:
+    digest = hashlib.sha256(relative.encode("utf-8")).hexdigest()[:40]
+    return root / "_maintenance" / QUARANTINE_PARTS_DIRNAME / f"{digest}.json"
+
+
+def _write_quarantine_part(root: Path, relative: str, rows: List[Dict[str, Any]]) -> None:
+    _atomic_write_json(
+        _quarantine_part_path(root, relative),
+        {"relative_path": relative, "quarantine": rows},
+        indent=None,
+    )
+
+
+def _read_quarantine_part(root: Path, relative: str) -> List[Dict[str, Any]]:
+    path = _quarantine_part_path(root, relative)
+    if not path.is_file():
+        raise QuoteRewriteError(f"quarantine part is missing for {relative}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("relative_path") != relative:
+        raise QuoteRewriteError(f"quarantine part does not belong to {relative}")
+    return list(data.get("quarantine") or [])
 
 
 def _load_progress(root: Path) -> Dict[str, Any]:
@@ -92,11 +119,26 @@ def _load_progress(root: Path) -> Dict[str, Any]:
     files = data.get("files") or {}
     if not isinstance(files, dict):
         files = {}
-    return {
+    progress = {
         "run_id": str(data.get("run_id") or ""),
         "finished": list(finished),
         "files": files,
     }
+    # An earlier checkpoint format embedded every quarantined row in the progress
+    # file, which made each checkpoint rewrite hundreds of megabytes. Move those rows
+    # into their parts first and only then replace the checkpoint, so a stop at any
+    # point still leaves one complete copy.
+    migrated = False
+    for relative, info in files.items():
+        if isinstance(info, dict) and "quarantine" in info:
+            rows = list(info.pop("quarantine") or [])
+            if rows:
+                _write_quarantine_part(root, relative, rows)
+            info["quarantined_rows"] = len(rows)
+            migrated = True
+    if migrated:
+        _save_progress(root, progress)
+    return progress
 
 
 def _save_progress(root: Path, progress: Dict[str, Any]) -> None:
@@ -105,7 +147,7 @@ def _save_progress(root: Path, progress: Dict[str, Any]) -> None:
         "finished": sorted(set(progress.get("finished") or [])),
         "files": progress.get("files") or {},
     }
-    _atomic_write_json(root / "_maintenance" / PROGRESS_NAME, payload)
+    _atomic_write_json(root / "_maintenance" / PROGRESS_NAME, payload, indent=None)
 
 
 def _list_tick_files(root: Path) -> List[Path]:
@@ -130,7 +172,8 @@ def _is_present(value: Any) -> bool:
 def _rewrite_table(table: pa.Table) -> tuple[pa.Table, List[Dict[str, Any]]]:
     kept: List[Dict[str, Any]] = []
     quarantine: List[Dict[str, Any]] = []
-    for row in table.to_pylist():
+    source_rows = table.to_pylist()
+    for row in source_rows:
         bid = row.get("bid")
         ask = row.get("ask")
         if _is_present(bid) and _is_present(ask):
@@ -161,7 +204,7 @@ def _rewrite_table(table: pa.Table) -> tuple[pa.Table, List[Dict[str, Any]]]:
     for index, row in enumerate(kept):
         original = table.to_pylist()[index] if False else None
         _ = original
-    original_rows = table.to_pylist()
+    original_rows = source_rows
     original_kept = [row for row in original_rows if _is_present(row.get("bid")) and _is_present(row.get("ask"))]
     if len(original_kept) != len(kept):
         raise QuoteRewriteError("kept row count mismatch against source bid/ask")
@@ -259,37 +302,118 @@ def _receipt_index(root: Path) -> Dict[str, Dict[str, Any]]:
     return mapping
 
 
-def _update_receipts_for_finished(root: Path, finished: set[str]) -> None:
+def _load_lineage_map(root: Path) -> Dict[str, Any]:
+    path = root / "_control" / "lineage.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    mapping = data.get("file_lineage") if isinstance(data, dict) else None
+    return mapping if isinstance(mapping, dict) else {}
+
+
+def _verify_large_receipt(root: Path, data: Dict[str, Any], via_lineage: set[str]) -> None:
+    """Bounded-memory check for a receipt whose rows cannot be fingerprinted in memory."""
+    details = data.get("file_details") or []
+    paths = {str(item["relative_path"]) for item in details}
+    raw_paths = data.get("file_paths")
+    if raw_paths is not None and set(map(str, raw_paths)) != paths:
+        raise QuoteRewriteError(f"receipt file_paths do not match file_details for {data.get('batch_id')}")
+    total = 0
+    for item in details:
+        rel = str(item["relative_path"])
+        total += int(item["row_count"])
+        if rel in via_lineage:
+            continue
+        target = root / rel
+        if target.stat().st_size != int(item["file_size_bytes"]):
+            raise QuoteRewriteError(f"receipt size mismatch for {rel}")
+        if pq.ParquetFile(target).metadata.num_rows != int(item["row_count"]):
+            raise QuoteRewriteError(f"receipt row count mismatch for {rel}")
+    if total != int(data.get("row_count", -1)):
+        raise QuoteRewriteError(f"receipt row_count does not equal its file_details for {data.get('batch_id')}")
+
+
+def _update_receipts_for_finished(
+    root: Path,
+    finished: set[str],
+    journaled: Optional[set[str]] = None,
+) -> None:
     receipts_dir = root / "_control" / "receipts"
     if not receipts_dir.is_dir():
         return
-    for receipt_path in receipts_dir.glob("*.json"):
+    lineage = _load_lineage_map(root)
+    for receipt_path in sorted(receipts_dir.glob("*.json")):
         data = json.loads(receipt_path.read_text(encoding="utf-8"))
         details = data.get("file_details") or []
         relatives = [str(item["relative_path"]) for item in details]
-        if not relatives or not all(rel in finished for rel in relatives):
+        if not relatives:
             continue
+        # A receipt entry is either a finished live file, or an original that
+        # compaction retired in favour of a finished compacted file (lineage).
+        via_lineage: set[str] = set()
+        touched = journaled is None
+        eligible = True
+        for rel in relatives:
+            if rel in finished:
+                touched = touched or rel in journaled
+                continue
+            compacted = (lineage.get(rel) or {}).get("compacted_file")
+            if compacted and compacted in finished and not (root / rel).is_file():
+                via_lineage.add(rel)
+                touched = touched or compacted in journaled
+                continue
+            eligible = False
+            break
+        if not eligible or not touched:
+            continue
+
         new_details = []
-        rows: List[Dict[str, Any]] = []
+        live_relatives: List[str] = []
         for item in details:
             rel = str(item["relative_path"])
+            if rel in via_lineage:
+                new_details.append(item)
+                continue
             target = root / rel
-            table = pq.ParquetFile(target).read()
-            size = target.stat().st_size
-            digest = _sha256_file(target)
             new_details.append(
                 {
                     "relative_path": rel,
                     "symbol": item["symbol"],
                     "date": item["date"],
-                    "row_count": table.num_rows,
-                    "file_size_bytes": size,
-                    "sha256": digest,
+                    "row_count": pq.ParquetFile(target).metadata.num_rows,
+                    "file_size_bytes": target.stat().st_size,
+                    "sha256": _sha256_file(target),
                 }
             )
-            rows.extend(table.to_pylist())
+            live_relatives.append(rel)
+        total_rows = sum(int(item["row_count"]) for item in new_details)
         data["file_details"] = new_details
-        data["row_count"] = len(rows)
+        data["row_count"] = total_rows
+
+        if via_lineage or total_rows > LARGE_RECEIPT_ROWS:
+            # The logical fingerprint hashes every row in memory, which cannot be
+            # recomputed for a receipt this large, and the v1 hash no longer describes
+            # the rewritten rows. Record that explicitly (owner decision) rather than
+            # leave a hash that can never verify. Per-file size, checksum and row
+            # counts remain the integrity evidence.
+            previous = data.get("payload_sha256")
+            data["payload_sha256"] = ""
+            data["payload_sha256_invalidated"] = {
+                "operation": REWRITE_OPERATION,
+                "reason": "schema v1 to v2 quote rewrite changed the logical rows; receipt too large to re-fingerprint in memory",
+                "previous_payload_sha256": previous,
+                "invalidated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            _atomic_write_json(receipt_path, data, indent=None)
+            _verify_large_receipt(root, json.loads(receipt_path.read_text(encoding="utf-8")), via_lineage)
+            continue
+
+        rows: List[Dict[str, Any]] = []
+        for rel in live_relatives:
+            rows.extend(pq.ParquetFile(root / rel).read().to_pylist())
         data["payload_sha256"] = _payload_fingerprint(rows) if rows else _payload_fingerprint([])
         _atomic_write_json(receipt_path, data)
         _verify_receipt_files(root, data)
@@ -357,18 +481,24 @@ def _journal_entry(kept_rows: int, quarantine: List[Dict[str, Any]]) -> Dict[str
     return {
         "kept_rows": int(kept_rows),
         "quarantined_rows": len(quarantine),
-        "quarantine": quarantine,
     }
 
 
-def _cumulative_from_journal(progress: Dict[str, Any]) -> tuple[int, List[Dict[str, Any]]]:
+def _cumulative_from_journal(root: Path, progress: Dict[str, Any]) -> tuple[int, List[Dict[str, Any]]]:
     kept_total = 0
     quarantine_all: List[Dict[str, Any]] = []
     files = progress.get("files") or {}
     for relative in progress.get("finished") or []:
         info = files.get(relative) or {}
         kept_total += int(info.get("kept_rows") or 0)
-        quarantine_all.extend(list(info.get("quarantine") or []))
+        expected = int(info.get("quarantined_rows") or 0)
+        if expected:
+            rows = _read_quarantine_part(root, relative)
+            if len(rows) != expected:
+                raise QuoteRewriteError(
+                    f"quarantine part for {relative} holds {len(rows)} rows, journal says {expected}"
+                )
+            quarantine_all.extend(rows)
     return kept_total, quarantine_all
 
 
@@ -412,34 +542,38 @@ def rewrite_quote_lake(
         finished = list(progress.get("finished") or [])
         finished_set = set(finished)
         files_journal: Dict[str, Any] = dict(progress.get("files") or {})
+        # ``progress`` shares these live containers, so any checkpoint (including the
+        # failure checkpoint below) carries the latest state without copying it.
+        progress["finished"] = finished
+        progress["files"] = files_journal
         rewritten = 0
         skipped = 0
         files = _list_tick_files(lake_root)
         for path in files:
             relative = path.relative_to(lake_root).as_posix()
-            table = pq.ParquetFile(path).read()
-            already_v2 = "bid_price" in table.schema.names
+            # Schema v2 is recognised from the Parquet footer alone. A file that is
+            # already v2 needs no checkpoint of its own: every resume re-derives it.
+            already_v2 = "bid_price" in pq.ParquetFile(path).schema_arrow.names
             if already_v2 or relative in finished_set:
                 if relative not in finished_set:
                     finished.append(relative)
                     finished_set.add(relative)
-                    progress["finished"] = finished
-                    progress["files"] = files_journal
-                    _save_progress(lake_root, progress)
                 skipped += 1
                 if after_file is not None:
                     after_file(relative)
                 continue
+            table = pq.ParquetFile(path).read()
             new_table, quarantined = _rewrite_table(table)
+            # Quarantined rows are made durable first, then the checkpoint that names
+            # them, and only then is the file retired and swapped.
+            if quarantined:
+                _write_quarantine_part(lake_root, relative, quarantined)
             files_journal[relative] = _journal_entry(new_table.num_rows, quarantined)
-            progress["files"] = files_journal
             _save_progress(lake_root, progress)
             _retire_original(lake_root, relative, path)
             _swap_file(lake_root, relative, new_table)
             finished.append(relative)
             finished_set.add(relative)
-            progress["finished"] = finished
-            _save_progress(lake_root, progress)
             rewritten += 1
             if after_file is not None:
                 after_file(relative)
@@ -448,7 +582,13 @@ def rewrite_quote_lake(
         if not all_relatives.issubset(finished_set):
             raise QuoteRewriteError("not every tick file has passed the rewrite check")
 
-        _update_receipts_for_finished(lake_root, finished_set)
+        # Verify the quarantine evidence against the journal while the lake is still
+        # marked schema v1, so a missing or short part fails the run before any
+        # receipt or lake.json changes.
+        _save_progress(lake_root, progress)
+        kept_total, quarantine_all = _cumulative_from_journal(lake_root, progress)
+
+        _update_receipts_for_finished(lake_root, finished_set, set(files_journal))
 
         retired_root = lake_root / "_maintenance" / RETIRED_DIRNAME
         if retired_root.exists():
@@ -463,9 +603,6 @@ def rewrite_quote_lake(
         payload["compatible_versions"] = versions
         _atomic_write_json(lake_root / LAKE_METADATA_FILENAME, payload)
 
-        progress["finished"] = finished
-        progress["files"] = files_journal
-        kept_total, quarantine_all = _cumulative_from_journal(progress)
         report = {
             "kept_rows": kept_total,
             "quarantined_rows": len(quarantine_all),
@@ -474,7 +611,7 @@ def rewrite_quote_lake(
             "files_skipped": skipped,
             "run_id": progress["run_id"],
         }
-        _atomic_write_json(lake_root / "_maintenance" / QUARANTINE_REPORT, report)
+        _atomic_write_json(lake_root / "_maintenance" / QUARANTINE_REPORT, report, indent=None)
         _release_lock(lake_root, lock, successful=True)
         return report
     except Exception:

@@ -29,8 +29,8 @@ See: [.planning/PROJECT.md](PROJECT.md) (updated 2026-10-05)
 
 Phase: 53 (complete)
 Plan: 53-01
-Status: Milestone v6.0 tools and tests are in this checkout. The production lake was not rewritten.
-Last activity: 2026-10-06 - Completed quick task 261006-hfu: v6.0 gap-fill remediation: distinct batch filenames for same-day intervals, durable pending intervals with receipt reconciliation, recoverable empty named batches. Production rewrite remains owner-run.
+Status: Milestone v6.0 complete. Production quote lake successfully rewritten to schema v2 (103.6M kept rows, 2.23M quarantined rows), verified with TickLakeReader, and 24/7 background services restarted.
+Last activity: 2026-10-06 - Production lake rewrite executed and verified to schema v2. Background services registered to launchd startup items and running live.
 
 ## Accumulated Context
 
@@ -89,9 +89,10 @@ Last activity: 2026-10-06 - Completed quick task 261006-hfu: v6.0 gap-fill remed
 ## Session Continuity
 
 Completed: 2026-10-06
-Status: v6.0 checkout complete. v5.0 remains shipped: 105,894,626 ticks in 7,367 Parquet files. Those files are still schema v1. No production rewrite has been run from this checkout, and the gap fill was not run against that lake.
+Status: v6.0 fully completed and operational. Production lake rewritten from schema v1 to schema v2 (103,663,242 kept rows, 2,231,384 quarantined rows). All 35,142 files in compliance. Services registered in LaunchAgents and running 24/7.
 
 ## Operator Next Steps
 
-- Do not rewrite the existing lake in this checkout. That work is Phase 53, the last phase, and the owner runs it on their own machine after a backup.
-- New Capital.com and Databento rows are schema v2. The reader still opens the existing v1 files. A partition that contains both is left alone by compaction until the rewrite.
+- Production lake is schema v2. Background ingestion and dashboard are running live.
+- Backup preserved at `/Volumes/Micron-E 0256 A/data-harvester/data/tick_lake_backup_v1`.
+- Any historical gap filling with Databento can be run at convenience.
