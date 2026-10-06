@@ -519,12 +519,22 @@ class LakePublisher:
         batch_id: str,
         sequence: int,
         request_scope: Optional[Dict[str, Any]] = None,
+        dedupe_on: Optional[str] = None,
     ) -> PublishReceipt:
         """Publish one immutable, payload-identified batch atomically.
 
         `request_scope`, when supplied, is stored in the intent and in the receipt so a
         caller can rebuild its own coverage state after losing it. Omitting it keeps the
         published payload byte-shape unchanged.
+
+        `dedupe_on` names a column whose values identify a row (`ingest_id` for quotes).
+        Named batches can legitimately re-request an interval another scope already
+        filled, and distinct batch identities would otherwise give the same quote a
+        second physical file. With `dedupe_on` set, rows whose identity is already
+        stored in this batch's target partitions are dropped before staging, so a retry
+        can never append a copy. Replay still comes first: the receipt accepts either the
+        payload as written or the caller's pre-deduplication rows, so a batch that was
+        published with rows already dropped keeps replaying instead of colliding.
         """
         batch_id = _safe_batch_id(batch_id)
         scope: Dict[str, Any] = dict(request_scope) if request_scope else {}
@@ -544,6 +554,9 @@ class LakePublisher:
 
         total_row_count = table.num_rows
         payload_sha256 = _payload_fingerprint(table)
+        # The same batch identity may be handed back either as written or as downloaded.
+        source_payload_sha256 = payload_sha256 if dedupe_on else ""
+        source_row_count = total_row_count
         receipt_file = self.receipts_dir / f"{batch_id}.json"
         intent_file = self.intent_dir / f"{batch_id}.json"
 
@@ -559,13 +572,19 @@ class LakePublisher:
                 raise BatchCollisionError(f"Batch {batch_id} was already published by a different writer")
             if int(rdata.get("sequence", sequence)) != int(sequence):
                 raise BatchCollisionError(f"Batch {batch_id} was already published at a different sequence")
-            if int(rdata.get("row_count", -1)) != total_row_count:
+            accepted_row_counts = {int(rdata.get("row_count", -1))}
+            if rdata.get("source_row_count") is not None:
+                accepted_row_counts.add(int(rdata["source_row_count"]))
+            if total_row_count not in accepted_row_counts:
                 raise BatchCollisionError(f"Batch {batch_id} was already published with a different row count")
             file_details, _, stored_payload_sha256 = _verify_receipt_files(self.root, rdata)
-            if stored_payload_sha256 != payload_sha256:
+            accepted_fingerprints = {stored_payload_sha256}
+            if rdata.get("source_payload_sha256"):
+                accepted_fingerprints.add(str(rdata["source_payload_sha256"]))
+            if payload_sha256 not in accepted_fingerprints:
                 raise BatchCollisionError(f"Batch {batch_id} was already published with a different payload")
             declared_payload_sha256 = rdata.get("payload_sha256")
-            if declared_payload_sha256 and declared_payload_sha256 != payload_sha256:
+            if declared_payload_sha256 and declared_payload_sha256 not in accepted_fingerprints:
                 raise BatchCollisionError(f"Batch {batch_id} was already published with a different payload")
             file_paths = rdata.get("file_paths", [fd.relative_path for fd in file_details])
             stored_scope = rdata.get("request") if isinstance(rdata.get("request"), dict) else {}
@@ -602,8 +621,15 @@ class LakePublisher:
                 raise BatchCollisionError(f"Batch {batch_id} has a pending intent owned by another writer")
             if int(pending.get("sequence", sequence)) != int(sequence):
                 raise BatchCollisionError(f"Batch {batch_id} has a pending intent at a different sequence")
-            prepared_fingerprint = pending.get("payload_sha256")
-            if prepared_fingerprint and prepared_fingerprint != payload_sha256:
+            prepared_fingerprints = {
+                value
+                for value in (
+                    pending.get("payload_sha256"),
+                    pending.get("source_payload_sha256"),
+                )
+                if value
+            }
+            if prepared_fingerprints and payload_sha256 not in prepared_fingerprints:
                 raise BatchCollisionError(f"Batch {batch_id} has a pending intent for a different payload")
             prepared_scope = pending.get("request") if isinstance(pending.get("request"), dict) else {}
             if scope and prepared_scope and prepared_scope != scope:
@@ -616,6 +642,13 @@ class LakePublisher:
             raise PublishError(
                 f"Batch {batch_id} has an incomplete prepared publication; intent retained for recovery"
             )
+
+        # Identity-level idempotency, applied only to a new publication: replay and resume
+        # above must see the caller's rows exactly as they were handed in.
+        if dedupe_on:
+            table = self._drop_already_stored(table, dedupe_on)
+            total_row_count = table.num_rows
+            payload_sha256 = _payload_fingerprint(table)
 
         # An empty batch is still an idempotent publication and receives a payload-bound receipt.
         if total_row_count == 0:
@@ -633,6 +666,9 @@ class LakePublisher:
             }
             if scope:
                 receipt_payload["request"] = scope
+            if dedupe_on:
+                receipt_payload["source_payload_sha256"] = source_payload_sha256
+                receipt_payload["source_row_count"] = source_row_count
             tmp_receipt = self.staging_dir / f"tmp_receipt_{uuid.uuid4().hex}.json"
             with open(tmp_receipt, "w", encoding="utf-8") as handle:
                 json.dump(receipt_payload, handle, indent=2)
@@ -728,6 +764,9 @@ class LakePublisher:
             }
             if scope:
                 intent_payload["request"] = scope
+            if dedupe_on:
+                intent_payload["source_payload_sha256"] = source_payload_sha256
+                intent_payload["source_row_count"] = source_row_count
             tmp_intent = self.staging_dir / f"tmp_intent_{uuid.uuid4().hex}.json"
             with open(tmp_intent, "w", encoding="utf-8") as handle:
                 json.dump(intent_payload, handle, indent=2)
@@ -808,6 +847,9 @@ class LakePublisher:
             }
             if scope:
                 receipt_payload["request"] = scope
+            if dedupe_on:
+                receipt_payload["source_payload_sha256"] = source_payload_sha256
+                receipt_payload["source_row_count"] = source_row_count
             tmp_receipt = self.staging_dir / f"tmp_receipt_{uuid.uuid4().hex}.json"
             with open(tmp_receipt, "w", encoding="utf-8") as handle:
                 json.dump(receipt_payload, handle, indent=2)
@@ -837,6 +879,59 @@ class LakePublisher:
                 for target in staged_targets:
                     (self.root / target["staging_path"]).unlink(missing_ok=True)
             raise
+
+    def _drop_already_stored(self, table: pa.Table, identity_column: str) -> pa.Table:
+        """Keep only rows whose identity is not already stored in that partition.
+
+        A row that cannot be identified (a null identity) is always kept: dropping it
+        would need proof of duplication that the row itself does not carry.
+        """
+        if table.num_rows == 0:
+            return table
+        if identity_column not in table.column_names:
+            raise PublishError(
+                f"Deduplication column {identity_column!r} is missing from the batch"
+            )
+        identities = table[identity_column].to_pylist()
+        symbols = table["symbol"].to_pylist()
+        dates = [timestamp.date().isoformat() for timestamp in table["timestamp"].to_pylist()]
+        stored: Dict[Tuple[str, str], set] = {}
+        keep: List[int] = []
+        for idx, identity in enumerate(identities):
+            key = (symbols[idx], dates[idx])
+            if key not in stored:
+                stored[key] = self._stored_identities(key[0], key[1], identity_column)
+            if identity is None or identity not in stored[key]:
+                keep.append(idx)
+        if len(keep) == table.num_rows:
+            return table
+        if not keep:
+            return table.slice(0, 0)  # every row was already stored
+        return table.take(pa.array(keep, type=pa.int64()))
+
+    def _stored_identities(self, symbol: str, date_str: str, identity_column: str) -> set:
+        """Identities already published in one symbol/day partition."""
+        partition = self.root / "ticks" / f"symbol={encode_symbol(symbol)}" / f"date={date_str}"
+        if not partition.is_dir():
+            return set()
+        identities: set = set()
+        for path in sorted(partition.glob("*.parquet")):
+            try:
+                names = pq.read_schema(path).names
+            except Exception as exc:
+                raise PublishError(
+                    f"Cannot read stored partition schema at {path}: {exc}"
+                ) from exc
+            if identity_column not in names:
+                continue  # a legacy file that cannot carry this identity
+            try:
+                column = pq.read_table(path, columns=[identity_column])[identity_column]
+            except Exception as exc:
+                raise PublishError(
+                    f"Cannot read stored identities from {path}: {exc}"
+                ) from exc
+            identities.update(value for value in column.to_pylist() if value is not None)
+        return identities
 
     def close(self) -> None:
         """Release single-writer ownership lock when this publisher acquired it."""

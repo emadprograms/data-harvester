@@ -233,13 +233,17 @@ def publish_ticks_to_lake(
             file_namespace=batch_file_namespace(batch_id),
             ownership_lock=ownership_lock,
         ) as publisher:
-            publisher.publish_batch(
+            receipt = publisher.publish_batch(
                 records,
                 batch_id=batch_id,
                 sequence=sequence,
                 request_scope=request_scope,
+                # Two scopes can legitimately cover the same interval, and a retry can
+                # repeat a response that is already stored. Collapse on the quote
+                # identity so distinct files never mean duplicate quotes.
+                dedupe_on="ingest_id",
             )
-        return len(records)
+        return int(receipt.row_count)
 
     writer = TickLakeWriter(root=root, writer_id=writer_id)
     try:
