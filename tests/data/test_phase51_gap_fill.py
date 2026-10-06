@@ -407,6 +407,28 @@ def test_qfill_03_excludes_january_9_2025_day_of_mourning(tmp_path):
     assert client.timeseries.calls == []
 
 
+def test_qfill_04_empty_success_is_not_requested_again(tmp_path):
+    """A successful empty tbbo response is coverage, not a remaining hole."""
+    import pandas as pd
+
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    gap_start = _et(NORMAL_DAY, 10, 1)
+    gap_end = _et(NORMAL_DAY, 10, 6)
+    _write_occupied_day(lake, NORMAL_DAY, gap_start, gap_end)
+    client = _Client(pd.DataFrame())
+    first = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    assert first["requests"] == 1
+    assert first["rows"] == 0
+    assert len(client.timeseries.calls) == 1
+    assert (lake / "_control" / COVERAGE_FILENAME).is_file()
+
+    second = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    assert second["requests"] == 0
+    assert second["follow_up_requests"] == 0
+    assert len(client.timeseries.calls) == 1
+
+
 def test_qfill_04_sparse_success_is_not_requested_again(tmp_path):
     """QFILL-04: a sparse successful tbbo fill is coverage, not a remaining hole."""
     import pandas as pd
@@ -519,6 +541,38 @@ def test_qfill_01_named_day_cli_processes_exactly_one_date(tmp_path):
     ):
         gap_fill_main(["--date", "2026-10-03", "--lake-root", str(lake)])
     assert client.timeseries.calls == []
+
+
+def test_qfill_01_named_day_cli_fills_the_requested_open_day_only(tmp_path):
+    """The named-day command requests the gap on that date and then exits."""
+    from unittest.mock import patch
+
+    import pandas as pd
+
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    gap_start = _et(NORMAL_DAY, 10, 1)
+    gap_end = _et(NORMAL_DAY, 10, 6)
+    _write_occupied_day(lake, NORMAL_DAY, gap_start, gap_end)
+    raw = pd.DataFrame(
+        {
+            "ts_event": pd.to_datetime(["2026-10-02 14:01:00+00:00"]),
+            "symbol": ["NVDA"],
+            "bid_px_00": [100.00],
+            "ask_px_00": [100.04],
+        }
+    )
+    client = _Client(raw)
+    with patch("src.data.databento_backfill.get_databento_client", return_value=client), patch(
+        "src.data.databento_backfill.get_target_stock_symbols", return_value=SYMBOLS
+    ):
+        gap_fill_main(["--date", "2026-10-02", "--lake-root", str(lake)])
+        gap_fill_main(["--date", "2026-10-02", "--lake-root", str(lake)])
+    assert len(client.timeseries.calls) == 1
+    call = client.timeseries.calls[0]
+    assert call["start"] == "2026-10-02T14:01:00"
+    assert call["end"] == "2026-10-02T14:06:00"
+    assert all("2026-10-01" not in str(value) for value in call.values())
 
 
 def test_walker_uses_overridden_lake_registry(tmp_path):
