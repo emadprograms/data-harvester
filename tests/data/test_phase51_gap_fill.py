@@ -600,3 +600,443 @@ def test_walker_uses_overridden_lake_registry(tmp_path):
             lake_root=lake,
         )
     assert captured["symbols"] == ["NVDA"]
+
+
+# ---------------------------------------------------------------------------
+# v6.0 gap-fill remediation (quick task 261006-hfu)
+#
+# P1: two nonempty intervals for the same symbol and UTC day shared one
+#     physical filename and the second publication raised BatchCollisionError.
+# P2: a publication that succeeded while its coverage write failed caused a
+#     second paid request on restart, with shortened bounds.
+# ---------------------------------------------------------------------------
+
+import contextlib
+import json
+import os
+
+import pandas as pd
+
+import src.data.gap_fill as gap_fill_module
+from src.storage.barriers import clear_barrier_hooks
+from tests.support.faults import PersistenceFaultInjector
+
+FIRST_GAP = (_et(NORMAL_DAY, 10, 1), _et(NORMAL_DAY, 10, 6))
+SECOND_GAP = (_et(NORMAL_DAY, 10, 11), _et(NORMAL_DAY, 10, 16))
+
+
+def _utc(day: date, hour: int, minute: int) -> datetime:
+    """Naive UTC timestamp, matching what a historical client returns."""
+    return _et(day, hour, minute).astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _write_occupied_day_gaps(lake: Path, day: date, gaps) -> Path:
+    """Occupy 04:00-20:00 ET except for every half-open gap in `gaps`."""
+    rows = []
+    cursor = _et(day, 4, 0)
+    index = 0
+    windows = [(start, end) for start, end in gaps]
+    while cursor < _et(day, 20, 0):
+        if not any(start <= cursor < end for start, end in windows):
+            rows.append(
+                QuoteTick(
+                    timestamp=cursor.astimezone(timezone.utc).replace(tzinfo=None),
+                    symbol="AAPL",
+                    price=100.25,
+                    volume=1.0,
+                    bid=100.00,
+                    ask=100.04,
+                    source="CAPITAL",
+                    session="REG",
+                    ingest_id=f"occupied_{index:04d}",
+                )
+            )
+            index += 1
+        cursor += timedelta(minutes=1)
+    table = ticks_to_table(rows, validate=True)
+    dest = lake / "ticks" / "symbol=AAPL" / f"date={day.isoformat()}"
+    dest.mkdir(parents=True, exist_ok=True)
+    path = dest / "batch_existing.parquet"
+    pq.write_table(table, path)
+    return path
+
+
+class _RecordingClient:
+    """Records requests and filters a fixed quote set by symbols and [start, end).
+
+    An interval with no matching quotes returns an empty frame, so a sparse or
+    empty response is reproducible without a paid API.
+    """
+
+    def __init__(self, quotes=(), costs=0.0):
+        self.quotes = [
+            (timestamp, str(symbol).upper()) for timestamp, symbol in quotes
+        ]
+        self.calls = []
+        self.cost_calls = []
+        self.costs = costs
+        self.failures_remaining = {"get_range": 0}
+        self.timeseries = self
+        self.metadata = self
+
+    def get_range(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        if self.failures_remaining["get_range"] > 0:
+            self.failures_remaining["get_range"] -= 1
+            raise OSError("injected download failure")
+        start = datetime.fromisoformat(kwargs["start"])
+        end = datetime.fromisoformat(kwargs["end"])
+        wanted = {str(symbol).upper() for symbol in kwargs.get("symbols", [])}
+        matched = [
+            (timestamp, symbol)
+            for timestamp, symbol in self.quotes
+            if start <= timestamp < end and symbol in wanted
+        ]
+        frame = pd.DataFrame(
+            {
+                "ts_event": pd.to_datetime([item[0] for item in matched], utc=True),
+                "symbol": [item[1] for item in matched],
+                "price": [100.50] * len(matched),
+                "size": [12] * len(matched),
+                "bid_px_00": [100.00] * len(matched),
+                "ask_px_00": [100.04] * len(matched),
+            }
+        )
+        return _Range(frame)
+
+    def get_cost(self, **kwargs):
+        self.cost_calls.append(dict(kwargs))
+        return self.costs
+
+
+def _coverage_file(lake: Path) -> Path:
+    return lake / "_control" / COVERAGE_FILENAME
+
+
+def _coverage_state(lake: Path) -> dict:
+    return json.loads(_coverage_file(lake).read_text(encoding="utf-8"))
+
+
+def _v2_files(lake: Path, existing: Path) -> list:
+    return [
+        path
+        for path in (lake / "ticks").glob("symbol=*/date=*/*.parquet")
+        if path != existing and "bid_price" in pq.read_schema(path).names
+    ]
+
+
+def _gfill_receipts(lake: Path) -> list:
+    return sorted((lake / "_control" / "receipts").glob("gfill_*.json"))
+
+
+def _request_windows(client: _RecordingClient) -> list:
+    return [(call["start"], call["end"]) for call in client.calls]
+
+
+def test_qfill_04_two_intervals_publish_distinct_files(tmp_path):
+    """P1: two nonempty intervals on one symbol/day own two physical files."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    existing = _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP, SECOND_GAP])
+    before = existing.read_bytes()
+    client = _RecordingClient(
+        [
+            (_utc(NORMAL_DAY, 10, 1), "NVDA"),
+            (_utc(NORMAL_DAY, 10, 11), "NVDA"),
+        ]
+    )
+
+    first = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+
+    assert _request_windows(client) == [
+        ("2026-10-02T14:01:00", "2026-10-02T14:06:00"),
+        ("2026-10-02T14:11:00", "2026-10-02T14:16:00"),
+    ]
+    assert first["requests"] == 2
+    files = _v2_files(lake, existing)
+    assert len(files) == 2, f"expected two physical files, got {[path.name for path in files]}"
+    assert len({path.name for path in files}) == 2
+    assert sum(pq.read_table(path).num_rows for path in files) == 2
+
+    receipts = _gfill_receipts(lake)
+    assert len(receipts) == 2
+    stored = [json.loads(path.read_text(encoding="utf-8")) for path in receipts]
+    assert len({record["batch_id"] for record in stored}) == 2
+    for record in stored:
+        assert record["request"]["batch_id"] == record["batch_id"]
+        assert record["request"]["date"] == NORMAL_DAY.isoformat()
+    assert {record["request"]["start"][11:16] for record in stored} == {"10:01", "10:11"}
+
+    assert existing.read_bytes() == before
+
+    second = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    assert second["requests"] == 0
+    assert len(client.calls) == 2
+
+
+class _CoverageCommitFault:
+    """Fails the coverage commit after publication, exactly once."""
+
+    def __init__(self, real_write):
+        self.count = 0
+        self._real = real_write
+
+    def __call__(self, path, payload):
+        if (
+            Path(path).name == COVERAGE_FILENAME
+            and payload.get("intervals")
+            and self.count == 0
+        ):
+            self.count += 1
+            raise OSError("injected coverage-write failure")
+        return self._real(path, payload)
+
+
+def _interrupt_coverage_commit(monkeypatch, lake: Path) -> _CoverageCommitFault:
+    """Fail the coverage commit after publication, exactly once."""
+    real_write = gap_fill_module._atomic_write_json
+    fault = _CoverageCommitFault(real_write)
+    monkeypatch.setattr(gap_fill_module, "_atomic_write_json", fault)
+    fault.restore = lambda: monkeypatch.setattr(
+        gap_fill_module, "_atomic_write_json", real_write
+    )
+    return fault
+
+
+def test_qfill_04_sparse_receipt_recovery_avoids_second_download(tmp_path, monkeypatch):
+    """P2: a durable publish plus a failed coverage write must not re-download."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    existing = _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP])
+    before = existing.read_bytes()
+    client = _RecordingClient([(_utc(NORMAL_DAY, 10, 1), "NVDA")])
+
+    injected = _interrupt_coverage_commit(monkeypatch, lake)
+    with pytest.raises(OSError):
+        fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    assert injected.count == 1
+    injected.restore()
+
+    second = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+
+    assert len(client.calls) == 1, f"a second paid request happened: {_request_windows(client)}"
+    assert second["requests"] == 0
+    assert _request_windows(client) == [("2026-10-02T14:01:00", "2026-10-02T14:06:00")]
+    recovered = _coverage_state(lake)
+    assert recovered["pending"] == []
+    assert len(recovered["intervals"]) == 1
+    assert recovered["intervals"][0]["start"].startswith("2026-10-02T10:01:00")
+    assert recovered["intervals"][0]["end"].startswith("2026-10-02T10:06:00")
+    assert sum(pq.read_table(path).num_rows for path in _v2_files(lake, existing)) == 1
+    assert existing.read_bytes() == before
+
+
+def test_qfill_04_deleted_ledger_is_recovered_from_receipt_request_scope(tmp_path):
+    """A deleted ledger is rebuilt from the receipt, with no second purchase."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    existing = _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP])
+    client = _RecordingClient([(_utc(NORMAL_DAY, 10, 1), "NVDA")])
+
+    first = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    assert first["requests"] == 1
+    published = _gfill_receipts(lake)
+    assert len(published) == 1
+    batch_id = json.loads(published[0].read_text(encoding="utf-8"))["batch_id"]
+
+    _coverage_file(lake).unlink()
+
+    second = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+
+    assert len(client.calls) == 1, f"ledger loss caused a paid request: {_request_windows(client)}"
+    assert second["requests"] == 0
+    state = _coverage_state(lake)
+    assert state["intervals"] and state["intervals"][0]["batch_id"] == batch_id
+    assert state["intervals"][0]["start"].startswith("2026-10-02T10:01:00")
+    assert sum(pq.read_table(path).num_rows for path in _v2_files(lake, existing)) == 1
+
+
+def test_qfill_04_empty_success_publishes_recoverable_zero_row_batch(tmp_path):
+    """An empty named response gets a receipt that survives a lost ledger."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    existing = _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP])
+    client = _RecordingClient([])
+
+    first = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    assert first["requests"] == 1
+    assert first["rows"] == 0
+
+    receipts = _gfill_receipts(lake)
+    assert len(receipts) == 1
+    record = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert record["row_count"] == 0
+    assert record["file_paths"] == []
+    assert _v2_files(lake, existing) == []
+
+    _coverage_file(lake).unlink()
+    second = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+
+    assert len(client.calls) == 1, f"an empty publication was re-downloaded: {_request_windows(client)}"
+    assert second["requests"] == 0
+    assert _v2_files(lake, existing) == []
+    assert _coverage_state(lake)["intervals"]
+
+
+def test_qfill_04_pending_publication_recovers_after_receipt_durability_interrupt(tmp_path):
+    """A crash between promotion and receipt recovers without another download."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    existing = _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP])
+    client = _RecordingClient([(_utc(NORMAL_DAY, 10, 1), "NVDA")])
+
+    injector = PersistenceFaultInjector()
+    injector.inject_barrier(
+        "receipt_durability",
+        failures=1,
+        error=OSError("injected receipt_durability interrupt"),
+    )
+    try:
+        with pytest.raises(Exception):
+            fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+        injector.assert_triggered("receipt_durability")
+    finally:
+        injector.close()
+        clear_barrier_hooks()
+
+    assert list((lake / "_control" / "intent").glob("gfill_*.json")), "intent must be retained"
+    assert _gfill_receipts(lake) == []
+
+    second = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+
+    assert len(client.calls) == 1, f"recovery re-downloaded: {_request_windows(client)}"
+    assert second["requests"] == 0
+    assert list((lake / "_control" / "intent").glob("gfill_*.json")) == []
+    assert len(_gfill_receipts(lake)) == 1
+    assert sum(pq.read_table(path).num_rows for path in _v2_files(lake, existing)) == 1
+    assert _coverage_state(lake)["intervals"]
+
+
+def test_qfill_04_failed_request_stays_retryable_on_original_bounds(tmp_path):
+    """A request that never published is retried on its original bounds."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP])
+    client = _RecordingClient([(_utc(NORMAL_DAY, 10, 1), "NVDA")])
+    client.failures_remaining["get_range"] = 1
+
+    with pytest.raises(OSError):
+        fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    assert _request_windows(client) == [("2026-10-02T14:01:00", "2026-10-02T14:06:00")]
+
+    second = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+
+    assert _request_windows(client) == [
+        ("2026-10-02T14:01:00", "2026-10-02T14:06:00"),
+        ("2026-10-02T14:01:00", "2026-10-02T14:06:00"),
+    ], "the retry must use the original bounds, never a shortened interval"
+    assert second["requests"] == 1
+    completed = _coverage_state(lake)
+    assert completed["pending"] == []
+    assert completed["intervals"][0]["start"].startswith("2026-10-02T10:01:00")
+
+    third = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    assert third["requests"] == 0
+    assert len(client.calls) == 2
+
+
+def test_qfill_04_invalid_recovery_evidence_refuses_before_cost_or_download(tmp_path, monkeypatch):
+    """Corrupt evidence stops the fill before estimation and before any request."""
+    from src.data.gap_fill import GapFillRecoveryError
+
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP])
+    client = _RecordingClient([(_utc(NORMAL_DAY, 10, 1), "NVDA")])
+
+    injected = _interrupt_coverage_commit(monkeypatch, lake)
+    with pytest.raises(OSError):
+        fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+    injected.restore()
+    assert len(client.calls) == 1
+
+    receipt = _gfill_receipts(lake)[0]
+    record = json.loads(receipt.read_text(encoding="utf-8"))
+    record["file_details"][0]["sha256"] = "0" * 64
+    receipt.write_text(json.dumps(record), encoding="utf-8")
+    before_state = _coverage_file(lake).read_bytes()
+
+    with pytest.raises(GapFillRecoveryError):
+        fill_named_day(
+            NORMAL_DAY,
+            client=client,
+            lake_root=lake,
+            symbols=SYMBOLS,
+            remaining_budget=1.0,
+        )
+
+    assert client.cost_calls == [], "refusal must happen before cost estimation"
+    assert len(client.calls) == 1, "refusal must happen before any download"
+    assert _coverage_file(lake).read_bytes() == before_state
+
+
+def _write_coverage_payload(lake: Path, payload) -> None:
+    _coverage_file(lake).parent.mkdir(parents=True, exist_ok=True)
+    _coverage_file(lake).write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _coverage_record(symbols, *, day: date = NORMAL_DAY, dataset: str = "DBEQ.BASIC",
+                     schema: str = "tbbo") -> dict:
+    return {
+        "date": day.isoformat(),
+        "dataset": dataset,
+        "schema": schema,
+        "symbols": list(symbols),
+        "start": FIRST_GAP[0].isoformat(),
+        "end": FIRST_GAP[1].isoformat(),
+        "batch_id": "gfill_legacy_record",
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param([_coverage_record(["NVDA", "AAPL"])], id="legacy-bare-list-reordered-symbols"),
+        pytest.param({"intervals": [_coverage_record(["AAPL", "NVDA"])]}, id="legacy-dict-no-version"),
+    ],
+)
+def test_qfill_04_legacy_coverage_forms_still_cover(tmp_path, payload):
+    """Legacy ledgers, including reordered symbol sets, keep suppressing requests."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP])
+    _write_coverage_payload(lake, payload)
+    client = _RecordingClient([])
+
+    result = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+
+    assert result["requests"] == 0
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param(_coverage_record(SYMBOLS, day=date(2026, 10, 1)), id="other-day"),
+        pytest.param(_coverage_record(SYMBOLS, dataset="DBEQ.OTHER"), id="other-dataset"),
+        pytest.param(_coverage_record(SYMBOLS, schema="ohlcv"), id="other-schema"),
+        pytest.param(_coverage_record(["AAPL"]), id="other-symbol-set"),
+    ],
+)
+def test_qfill_04_coverage_is_isolated_by_day_dataset_schema_and_symbols(tmp_path, record):
+    """Coverage for another scope never suppresses this day's request."""
+    lake = tmp_path / "lake"
+    init_tick_lake(lake)
+    _write_occupied_day_gaps(lake, NORMAL_DAY, [FIRST_GAP])
+    _write_coverage_payload(lake, {"intervals": [record]})
+    client = _RecordingClient([])
+
+    result = fill_named_day(NORMAL_DAY, client=client, lake_root=lake, symbols=SYMBOLS)
+
+    assert result["requests"] == 1
+    assert _request_windows(client) == [("2026-10-02T14:01:00", "2026-10-02T14:06:00")]
