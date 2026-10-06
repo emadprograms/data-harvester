@@ -108,14 +108,22 @@ def estimate_interval_cost(
     """Cost of one actual Databento request window, in USD."""
     start_str = start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     end_str = end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    cost = client.metadata.get_cost(
-        dataset=dataset,
-        symbols=symbols,
-        schema=schema,
-        start=start_str,
-        end=end_str,
-    )
-    return float(cost)
+    last_exc = None
+    for attempt in range(3):
+        try:
+            cost = client.metadata.get_cost(
+                dataset=dataset,
+                symbols=symbols,
+                schema=schema,
+                start=start_str,
+                end=end_str,
+            )
+            return float(cost)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(2.0 * (attempt + 1))
+    raise last_exc
 
 
 QUOTE_V2_COLUMNS = ["timestamp", "symbol", "bid_price", "ask_price", "source", "session"]

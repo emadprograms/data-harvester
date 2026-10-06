@@ -925,7 +925,7 @@ class LakePublisher:
             if identity_column not in names:
                 continue  # a legacy file that cannot carry this identity
             try:
-                column = pq.read_table(path, columns=[identity_column])[identity_column]
+                column = pq.ParquetFile(path).read(columns=[identity_column])[identity_column]
             except Exception as exc:
                 raise PublishError(
                     f"Cannot read stored identities from {path}: {exc}"

@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Sequence, Set, Tuple
@@ -943,13 +944,24 @@ def fill_named_day(
                 trading_date, symbols, dataset, schema, start, end, batch_id
             )
             _record_pending(root, request_scope)
-            data = client.timeseries.get_range(
-                dataset=dataset,
-                symbols=list(symbols),
-                schema=schema,
-                start=start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
-                end=end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
-            )
+            data = None
+            last_get_range_exc = None
+            for attempt in range(3):
+                try:
+                    data = client.timeseries.get_range(
+                        dataset=dataset,
+                        symbols=list(symbols),
+                        schema=schema,
+                        start=start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+                        end=end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+                    )
+                    break
+                except Exception as exc:
+                    last_get_range_exc = exc
+                    if attempt < 2:
+                        time.sleep(2.0 * (attempt + 1))
+            if data is None:
+                raise last_get_range_exc
             requested.append((start.isoformat(), end.isoformat()))
             frame = normalize_tbbo_frame(data.to_df(), trading_date)
             written += publish_ticks_to_lake(
