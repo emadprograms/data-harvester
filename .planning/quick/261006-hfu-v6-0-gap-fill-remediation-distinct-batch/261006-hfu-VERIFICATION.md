@@ -62,6 +62,10 @@ The repository workflow (`Offline tests`, `python -m pytest tests -m 'not live a
 | P2 repeated paid requests after interruption | reproduced (second request `14:02–14:06`), audit claimed F3/QFILL-04 verified | closed; pending intervals + receipt reconciliation; the audit's own deleted-ledger test now asserts zero extra requests |
 | Milestone-audit QFILL-04 evidence | overstated: the cited crash test passed while issuing a second paid request | corrected; that test now fails on the old code and passes on the new |
 
+## Post-verification hardening (same task)
+
+A second adversarial pass found four robustness gaps in the recovery state machine and closed them with 15 additional tests (corrupt ledger and its repair path, non-object entries, four unusable pending records, foreign-scope pending isolation, empty-success coverage interruption, second-interval publish failure, stray receipts, unrelated publication receipts, unrecoverable-intent refusal, recovery after compaction lineage, occupancy visibility of namespaced files). Two further paths were probed and confirmed correct: post-compaction recovery via `lineage.json`, and namespaced v2 files remaining readable by the occupancy scan. Suite after hardening: **1,061 passed, 14 deselected**.
+
 ## Notes and limits
 
 - No production lake was opened, copied, or rewritten. No paid market-data API was called; all exports go to `tmp_path` lakes with injected clients.
