@@ -11,6 +11,25 @@ cd "$REPO_ROOT"
 
 echo "Stopping Data Harvester background services on macOS..."
 
+# 0. Unload LaunchAgents first. The installed agents use KeepAlive=true, so
+#    launchd would immediately respawn any supervisor we merely kill. Unloading
+#    (without -w) stops the job and prevents respawn for this session only; the
+#    plist stays in ~/Library/LaunchAgents, so auto-start at next login is kept.
+LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
+UNLOADED_AGENTS=0
+for label in com.dataharvester.streamer com.dataharvester.dashboard; do
+    plist="$LAUNCH_AGENTS_DIR/$label.plist"
+    if [ -f "$plist" ] && launchctl list 2>/dev/null | awk '{print $3}' | grep -qx "$label"; then
+        echo "  Unloading LaunchAgent $label (prevents KeepAlive respawn)..."
+        launchctl unload "$plist" 2>/dev/null || true
+        UNLOADED_AGENTS=$((UNLOADED_AGENTS + 1))
+    fi
+done
+if [ "$UNLOADED_AGENTS" -gt 0 ]; then
+    # launchd sends SIGTERM and waits (ExitTimeOut) for a graceful drain; give it a moment.
+    sleep 2
+fi
+
 # Resolve Python executable
 if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
     PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
@@ -55,3 +74,8 @@ else:
 "
 
 echo ""
+if [ "$UNLOADED_AGENTS" -gt 0 ]; then
+    echo "Note: LaunchAgents were unloaded, so KeepAlive auto-restart is OFF until you"
+    echo "      re-arm it (or log out/in): ./tools/mac/install_startup.sh"
+    echo ""
+fi
