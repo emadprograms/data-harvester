@@ -201,12 +201,23 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_text("<h1>Dashboard UI under construction</h1>", status=200)
             return
 
-        # 1b. Static Assets (/static/*, /css/*, /js/*, /favicon.ico)
+        # 1b. Static Assets (/static/*, /css/*, /js/*, /favicon.*, /apple-touch-icon.png)
         if path.startswith("/static/"):
             rel = path[len("/static/"):]
             self._serve_static_file(rel)
             return
-        elif path.startswith("/js/") or path.startswith("/css/") or path == "/favicon.ico":
+        elif (
+            path.startswith("/js/")
+            or path.startswith("/css/")
+            or path in (
+                "/favicon.ico",
+                "/favicon.svg",
+                "/favicon-32x32.png",
+                "/favicon-16x16.png",
+                "/apple-touch-icon.png",
+                "/safari-pinned-tab.svg",
+            )
+        ):
             self._serve_static_file(path.lstrip("/"))
             return
 

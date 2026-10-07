@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <linearGradient id="dh-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+    <linearGradient id="dh-bolt" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6ee7b7" />
+      <stop offset="40%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <filter id="dh-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="#059669" flood-opacity="0.6" />
+    </filter>
+  </defs>
+
+  <!-- Squircle Background Badge -->
+  <rect x="1.5" y="1.5" width="29" height="29" rx="7" fill="url(#dh-bg)" stroke="#10b981" stroke-width="1.5" stroke-opacity="0.7" />
+
+  <!-- Data Harvester Lightning Bolt -->
+  <path d="M18 4.5 L8.5 16.5 H15 L13.5 27.5 L23.5 15.5 H17 Z" fill="url(#dh-bolt)" filter="url(#dh-shadow)" stroke="#6ee7b7" stroke-width="0.5" stroke-linejoin="round" />
+</svg>

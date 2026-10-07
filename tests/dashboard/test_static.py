@@ -43,6 +43,8 @@ def test_serve_index_root(static_server):
     assert "/static/js/app.js" in resp.text
     assert "/static/js/chart.js" in resp.text
     assert "/static/js/tables.js" in resp.text
+    assert "/static/favicon.svg" in resp.text
+    assert "/favicon.ico" in resp.text
 
 
 def test_serve_index_html(static_server):
@@ -119,3 +121,35 @@ def test_options_cors_preflight(static_server):
     assert resp.status_code == 204
     assert resp.headers.get("Access-Control-Allow-Origin") == "*"
     assert "GET" in resp.headers.get("Access-Control-Allow-Methods", "")
+
+
+def test_serve_favicon_and_tab_icons(static_server):
+    """Verify that browser tab bar icons and favicons are served with proper MIME types."""
+    # Root-level requests
+    resp_ico = requests.get(f"{static_server}/favicon.ico")
+    assert resp_ico.status_code == 200
+    assert "image/x-icon" in resp_ico.headers.get("Content-Type", "")
+    assert len(resp_ico.content) > 0
+
+    resp_svg = requests.get(f"{static_server}/favicon.svg")
+    assert resp_svg.status_code == 200
+    assert "image/svg+xml" in resp_svg.headers.get("Content-Type", "")
+    assert "<svg" in resp_svg.text
+
+    resp_apple = requests.get(f"{static_server}/apple-touch-icon.png")
+    assert resp_apple.status_code == 200
+    assert "image/png" in resp_apple.headers.get("Content-Type", "")
+
+    # Static path requests
+    resp_static_svg = requests.get(f"{static_server}/static/favicon.svg")
+    assert resp_static_svg.status_code == 200
+    assert "image/svg+xml" in resp_static_svg.headers.get("Content-Type", "")
+
+    resp_static_32 = requests.get(f"{static_server}/static/favicon-32x32.png")
+    assert resp_static_32.status_code == 200
+    assert "image/png" in resp_static_32.headers.get("Content-Type", "")
+
+    resp_pinned = requests.get(f"{static_server}/static/safari-pinned-tab.svg")
+    assert resp_pinned.status_code == 200
+    assert "image/svg+xml" in resp_pinned.headers.get("Content-Type", "")
+
