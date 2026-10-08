@@ -3,7 +3,11 @@
  */
 
 // --- Stream Telemetry & Ticker Tape ---
+let isFetchingStreamTape = false;
+
 async function fetchStreamTape() {
+  if (isFetchingStreamTape) return;
+  isFetchingStreamTape = true;
   try {
     const res = await fetch(`${API_BASE}/api/stream/tape?limit=50`);
     if (!res.ok) return;
@@ -40,6 +44,8 @@ async function fetchStreamTape() {
     renderTickerGrid(ticks);
   } catch (err) {
     console.error("Error fetching stream tape:", err);
+  } finally {
+    isFetchingStreamTape = false;
   }
 }
 
@@ -84,7 +90,11 @@ function renderTickerGrid(ticks) {
 }
 
 // --- Stream Status & Process Telemetry ---
+let isFetchingStreamStatus = false;
+
 async function fetchStreamStatus() {
+  if (isFetchingStreamStatus) return;
+  isFetchingStreamStatus = true;
   try {
     const res = await fetch(`${API_BASE}/api/stream/status`);
     if (!res.ok) return;
@@ -121,6 +131,8 @@ async function fetchStreamStatus() {
     if (kpiRate) kpiRate.innerText = `${data.ticks_last_minute || 0} ticks/m`;
   } catch (err) {
     console.error("Error fetching stream status:", err);
+  } finally {
+    isFetchingStreamStatus = false;
   }
 }
 

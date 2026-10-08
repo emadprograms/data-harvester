@@ -439,7 +439,7 @@ def test_runner_sigint_sigterm_lifecycle(tmp_path):
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env={**os.environ, "PYTHONUNBUFFERED": "1", "SKIP_DISCORD": "true"},
         )
 
         try:

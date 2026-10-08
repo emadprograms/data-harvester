@@ -939,12 +939,39 @@ class TickLakeReader:
         needed_rows = limit + offset
         for d in sorted_dates:
             d_files = date_groups[d]
-            target_files.extend(d_files)
-            for f in d_files:
-                try:
-                    total_rows_estimate += pq.read_metadata(str(f)).num_rows
-                except Exception:
-                    total_rows_estimate += 500
+            if symbol:
+                # Single symbol: newest files first (descending by filename sequence)
+                sorted_d_files = sorted(d_files, key=lambda p: p.name, reverse=True)
+                for f in sorted_d_files:
+                    target_files.append(f)
+                    try:
+                        total_rows_estimate += pq.read_metadata(str(f)).num_rows
+                    except Exception:
+                        total_rows_estimate += 500
+                    if total_rows_estimate >= needed_rows:
+                        break
+            else:
+                # All symbols: gather newest files per symbol for this date partition
+                sym_groups = collections.defaultdict(list)
+                for f in d_files:
+                    sym_groups[f.parent.parent.name].append(f)
+
+                date_rows_added = 0
+                for sym_name, s_files in sym_groups.items():
+                    sorted_s_files = sorted(s_files, key=lambda p: p.name, reverse=True)
+                    sym_rows = 0
+                    for f in sorted_s_files:
+                        target_files.append(f)
+                        try:
+                            r_count = pq.read_metadata(str(f)).num_rows
+                        except Exception:
+                            r_count = 500
+                        sym_rows += r_count
+                        date_rows_added += r_count
+                        if sym_rows >= needed_rows:
+                            break
+                total_rows_estimate += date_rows_added
+
             if total_rows_estimate >= needed_rows and len(target_files) >= 1:
                 break
 

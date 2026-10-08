@@ -928,3 +928,71 @@ def test_p25_03_empty_lake_behavior_across_all_reader_methods(tmp_path):
     # 12. get_lake_health_report
     health = reader.get_lake_health_report()
     assert health["total_files"] == 0
+
+
+def test_tape_multi_batch_pruning_within_same_date(tmp_path):
+    """
+    Verify get_tape avoids scanning all files in an uncompacted partition date
+    when only the latest N ticks are requested.
+    """
+    lake_root = tmp_path / "lake"
+    init_tick_lake(lake_root)
+
+    t_utc = datetime(2026, 10, 8, 14, 0, 0, tzinfo=timezone.utc)
+    # Create 20 separate batches with 5 ticks each for SYMA and SYMB on the same day
+    with LakePublisher(root=lake_root, writer_id="test_writer") as publisher:
+        for b_idx in range(20):
+            ticks_a = [
+                QuoteTick(
+                    timestamp=t_utc + timedelta(seconds=b_idx * 10 + i),
+                    symbol="SYMA",
+                    price=100.0 + b_idx * 0.1,
+                    volume=1.0,
+                    bid=99.9,
+                    ask=100.1,
+                    source="CAPITAL",
+                    session="REG",
+                    ingest_id=f"a_{b_idx}_{i}",
+                )
+                for i in range(5)
+            ]
+            ticks_b = [
+                QuoteTick(
+                    timestamp=t_utc + timedelta(seconds=b_idx * 10 + i),
+                    symbol="SYMB",
+                    price=200.0 + b_idx * 0.1,
+                    volume=1.0,
+                    bid=199.9,
+                    ask=200.1,
+                    source="CAPITAL",
+                    session="REG",
+                    ingest_id=f"b_{b_idx}_{i}",
+                )
+                for i in range(5)
+            ]
+            publisher.publish_batch(ticks_a, batch_id=f"batch_a_{b_idx:04d}", sequence=b_idx + 1)
+            publisher.publish_batch(ticks_b, batch_id=f"batch_b_{b_idx:04d}", sequence=b_idx + 1)
+
+    reader = TickLakeReader(root=lake_root)
+
+    # 1. Single-symbol query requesting 10 ticks
+    tape_a = reader.get_tape(symbol="SYMA", limit=10)
+    ticks = tape_a.get("ticks", [])
+    assert len(ticks) == 10
+    # Strict descending order
+    for i in range(len(ticks) - 1):
+        assert ticks[i]["timestamp"] >= ticks[i + 1]["timestamp"]
+    # Newest ticks should come from the latest batches (batch index 18, 19)
+    assert ticks[0]["ingest_id"].startswith("a_19_")
+
+    # 2. All-symbols query requesting 10 ticks
+    tape_all = reader.get_tape(symbol=None, limit=10)
+    ticks_all = tape_all.get("ticks", [])
+    assert len(ticks_all) == 10
+    for i in range(len(ticks_all) - 1):
+        assert ticks_all[i]["timestamp"] >= ticks_all[i + 1]["timestamp"]
+    # Should include ticks from both SYMA and SYMB from batch 19
+    symbols_present = {t["symbol"] for t in ticks_all}
+    assert "SYMA" in symbols_present
+    assert "SYMB" in symbols_present
+

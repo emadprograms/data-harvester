@@ -94,6 +94,7 @@ def test_cli_refuses_to_start_outside_the_window(tmp_path):
 def test_cli_mock_mode_starts_outside_the_window(tmp_path):
     """--mock produces synthetic ticks: it is allowed off-hours and still drains."""
     env = dict(os.environ)
+    env["SKIP_DISCORD"] = "true"
     env["STREAM_NOW_OVERRIDE"] = "2026-10-10T12:00:00"  # Saturday
     lake_root = tmp_path / "lake"
     create_lake(lake_root, symbols=["AAPL", "MSFT"])

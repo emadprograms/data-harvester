@@ -113,6 +113,34 @@ function fetchAllData() {
   }
 }
 
+// --- Polling Lifecycle with Page Visibility API ---
+let marketSessionInterval = null;
+let streamStatusInterval = null;
+let streamTapeInterval = null;
+
+function startPolling() {
+  stopPolling();
+  marketSessionInterval = setInterval(fetchMarketSession, 1000);
+  streamStatusInterval = setInterval(fetchStreamStatus, 4000);
+  streamTapeInterval = setInterval(fetchStreamTape, 3000);
+}
+
+function stopPolling() {
+  if (marketSessionInterval) { clearInterval(marketSessionInterval); marketSessionInterval = null; }
+  if (streamStatusInterval) { clearInterval(streamStatusInterval); streamStatusInterval = null; }
+  if (streamTapeInterval) { clearInterval(streamTapeInterval); streamTapeInterval = null; }
+}
+
+// Pause polling completely when tab is inactive; resume and refresh immediately on focus
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopPolling();
+  } else {
+    fetchAllData();
+    startPolling();
+  }
+});
+
 // Expose routing handlers to window
 window.switchStreamingTab = switchStreamingTab;
 
@@ -120,7 +148,5 @@ window.switchStreamingTab = switchStreamingTab;
 window.addEventListener('DOMContentLoaded', () => {
   initStreamingChart();
   fetchAllData();
-  setInterval(fetchMarketSession, 1000);
-  setInterval(fetchStreamStatus, 4000);
-  setInterval(fetchStreamTape, 3000);
+  startPolling();
 });

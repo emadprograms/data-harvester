@@ -457,6 +457,7 @@ def test_chaos_streamer_kill9_during_active_flush_auto_healing(tmp_path):
         stability_threshold=5.0,
         log_dir=tmp_path / "logs",
         handle_signals=False,
+        extra_env={"SKIP_DISCORD": "true"},
     )
 
     t = threading.Thread(target=supervisor.run, daemon=True)
@@ -739,6 +740,7 @@ def test_chaos_supervisor_sigterm_graceful_drain_deadline(tmp_path):
             "--args", "--lake-root", str(lake_root), "--writer-id", "writer_drain", "--mock", "--drain-delay", "1.0",
         ],
         cwd=str(REPO_ROOT),
+        env={**os.environ, "SKIP_DISCORD": "true"},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )

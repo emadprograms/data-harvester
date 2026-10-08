@@ -431,6 +431,7 @@ def isolated_subprocess_env(tmp_path):
     lake_root = tmp_path / "child-lake"
     env["DATA_DIR"] = str(data_dir)
     env["TICK_LAKE_ROOT"] = str(lake_root)
+    env["SKIP_DISCORD"] = "true"
     env["PYTHONPATH"] = os.pathsep.join(
         filter(None, [REPO_ROOT, env.get("PYTHONPATH", "")])
     )
